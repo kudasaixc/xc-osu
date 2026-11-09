@@ -1,6 +1,6 @@
 // xc-osu! bootstrap — xc softworks (kudasaixc)
 import { dotnet } from './_framework/dotnet.js';
-import { installUi } from './js/xc-ui.js';
+import { installUi } from './js/xc-ui.js?v=8209999e6f';
 
 const $ = (id) => document.getElementById(id);
 const status = (t) => { const el = $('xc-status'); if (el) el.textContent = t; console.log('[xc-osu!] ' + t); };
@@ -12,12 +12,25 @@ if (!crossOriginIsolated) {
 
 status('loading runtime…');
 
+// URL switches: ?log ?perf ?diag (diagnostics) · ?mute (no audio output) · ?nursery=16m (GC young generation size)
+// A/B switches for frame pacing work (each restores the pre-fix behaviour): ?legacyraf ?desync ?drawwait ?uncapped
+const params = new URLSearchParams(location.search);
+const flag = (name) => (params.has(name) ? '1' : '');
+// Mono's default 4 MB nursery fills several times per second at osu!'s allocation rate, and every minor collection stops
+// all threads (draw worker included). A larger nursery means proportionally fewer of those pauses.
+const nursery = /^\d+[km]$/.test(params.get('nursery') || '') ? params.get('nursery') : '32m';
+
 const rt = await dotnet
   .withConfig({ pthreadPoolInitialSize: 12, pthreadPoolUnusedSize: 4 })
   .withEnvironmentVariable('XC_ORIGIN', location.origin)
-  .withEnvironmentVariable('XC_VERBOSE_LOG', new URLSearchParams(location.search).has('log') ? '1' : '')
-  .withEnvironmentVariable('XC_PERF', new URLSearchParams(location.search).has('perf') ? '1' : '')
-  .withEnvironmentVariable('XC_DIAG', new URLSearchParams(location.search).has('diag') ? '1' : '')
+  .withEnvironmentVariable('XC_VERBOSE_LOG', flag('log'))
+  .withEnvironmentVariable('XC_PERF', flag('perf'))
+  .withEnvironmentVariable('XC_DIAG', flag('diag'))
+  .withEnvironmentVariable('XC_DRAW_LEGACY', flag('legacyraf'))
+  .withEnvironmentVariable('XC_DESYNC', flag('desync'))
+  .withEnvironmentVariable('XC_DRAW_WAIT', flag('drawwait'))
+  .withEnvironmentVariable('XC_UPDATE_UNCAPPED', flag('uncapped'))
+  .withEnvironmentVariable('MONO_GC_PARAMS', `nursery-size=${nursery}`)
   .withResourceLoader((type, name, defaultUri) => defaultUri)
   .withModuleConfig({
     onDownloadResourceProgress: (loaded, total) => status(`downloading ${loaded}/${total}`),
@@ -60,12 +73,17 @@ globalThis.xcAudioInit = async (memory, ring, ctrl, cap, rate) => {
   if (ctrl + 64 > buffer.byteLength) { console.error('[xc-osu!] audio ring outside the visible heap', ctrl, buffer.byteLength); return; }
   const ctrlView = new Int32Array(buffer, ctrl, 16);
   audioCtx = new AudioContext({ sampleRate: rate, latencyHint: 'interactive' });
-  await audioCtx.audioWorklet.addModule(new URL('./js/xc-audio-worklet.js', import.meta.url));
+  await audioCtx.audioWorklet.addModule(new URL('./js/xc-audio-worklet.js?v=e862fb3f11', import.meta.url));
   const node = new AudioWorkletNode(audioCtx, 'xc-output', {
     numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2],
     processorOptions: { buffer, ring, ctrl, cap },
   });
-  node.connect(audioCtx.destination);
+  if (params.has('mute')) {
+    // keep the audio clock running (the game syncs to it) but output silence
+    const silent = audioCtx.createGain();
+    silent.gain.value = 0;
+    node.connect(silent).connect(audioCtx.destination);
+  } else node.connect(audioCtx.destination);
   const updateLatency = () => {
     const secs = (audioCtx.outputLatency || 0) + (audioCtx.baseLatency || 0);
     // frames consumed by the worklet one render quantum before they reach the output stage

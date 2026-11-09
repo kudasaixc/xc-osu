@@ -1,7 +1,7 @@
 // xc-osu! UI thread bridge — xc softworks (kudasaixc)
 // Owns the DOM: captures input at full device rate and writes it into a shared-memory ring that the
 // osu-framework input thread drains every frame. Never calls into .NET synchronously.
-import { XC_KEY_CODES } from './keys.js';
+import { XC_KEY_CODES } from './keys.js?v=e6fa4eb159';
 
 const S = {
   MAGIC: 0, WIDTH: 1, HEIGHT: 2, DPR_MILLI: 3, FOCUSED: 4, VISIBLE: 5, CURSOR_INSIDE: 6, POINTER_LOCKED: 7,
@@ -157,7 +157,8 @@ export function installUi(rt, canvas, hooks) {
 
   // pointerrawupdate fires at device rate before rAF alignment (Chromium); fall back to pointermove
   const moveEvent = 'onpointerrawupdate' in window ? 'pointerrawupdate' : 'pointermove';
-  canvas.addEventListener(moveEvent, onMove);
+  // Touch uses pointermove only: Chromium also emits pointerrawupdate for the same sample.
+  canvas.addEventListener(moveEvent, (e) => { if (moveEvent === 'pointermove' || e.pointerType !== 'touch') onMove(e); });
   if (moveEvent !== 'pointermove') canvas.addEventListener('pointermove', (e) => { if (e.pointerType === 'touch') onMove(e); });
 
   canvas.addEventListener('pointerdown', (e) => {
@@ -340,6 +341,19 @@ export function installUi(rt, canvas, hooks) {
     hooks.onAttached?.();
   };
 
+  // screen wake lock (released by the browser whenever the tab is hidden, so re-acquire on return)
+  let wakeWanted = false, wakeLock = null;
+  async function setWakeLock(on) {
+    wakeWanted = on;
+    try {
+      if (on && !wakeLock && document.visibilityState === 'visible' && navigator.wakeLock) {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
+      } else if (!on && wakeLock) { const l = wakeLock; wakeLock = null; await l.release(); }
+    } catch { wakeLock = null; }
+  }
+  document.addEventListener('visibilitychange', () => { if (wakeWanted && document.visibilityState === 'visible') setWakeLock(true); });
+
   globalThis.xcUi = (op, a, b, s) => {
     switch (op) {
       case 1: document.title = s || 'xc-osu!'; break;
@@ -353,7 +367,10 @@ export function installUi(rt, canvas, hooks) {
       case 9: case 14: if (s) hooks.download(s); break;
       case 10: hooks.onExit?.(a, s); break;
       case 11: break; // cursor confinement is implicit with pointer lock
-      case 12: navigator.vibrate?.(a); break;
+      case 12:
+        // a < 0: screen suspension control (b = 1 keeps the screen awake while playing), otherwise a vibration in ms
+        if (a < 0) setWakeLock(!!b); else navigator.vibrate?.(a);
+        break;
       case 13: pickFiles(s); break;
     }
   };
