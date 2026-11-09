@@ -60,7 +60,7 @@
   </PropertyGroup>
   <Target Name="XcSelectAotAssemblies" BeforeTargets="_WasmAotCompileApp" Condition="'$(XcAot)' == 'true'">
     <PropertyGroup>
-      <_XcAotKeep>;System.Private.CoreLib;System.Collections;System.Collections.Concurrent;System.Linq;System.Memory;System.Runtime.Intrinsics;System.Numerics.Vectors;osu.Framework;osuTK;osu.Game.Rulesets.Osu;Realm;$(XcAotExtra);</_XcAotKeep>
+      <_XcAotKeep>;System.Private.CoreLib;System.Collections;System.Collections.Concurrent;System.Linq;System.Memory;System.Runtime.Intrinsics;System.Numerics.Vectors;osu.Framework;osuTK;osu.Game;osu.Game.Rulesets.Osu;Realm;$(XcAotExtra);</_XcAotKeep>
     </PropertyGroup>
     <ItemGroup>
       <_AOT_InternalForceInterpretAssemblies Include="@(_WasmAssembliesInternal)" Condition="!$(_XcAotKeep.Contains(';%(Filename);'))" />
