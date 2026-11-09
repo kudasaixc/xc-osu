@@ -1,0 +1,77 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup Label="Nuget">
+        <PackageId>ppy.Veldrid.SPIRV</PackageId>
+        <Version>0.0.0</Version>
+        <IsPackable>true</IsPackable>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <AssemblyName>ppy.Veldrid.SPIRV</AssemblyName>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <DocumentationFile>$(BinDir)\$(AssemblyName).xml</DocumentationFile>
+        <NativeAssetsPath>$(RepositoryRootDirectory)\build\$(Configuration)\</NativeAssetsPath>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="ppy.Veldrid" Version="4.9.86-g62f472bade" />
+        <PackageReference Update="Nerdbank.GitVersioning" Version="3.4.255">
+            <PrivateAssets>all</PrivateAssets>
+            <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
+        </PackageReference>
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="$(NativeAssetsPath)win-x64\libveldrid-spirv.dll">
+            <PackagePath>runtimes/win-x64/native</PackagePath>
+            <Pack>true</Pack>
+        </None>
+        <None Include="$(NativeAssetsPath)win-x86\libveldrid-spirv.dll">
+            <PackagePath>runtimes/win-x86/native</PackagePath>
+            <Pack>true</Pack>
+        </None>
+        <None Include="$(NativeAssetsPath)win-arm64\libveldrid-spirv.dll">
+            <PackagePath>runtimes/win-arm64/native</PackagePath>
+            <Pack>true</Pack>
+        </None>
+        <None Include="$(NativeAssetsPath)osx\libveldrid-spirv.dylib">
+            <PackagePath>runtimes/osx/native</PackagePath>
+            <Pack>true</Pack>
+        </None>
+        <None Include="$(NativeAssetsPath)linux-x64\libveldrid-spirv.so">
+            <PackagePath>runtimes/linux-x64/native</PackagePath>
+            <Pack>true</Pack>
+        </None>
+        <None Include="$(NativeAssetsPath)linux-arm64\libveldrid-spirv.so">
+            <PackagePath>runtimes/linux-arm64/native</PackagePath>
+            <Pack>true</Pack>
+        </None>
+        <None Include="$(NativeAssetsPath)ios\**\veldrid-spirv.xcframework\**\*">
+            <PackagePath>runtimes/ios/native/veldrid-spirv.xcframework</PackagePath>
+            <Pack>true</Pack>
+        </None>
+        <None Include="$(NativeAssetsPath)android-armeabi-v7a\libveldrid-spirv.so">
+            <PackagePath>runtimes/android-arm/native</PackagePath>
+            <Pack>true</Pack>
+        </None>
+        <None Include="$(NativeAssetsPath)android-arm64-v8a\libveldrid-spirv.so">
+            <PackagePath>runtimes/android-arm64/native</PackagePath>
+            <Pack>true</Pack>
+        </None>
+        <None Include="$(NativeAssetsPath)android-x86_64\libveldrid-spirv.so">
+            <PackagePath>runtimes/android-x64/native</PackagePath>
+            <Pack>true</Pack>
+        </None>
+        <None Include="$(NativeAssetsPath)android-x86\libveldrid-spirv.so">
+            <PackagePath>runtimes/android-x86/native</PackagePath>
+            <Pack>true</Pack>
+        </None>
+    </ItemGroup>
+
+    <PropertyGroup>
+        <Description>Veldrid integration for the SPIRV-Cross native library. Contains functionality to cross-compile SPIR-V bytecode into HLSL, GLSL, ESSL, and MSL shaders for use with Veldrid.</Description>
+        <PackageTags>3D Graphics Direct3D DirectX Vulkan OpenGL Metal Core Standard Game</PackageTags>
+    </PropertyGroup>
+
+</Project>

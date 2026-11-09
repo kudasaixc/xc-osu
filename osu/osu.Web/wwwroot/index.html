@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>xc-osu!</title>
+  <meta name="description" content="xc-osu! — the full osu!lazer client running natively in your browser. Web port by xc softworks (kudasaixc).">
+  <meta name="theme-color" content="#0b0b12">
+  <meta name="author" content="xc softworks (kudasaixc)">
+  <link rel="preload" id="webassembly" />
+  <script type="importmap"></script>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0b0b12; overflow: hidden; overscroll-behavior: none; touch-action: none; user-select: none; -webkit-user-select: none; }
+    #xc-canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh; display: block; outline: none; touch-action: none; }
+    #xc-splash { position: fixed; inset: 0; display: grid; place-items: center; background: radial-gradient(circle at 50% 40%, #2a1638 0%, #0b0b12 70%);
+                 color: #f2eaff; font: 500 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; transition: opacity .5s; z-index: 2; }
+    #xc-splash.gone { opacity: 0; pointer-events: none; }
+    .xc-box { text-align: center; padding: 16px; }
+    .xc-logo { font-size: clamp(42px, 9vw, 84px); font-weight: 800; letter-spacing: -.03em; margin: 0;
+               background: linear-gradient(135deg, #ff66aa, #b46cff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    #xc-status { opacity: .75; white-space: pre-wrap; max-width: min(720px, 90vw); margin: 12px auto 0; font-size: 13px; }
+    .xc-credit { position: fixed; bottom: 14px; left: 0; right: 0; text-align: center; opacity: .5; font-size: 12px; }
+    .xc-credit a { color: inherit; }
+    #xc-audio-gate { position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%); padding: 10px 18px; border-radius: 999px; background: rgba(20,10,40,.85); color: #fff; font: 600 14px system-ui, sans-serif; letter-spacing: .02em; pointer-events: none; z-index: 10; box-shadow: 0 0 0 1px rgba(255,102,170,.5); }
+  </style>
+  <script type="module" src="main#[.{fingerprint}].js"></script>
+</head>
+<body>
+  <canvas id="xc-canvas" tabindex="0"></canvas>
+  <div id="xc-splash">
+    <div class="xc-box">
+      <p class="xc-logo">xc-osu!</p>
+      <div>by <strong>xc softworks</strong> · kudasaixc</div>
+      <div id="xc-status">loading…</div>
+    </div>
+    <div class="xc-credit">osu!lazer engine © ppy Pty Ltd (MIT) · web port by xc softworks (kudasaixc)</div>
+  </div>
+</body>
+</html>

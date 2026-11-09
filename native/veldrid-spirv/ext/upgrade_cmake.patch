@@ -1,0 +1,109 @@
+Submodule ext/SPIRV-Cross contains modified content
+diff --git a/ext/SPIRV-Cross/CMakeLists.txt b/ext/SPIRV-Cross/CMakeLists.txt
+index d66385d3..fb4222d7 100644
+--- a/ext/SPIRV-Cross/CMakeLists.txt
++++ b/ext/SPIRV-Cross/CMakeLists.txt
+@@ -19,7 +19,7 @@
+ #  2. The MIT License, found at <http://opensource.org/licenses/MIT>.
+ #
+ 
+-cmake_minimum_required(VERSION 3.6)
++cmake_minimum_required(VERSION 3.16)
+ set(CMAKE_CXX_STANDARD 11)
+ set(CMAKE_CXX_EXTENSIONS OFF)
+ 
+Submodule ext/effcee contains modified content
+diff --git a/ext/effcee/CMakeLists.txt b/ext/effcee/CMakeLists.txt
+index d96e44a..aa86a66 100644
+--- a/ext/effcee/CMakeLists.txt
++++ b/ext/effcee/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 3.1)
++cmake_minimum_required(VERSION 3.16)
+ project(effcee C CXX)
+ enable_testing()
+ 
+Submodule ext/glslang contains modified content
+diff --git a/ext/glslang/CMakeLists.txt b/ext/glslang/CMakeLists.txt
+index 43533c14..40656ab6 100644
+--- a/ext/glslang/CMakeLists.txt
++++ b/ext/glslang/CMakeLists.txt
+@@ -33,7 +33,7 @@
+ 
+ # increase to 3.1 once all major distributions
+ # include a version of CMake >= 3.1
+-cmake_minimum_required(VERSION 2.8.12)
++cmake_minimum_required(VERSION 3.16)
+ if (POLICY CMP0048)
+   cmake_policy(SET CMP0048 NEW)
+ endif()
+Submodule ext/googletest contains modified content
+diff --git a/ext/googletest/CMakeLists.txt b/ext/googletest/CMakeLists.txt
+index 12fd7450..03696707 100644
+--- a/ext/googletest/CMakeLists.txt
++++ b/ext/googletest/CMakeLists.txt
+@@ -1,7 +1,7 @@
+ # Note: CMake support is community-based. The maintainers do not use CMake
+ # internally.
+ 
+-cmake_minimum_required(VERSION 2.8.12)
++cmake_minimum_required(VERSION 3.16)
+ 
+ if (POLICY CMP0048)
+   cmake_policy(SET CMP0048 NEW)
+Submodule ext/re2 contains modified content
+diff --git a/ext/re2/CMakeLists.txt b/ext/re2/CMakeLists.txt
+index ed5ef13..9835c86 100644
+--- a/ext/re2/CMakeLists.txt
++++ b/ext/re2/CMakeLists.txt
+@@ -3,7 +3,7 @@
+ # license that can be found in the LICENSE file.
+ 
+ # Old enough to support Ubuntu Xenial.
+-cmake_minimum_required(VERSION 3.5.1)
++cmake_minimum_required(VERSION 3.16)
+ 
+ if(POLICY CMP0048)
+   cmake_policy(SET CMP0048 NEW)
+Submodule ext/shaderc contains modified content
+diff --git a/ext/shaderc/CMakeLists.txt b/ext/shaderc/CMakeLists.txt
+index b55e1f0..7c88c24 100644
+--- a/ext/shaderc/CMakeLists.txt
++++ b/ext/shaderc/CMakeLists.txt
+@@ -12,7 +12,7 @@
+ # See the License for the specific language governing permissions and
+ # limitations under the License.
+ 
+-cmake_minimum_required(VERSION 2.8.12)
++cmake_minimum_required(VERSION 3.16)
+ project(shaderc)
+ enable_testing()
+ 
+Submodule ext/spirv-headers contains modified content
+diff --git a/ext/spirv-headers/CMakeLists.txt b/ext/spirv-headers/CMakeLists.txt
+index f19390a..0b6ee3c 100644
+--- a/ext/spirv-headers/CMakeLists.txt
++++ b/ext/spirv-headers/CMakeLists.txt
+@@ -28,7 +28,7 @@
+ # The SPIR-V headers from the SPIR-V Registry
+ # https://www.khronos.org/registry/spir-v/
+ #
+-cmake_minimum_required(VERSION 3.0)
++cmake_minimum_required(VERSION 3.16)
+ project(SPIRV-Headers VERSION 1.5.5)
+ 
+ # There are two ways to use this project.
+Submodule ext/spirv-tools contains modified content
+diff --git a/ext/spirv-tools/CMakeLists.txt b/ext/spirv-tools/CMakeLists.txt
+index 76b87d8c..c41c383c 100644
+--- a/ext/spirv-tools/CMakeLists.txt
++++ b/ext/spirv-tools/CMakeLists.txt
+@@ -12,7 +12,7 @@
+ # See the License for the specific language governing permissions and
+ # limitations under the License.
+ 
+-cmake_minimum_required(VERSION 2.8.12)
++cmake_minimum_required(VERSION 3.16)
+ if (POLICY CMP0048)
+   cmake_policy(SET CMP0048 NEW)
+ endif()

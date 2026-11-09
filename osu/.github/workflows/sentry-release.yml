@@ -1,0 +1,28 @@
+name: Add Release to Sentry
+
+on:
+  push:
+    tags:
+      - '*'
+
+permissions:
+  contents: read # to fetch code (actions/checkout)
+
+jobs:
+  sentry_release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Create Sentry release
+        uses: getsentry/action-release@v3
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ppy
+          SENTRY_PROJECT: osu-lazer
+        with:
+          environment: production
+          version: osu-lazer@${{ github.ref_name }}

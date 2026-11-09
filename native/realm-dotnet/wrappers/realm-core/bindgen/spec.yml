@@ -1,0 +1,832 @@
+# yaml-language-server: $schema=generated/spec.schema.json
+
+headers:
+  - "realm/status.hpp"
+  - "realm/object-store/shared_realm.hpp"
+  - "realm/object-store/object_store.hpp"
+  - "realm/object-store/object_schema.hpp"
+  - "realm/object-store/results.hpp"
+  - "realm/object-store/thread_safe_reference.hpp"
+  - "realm/object-store/util/scheduler.hpp"
+  - "realm/object-store/collection_notifications.hpp"
+  - "realm/object-store/impl/object_notifier.hpp"
+  - "realm/object-store/impl/realm_coordinator.hpp"
+  - "realm/util/bson/bson.hpp"
+
+primitives:
+  # TODO need to distinguish 64bit types where all bits are needed vs where double would be fine
+  - int32_t
+  - int64_t
+  - uint64_t
+  - count_t # size_t but only used for counts (so never > 2**52, which when doubles stop having full precision)
+  - double
+  - float
+  - bool
+  - void
+  - std::string
+  - std::string_view
+  - std::chrono::milliseconds
+  # TODO: see if we need nullable versions of these. For now null buffers are treated as empty.
+  - StringData
+  - OwnedBinaryData
+  - BinaryData
+  - Mixed
+  - bson::BsonDocument # Suggestion: handle like EJsonObj by converting via EJSON string
+  - bson::BsonArray # Suggestion: handle like EJsonArray by converting via EJSON string
+  - ObjectId
+  - Decimal128
+  - UUID
+  - EncryptionKey # vector<char> in C++, but should have API of OwnedBinaryData in SDK
+                  # TODO consider changing type in realm-core.
+  - AppError
+  - std::exception_ptr
+  - std::error_code
+  - Status
+  - QueryArg # variant<Mixed, vector<Mixed>> (don't want to support arbitrary variants as a template, because we need logic to distinguish the cases)
+
+  # These are all strings in C++, but parsed/serialized EJSON in the binding.
+  - EJson
+  - EJsonArray
+  - EJsonObj
+
+typeAliases:
+  int: int32_t
+  KeyPath: std::vector<std::pair<TableKey, ColKey>>
+  KeyPathArray: std::vector<KeyPath>
+  IndexRange: std::pair<count_t, count_t>
+  AppCredentialsToken: std::string
+  Email: std::string
+  SchemaVersion: int64_t # is uint64_t in C++ but -1 is used as a sentinel.
+  PortType: int32_t # is uint_fast16_t in C++ but we don't want to add more primitive types and expect SDKs to reject port number > 65535
+  ErrorCodes::Error: int32_t
+
+templates: # value tells you how many arguments it takes ('*' means any number)
+  std::optional: 1
+  std::vector: 1
+  std::shared_ptr: 1
+  std::pair: 2
+  std::tuple: '*'
+  std::unordered_map: 2
+  std::map: 2
+  util::UniqueFunction: 1
+  std::function: 1
+  Nullable: 1 # By default most types in the spec are assumed to be non-null. This marks those that are nullable.
+  IgnoreArgument: 1
+
+mixedInfo:
+  dataTypes:
+    Int:
+      getter: get_int
+      type: int64_t
+    Bool:
+      getter: get_bool
+      type: bool
+    Float:
+      getter: get_float
+      type: float
+    Double:
+      getter: get_double
+      type: double
+    String:
+      getter: get_string
+      type: StringData
+    Binary:
+      getter: get_binary
+      type: BinaryData
+    Timestamp:
+      getter: get_timestamp
+      type: Timestamp
+    Decimal:
+      getter: get_decimal
+      type: Decimal128
+    ObjectId:
+      getter: get_object_id
+      type: ObjectId
+    UUID:
+      getter: get_uuid
+      type: UUID
+    TypedLink:
+      getter: get_link # get_link is for TypedLink, not Link!
+      type: ObjLink
+    Link:
+      getter: get<ObjKey>
+      type: ObjKey
+  unusedDataTypes:
+    - Mixed
+  extraCtors:
+    - Obj
+    - Geospatial
+
+enums:
+  SchemaMode:
+    values:
+      - Automatic
+      - Immutable
+      - ReadOnly
+      - SoftResetFile
+      - HardResetFile
+      - AdditiveDiscovered
+      - AdditiveExplicit
+      - Manual
+
+  PropertyType:
+    values:
+      Int: 0
+      Bool: 1
+      String: 2
+      Data: 3
+      Date: 4
+      Float: 5
+      Double: 6
+      Object: 7         # currently must be either Array xor Nullable
+      LinkingObjects: 8 # currently must be Array and not Nullable
+
+      Mixed: 9
+      ObjectId: 10
+      Decimal: 11
+      UUID: 12
+
+      # Flags which can be combined with any of the above types except as noted
+      Required: 0
+      Nullable: 64
+      Array: 128
+      Set: 256
+      Dictionary: 512
+
+      Collection: 896 # Array | Set | Dictionary
+      Flags: 960 # Nullable | Collection
+
+  CollectionType:
+    values:
+      List: 19
+      Set: 20
+      Dictionary: 21
+
+  TableType:
+    cppName: ObjectSchema::ObjectType
+    values:
+      TopLevel: 0
+      Embedded: 1
+      TopLevelAsymmetric: 0x2
+
+  DataType:
+    cppName: DataType::Type
+    values:
+      Int: 0
+      Bool: 1
+      String: 2
+      Binary: 4
+      Mixed: 6
+      Timestamp: 8
+      Float: 9
+      Double: 10
+      Decimal: 11
+      Link: 12
+      ObjectId: 15
+      TypedLink: 16
+      UUID: 17
+
+  LoggerLevel:
+    cppName: util::Logger::Level
+    values:
+      - all
+      - trace
+      - debug
+      - detail
+      - info
+      - warn
+      - error
+      - fatal
+      - off
+
+# These types are handled specially. They must be structs with a single fields named "value".
+keyTypes:
+  ColKey: int64_t
+  ObjKey: int64_t
+  TableKey: int32_t
+
+records:
+  Property:
+    fields:
+      name: std::string
+      public_name:
+        type: std::string
+        default: ""
+      type:
+        type: PropertyType
+      object_type:
+        type: std::string
+        default: ""
+      link_origin_property_name:
+        type: std::string
+        default: ""
+      is_primary:
+        type: bool
+        default: false
+      is_indexed:
+        type: bool
+        default: false
+      is_fulltext_indexed:
+        type: bool
+        default: false
+      column_key:
+        type: ColKey
+        default: {}
+  VersionID:
+    fields:
+      version:
+        type: int64_t
+        default: 0x7FFF_FFFF_FFFF_FFFF
+      index:
+        type: int32_t
+        default: 0
+  ObjectSchema:
+    fields:
+      name: std::string
+      persisted_properties:
+        type: std::vector<Property>
+        default: []
+      computed_properties:
+        type: std::vector<Property>
+        default: []
+      primary_key:
+        type: std::string
+        default: ''
+      table_key:
+        type: TableKey
+        default: {}
+      table_type:
+        type: TableType
+        default: TopLevel
+      alias:
+        type: std::string
+        default: ''
+
+  GeoPoint:
+    fields:
+      longitude: double
+      latitude: double
+      altitude:
+        type: double
+        default: std::numeric_limits<double>::quiet_NaN()
+
+  GeoCircle:
+    fields:
+      radius_radians: double
+      center: GeoPoint
+
+  GeoBox:
+    fields:
+      lo: GeoPoint
+      hi: GeoPoint
+
+  GeoPolygon:
+    fields:
+      points: std::vector<std::vector<GeoPoint>>
+
+  RealmConfig:
+    fields:
+      path: std::string
+      cache:
+        type: bool
+        default: false
+      # realm_data: BinaryData
+      encryption_key:
+        type: EncryptionKey
+        default: {}
+      fifo_files_fallback_path:
+        type: std::string
+        default: ""
+      in_memory:
+        type: bool
+        default: false
+      schema: std::optional<std::vector<ObjectSchema>>
+      schema_version:
+        type: SchemaVersion
+        default: -1
+      schema_mode:
+        type: SchemaMode
+        default: SchemaMode::Automatic
+      disable_format_upgrade:
+        type: bool
+        default: false
+      # Unclear if migration_function and initialization_function should be marked as off_thread.
+      # Existing JS sdk treats them as not.
+      migration_function: 'Nullable<std::function<(old_realm: SharedRealm, new_realm: SharedRealm, new_schema_handle: IgnoreArgument<Schema&>) -> void>>'
+      initialization_function: 'Nullable<std::function<(realm: SharedRealm) -> void>>'
+      should_compact_on_launch_function: 'Nullable<std::function<(total_bytes: uint64_t, used_bytes: uint64_t) off_thread -> bool>>'
+      automatically_handle_backlinks_in_migrations:
+        type: bool
+        default: false
+
+  ObjectChangeSet:
+    fields:
+      is_deleted: bool
+      changed_columns: std::vector<ColKey>
+
+  # TODO nested type?
+  CollectionChangeSetMove:
+    cppName: CollectionChangeSet::Move
+    fields:
+      from: count_t
+      to: count_t
+  CollectionChangeSet:
+    fields:
+      deletions: IndexSet
+      insertions: IndexSet
+      modifications: IndexSet
+      modifications_new: IndexSet
+      moves: std::vector<CollectionChangeSetMove>
+      collection_root_was_deleted: bool
+      collection_was_cleared: bool
+      # columns: std::unordered_map<int64_t, IndexSet>
+
+  DictionaryChangeSet:
+    fields:
+      deletions: std::vector<Mixed>
+      insertions: std::vector<Mixed>
+      modifications: std::vector<Mixed>
+      collection_root_was_deleted: bool
+
+  BindingContext:
+    cppName: Helpers::BindingContextMethods
+    fields:
+      did_change: 'Nullable<util::UniqueFunction<(r: SharedRealm)>>'
+      before_notify: 'Nullable<util::UniqueFunction<(r: SharedRealm)>>'
+      schema_did_change: 'Nullable<util::UniqueFunction<(r: SharedRealm)>>' # new schema available as r.schema
+
+opaqueTypes:
+  - Schema
+  - Group
+  - AuditInterface
+
+classes:
+  #SchemaChange: {}
+
+  Helpers:
+    abstract: true
+    staticMethods:
+      get_table:
+        - '(r: SharedRealm, key: TableKey) -> TableRef'
+        - sig: '(r: SharedRealm, name: StringData) -> TableRef'
+          suffix: by_name
+      get_keypath_mapping: '(r: SharedRealm) -> KeyPathMapping'
+      results_from_query: '(r: SharedRealm, q: Query) -> Results'
+      # This is needed because Query::and_query doesn't append ordering
+      results_append_query: '(results: Results, query: Query) -> Results'
+      make_object_notifier: '(r: SharedRealm, o: Obj) -> SharedObjectNotifier'
+      has_binding_context: '(r: Realm) -> bool'
+      set_binding_context: '(r: SharedRealm, methods: BindingContext)'
+      get_or_create_object_with_primary_key: '(t: TableRef, pk: Mixed) -> std::pair<Obj, bool>'
+      delete_data_for_object: '(realm: SharedRealm, object_type: StringData)'
+      base64_decode: '(input: StringData) -> BinaryData'
+      make_logger_factory: '(log: (category: const std::string&, level: LoggerLevel, message: const std::string&) off_thread) -> LoggerFactory'
+      make_logger:  '(log: (category: const std::string&, level: LoggerLevel, message: const std::string&) off_thread) -> SharedLogger'
+      consume_thread_safe_reference_to_shared_realm: '(tsr: ThreadSafeReference) -> SharedRealm'
+      file_exists: '(path: StringData) -> bool'
+      # This is added due to DescriptorOrdering not being exposed
+      get_results_description: '(results: const Results&) -> StringData'
+      needs_file_format_upgrade: '(config: const RealmConfig&) -> bool'
+
+  LogCategoryRef:
+    cppName: util::LogCategoryRef
+    needsDeref: true
+    properties:
+      get_default_level_threshold: LoggerLevel
+    methods:
+      set_default_level_threshold: '(level: LoggerLevel)'
+    staticMethods:
+      get_category: '(name: std::string_view) -> LogCategoryRef'
+
+  Logger:
+    cppName: util::Logger
+    sharedPtrWrapped: SharedLogger
+    properties:
+      get_default_logger: SharedLogger
+    staticMethods:
+      set_default_logger: '(logger: Nullable<SharedLogger>)'
+
+  ConstTableRef:
+    needsDeref: true
+    iterable: Obj
+    properties:
+      get_name: StringData
+      get_column_count: count_t
+      get_key: TableKey
+    methods:
+      is_embedded: () const -> bool
+      get_column_type: '(column: ColKey) const -> DataType'
+      get_link_target: '(column: ColKey) const -> ConstTableRef'
+      get_object: '(key: ObjKey) const -> Obj'
+      try_get_object: '(key: ObjKey) const -> Nullable<Obj>'
+      query: '(query_string: std::string, args: std::vector<QueryArg>, mapping: KeyPathMapping) const -> Query'
+      find_primary_key: '(pk: Mixed) -> ObjKey'
+
+  TableRef:
+    base: ConstTableRef
+    needsDeref: true
+    methods:
+      create_object: () -> Obj
+      create_object_with_primary_key: '(pk: Mixed) -> Obj'
+      remove_object: '(key: ObjKey)'
+      get_link_target: '(column: ColKey) -> TableRef'
+      clear: ()
+      get_primary_key_column: '() -> ColKey'
+
+  Obj:
+    properties:
+      is_valid: bool
+      get_table: TableRef
+      get_key: ObjKey
+      get_link: ObjLink
+      get_primary_key: Mixed
+    methods:
+      get_any:
+        - '(column: ColKey) const -> Mixed'
+        - sig: '(column: StringData) const -> Mixed'
+          suffix: 'by_name'
+      is_null:
+        - '(column: ColKey) const -> bool'
+        - sig: '(column: StringData) const -> bool'
+          suffix: by_name
+      set_any: # NOTE: ignoring ability to chain calls
+        - '(column: ColKey, value: Mixed)'
+        - sig: '(column: ColKey, value: Mixed, is_default: bool)'
+          suffix: with_default
+      set_collection: '(column: ColKey, type: CollectionType) -> Obj'
+      add_int: '(column: ColKey, value: int64_t) -> Obj'
+      get_linked_object: '(column: ColKey) const -> Nullable<Obj>'
+      to_string: () const -> std::string
+      get_backlink_count: '() const -> count_t'
+      get_backlink_view: '(src_table: TableRef, src_col_key: ColKey) -> TableView'
+      create_and_set_linked_object: '(column: ColKey) -> Obj'
+
+  Transaction:
+    sharedPtrWrapped: TransactionRef
+
+  ObjectStore:
+    staticMethods:
+      get_schema_version: '(group: Group) -> SchemaVersion'
+      set_schema_version: '(group: Group, version: SchemaVersion)'
+      #    verify_no_migration_required: '(changes: std::vector<SchemaChange>)'
+      #needs_migration: '(changes: std::vector<SchemaChange>) -> bool'
+      #verify_valid_additive_changes:
+      #  - '(changes: std::vector<SchemaChange>) -> bool'
+      #  - suffix: and_update_indexes
+      #    sig: '(changes: std::vector<SchemaChange>, update_indexes: bool) -> bool'
+      #verify_valid_external_changes: '(changes: std::vector<SchemaChange>)'
+      #verify_compatible_for_immutable_and_readonly: '(changes: std::vector<SchemaChange>)'
+      #verify_no_changes_required: '(changes: std::vector<SchemaChange>)'
+
+      # apply_schema_changes: '(group: Transaction&, schema_version: SchemaVersion, target_schema: Schema&, target_schema_version: SchemaVersion, mode: SchemaMode, changes: std::vector<SchemaChange>, migration_function: () -> void)'
+      # apply_additive_changes: '(group: Group&, changes: std::vector<SchemaChanges>, update_indexes: bool)'
+      # table_for_object_type
+      # table_for_Schema_type
+
+      schema_from_group: '(group: Group) -> std::vector<ObjectSchema>'
+
+      # some more...
+
+  # TODO should this be nullable or always non-null?
+  Timestamp:
+    constructors:
+      make: '(seconds: int64_t, nanoseconds: int32_t)'
+    properties:
+      get_seconds: int64_t
+      get_nanoseconds: int32_t
+
+  Geospatial:
+    constructors:
+      make_from_circle: '(circle: GeoCircle)'
+      make_from_box: '(box: GeoBox)'
+      make_from_polygon: '(polygon: GeoPolygon)'
+
+  ObjLink:
+    properties:
+      is_null: bool
+      is_unresolved: bool
+      get_table_key: TableKey
+      get_obj_key: ObjKey
+
+  KeyPathMapping:
+    cppName: query_parser::KeyPathMapping
+
+  Query:
+    properties:
+      get_table: ConstTableRef
+      get_description: StringData
+    methods:
+      count: () const -> count_t
+
+  SortDescriptor:
+    constructors:
+      make_empty: ()
+      make: '(column_indices: std::vector<std::vector<ColKey>>, ascending: std::vector<bool>)'
+    properties:
+      is_valid: bool
+
+  TableView: {}
+
+  Results:
+    constructors:
+      make_empty: ()
+      from_table: '(r: SharedRealm, table: ConstTableRef)'
+      # TODO It might be too expensive to copy TableView.
+      # Consider a Helper to combine with Obj::get_backlink_view(), or some way to get move semantics.
+      from_table_view: '(r: SharedRealm, table: TableView)'
+      # from_query: '(r: SharedRealm, query: Query, ordering: DescriptorOrdering)'
+    properties:
+      is_frozen: bool
+      is_valid: bool
+      get_query: Query
+      #get_ordering: const DescriptorOrdering&
+      get_object_type: StringData
+      get_type: PropertyType
+    methods:
+      size: () -> count_t
+      index_of:
+        - sig: '(value: Mixed) const -> count_t'
+        - sig: '(obj: Obj) const -> count_t'
+          suffix: 'obj'
+      get: # NOTE: this is actually a template with a defaulted template param.
+        - sig: '(index: count_t) -> Obj'
+          suffix: 'obj'
+      get_any: '(index: count_t) -> Mixed'
+      get_dictionary_element: '(index: count_t) -> std::pair<StringData, Mixed>'
+      get_list: '(index: count_t) -> List'
+      get_dictionary: '(index: count_t) -> Dictionary'
+      filter: '(query: Query&&) const -> Results'
+      sort:
+        - '(order: SortDescriptor&&) const -> Results'
+        - sig: '(order: std::vector<std::pair<std::string, bool>>) const -> Results'
+          suffix: by_names
+      limit: '(max_count: count_t) const -> Results'
+      snapshot: '() const -> Results'
+      freeze: '(frozen_realm: SharedRealm) const -> Results'
+      max: '(column: ColKey) -> std::optional<Mixed>'
+      min: '(column: ColKey) -> std::optional<Mixed>'
+      average: '(column: ColKey) -> std::optional<Mixed>'
+      sum: '(column: ColKey) -> std::optional<Mixed>'
+      clear: ()
+
+      add_notification_callback: '(cb: (changes: const CollectionChangeSet&), keyPaths: std::optional<KeyPathArray>) -> NotificationToken'
+
+  Realm:
+    sharedPtrWrapped: SharedRealm
+
+    staticMethods:
+      get_shared_realm:
+        - '(config: RealmConfig) -> SharedRealm'
+      #make_shared_realm: '(config: Realm::Config, version: std::optional<VersionID>, coordinator: std::shared_ptr<_impl::RealmCoordinator>) -> SharedRealm'
+      get_schema_version: '(config: const RealmConfig&) const -> SchemaVersion'
+
+    properties:
+      config: const RealmConfig&
+      schema: const std::vector<ObjectSchema>&
+      schema_version: SchemaVersion
+      is_in_transaction: bool
+      is_frozen: bool
+      is_in_migration: bool
+      is_empty: bool
+
+      get_number_of_versions: uint64_t
+      read_transaction_version: VersionID
+      current_transaction_version: std::optional<VersionID>
+
+      auto_refresh: bool
+
+      can_deliver_notifications: bool
+      scheduler: SharedScheduler
+
+      is_closed: bool
+
+      audit_context: Nullable<AuditInterface*>
+
+    methods:
+      begin_transaction: ()
+      commit_transaction: ()
+      cancel_transaction: ()
+      freeze: () -> SharedRealm
+      last_seen_transaction_version: () -> uint64_t
+      read_group: () -> Group&
+      duplicate: () -> TransactionRef
+
+      update_schema: '(schema: std::vector<ObjectSchema>, version: SchemaVersion, migration_function: Nullable<std::function<(old_realm: SharedRealm, new_realm: SharedRealm, new_schema_handle: IgnoreArgument<Schema&>) -> void>>, initialization_function: Nullable<std::function<(realm: SharedRealm) -> void>>, in_transaction: bool) -> void'
+      enable_wait_for_change: ()
+      wait_for_change: () -> bool
+      wait_for_change_release: ()
+      refresh: () -> bool
+      set_auto_refresh: '(auto_refresh: bool)'
+      notify: ()
+      invalidate: ()
+      compact: () -> bool
+      write_copy: () -> OwnedBinaryData
+      convert: '(config: RealmConfig)'
+
+      verify_thread: () const
+      verify_in_write: () const
+      verify_open: () const
+      verify_notifications_available:
+        - () const
+        - suffix: maybe_throw
+          sig: '(throw_on_error: bool) const'
+
+      create_key_path_array: '(table_name: StringData, key_paths: const std::vector<std::string>&) -> KeyPathArray'
+
+      close: ()
+
+  RealmCoordinator:
+    sharedPtrWrapped: SharedRealmCoordinator
+    cppName: _impl::RealmCoordinator
+    staticMethods:
+      clear_all_caches: ()
+
+  ObjectNotifier:
+    cppName: _impl::ObjectNotifier
+    sharedPtrWrapped: SharedObjectNotifier
+    constructors:
+      make: '(realm: SharedRealm, obj: Obj)'
+    methods:
+      add_callback: '(cb: (changes: ObjectChangeSet), keyPaths: std::optional<KeyPathArray>) -> uint64_t'
+      remove_callback: '(token: uint64_t)'
+
+  NotificationToken:
+    constructors:
+      for_object: '(notifier: SharedObjectNotifier, token: uint64_t)'
+    methods:
+      suppress_next: ()
+      unregister: ()
+
+  IndexSet:
+    iterable: IndexRange
+    # methods:
+    #   as_indexes: () const -> IndexSetIndexes
+
+  # NOTE this is currently done in sdk language so we have less VM<->Native transitions.
+  # TODO make this a nested type of IndexSet?
+  # TODO this needs support for non-default-constructible types
+  # IndexSetIndexes:
+  #   cppName: IndexSet::IndexIteratableAdaptor
+  #   iterable: count_t
+
+  Collection:
+    cppName: object_store::Collection
+    abstract: true
+    properties:
+      get_type: PropertyType
+      get_realm: SharedRealm
+      get_parent_column_key: ColKey
+      get_parent_object_key: ObjKey
+      get_parent_table_key: TableKey
+      get_object_schema: const ObjectSchema&
+      size: count_t
+      is_valid: bool
+      is_frozen: bool
+    methods:
+      get_any: '(ndx: count_t) const -> Mixed'
+      find_any: '(value: Mixed) const -> count_t'
+      verify_attached: () const
+      verify_in_transaction: () const
+      as_results: () const -> Results
+      snapshot: () const -> Results
+      sort:
+        - '(order: SortDescriptor) const -> Results'
+        - sig: '(keyPaths: std::vector<std::pair<std::string, bool>> const&) const -> Results'
+          suffix: 'by_name'
+      add_notification_callback: '(cb: (changes: const CollectionChangeSet&), keyPaths: std::optional<KeyPathArray>) -> NotificationToken'
+
+  List:
+    base: Collection
+    constructors:
+      make: '(r: SharedRealm, parent: const Obj&, col: ColKey)'
+    methods:
+      get:
+        - sig: '(ndx: count_t) -> Obj'
+          suffix: 'obj'
+      get_list: '(path_elem: int) -> List'
+      get_dictionary: '(path_elem: int) -> Dictionary'
+      move: '(source_ndx: count_t, dest_ndx: count_t)'
+      remove: '(ndx: count_t)'
+      remove_all: '()'
+      swap: '(ndx1: count_t, ndx2: count_t)'
+      delete_at: '(ndx: count_t)'
+      delete_all: '()'
+      insert_any: '(list_ndx: count_t, value: Mixed)'
+      insert_embedded: '(ndx: count_t) -> Obj'
+      insert_collection: '(path_elem: int, dict_or_list: CollectionType)'
+      set_any: '(list_ndx: count_t, value: Mixed)'
+      set_embedded: '(list_ndx: count_t) -> Obj'
+      set_collection: '(path_element: int, dict_or_list: CollectionType)'
+      filter: '(q: Query) const -> Results'
+      freeze: '(frozen_realm: SharedRealm const&) const -> List'
+
+      max:
+        - '() const -> std::optional<Mixed>'
+        - sig: '(column: ColKey) const -> std::optional<Mixed>'
+          suffix: of
+      min:
+        - '() const -> std::optional<Mixed>'
+        - sig: '(column: ColKey) const -> std::optional<Mixed>'
+          suffix: of
+      average:
+        - '() const -> std::optional<Mixed>'
+        - sig: '(column: ColKey) const -> std::optional<Mixed>'
+          suffix: of
+      sum:
+        - '() const -> Mixed'
+        - sig: '(column: ColKey) const -> Mixed'
+          suffix: of
+
+  Set:
+    cppName: object_store::Set
+    base: Collection
+    constructors:
+      make: '(r: SharedRealm, parent: const Obj&, col: ColKey)'
+    methods:
+      get:
+        - sig: '(ndx: count_t) -> Obj'
+          suffix: 'obj'
+      insert_any: '(val: Mixed) -> std::pair<count_t, bool>'
+      remove_any: '(val: Mixed) -> std::pair<count_t, bool>'
+      remove_all: '()'
+      delete_all: '()'
+      filter: '(q: Query) const -> Results'
+
+      # TODO Anything that takes a Collection (or any other Base) isn't possible while using Napi::ObjectWrap
+      # is_subset_of: '(rhs: const Collection&) const -> bool'
+      # is_strict_subset_of: '(rhs: const Collection&) const -> bool'
+      # is_superset_of: '(rhs: const Collection&) const -> bool'
+      # is_strict_superset_of: '(rhs: const Collection&) const -> bool'
+      # intersects: '(rhs: const Collection&) const -> bool'
+      # set_equals: '(rhs: const Collection&) const -> bool'
+      # assign_intersection: '(rhs: const Collection&) -> void'
+      # assign_union: '(rhs: const Collection&) -> void'
+      # assign_difference: '(rhs: const Collection&) -> void'
+      # assign_symmetric_difference: '(rhs: const Collection&) -> void'
+
+      max:
+        - '() const -> std::optional<Mixed>'
+        - sig: '(column: ColKey) const -> std::optional<Mixed>'
+          suffix: of
+      min:
+        - '() const -> std::optional<Mixed>'
+        - sig: '(column: ColKey) const -> std::optional<Mixed>'
+          suffix: of
+      average:
+        - '() const -> std::optional<Mixed>'
+        - sig: '(column: ColKey) const -> std::optional<Mixed>'
+          suffix: of
+      sum:
+        - '() const -> Mixed'
+        - sig: '(column: ColKey) const -> Mixed'
+          suffix: of
+
+  Dictionary:
+    cppName: object_store::Dictionary
+    base: Collection
+    iterable: std::pair<const Mixed, Mixed>
+    constructors:
+      make: '(r: SharedRealm, parent: const Obj&, col: ColKey)'
+    properties:
+      get_keys: Results
+      get_values: Results
+    methods:
+      get:
+        - sig: '(key: StringData) const -> Obj'
+          cppName: get<Obj> # TODO can't distinguish null from missing
+      get_pair: '(ndx: count_t) const -> std::pair<StringData, Mixed>'
+      get_list: '(path_elem: std::string) -> List'
+      get_dictionary: '(path_elem: std::string) -> Dictionary'
+      contains: '(key: StringData) -> bool'
+      freeze: '(frozen_realm: SharedRealm const&) const -> Dictionary'
+      add_key_based_notification_callback: '(cb: (changes: DictionaryChangeSet), keyPaths: std::optional<KeyPathArray>) -> NotificationToken'
+      insert_any: '(key: StringData, value: Mixed) -> std::pair<count_t, bool>'
+      insert_embedded: '(key: StringData) -> Obj'
+      insert_collection: '(path_elem: std::string, dict_or_list: CollectionType)'
+      try_get_any: '(key: StringData) const -> std::optional<Mixed>'
+      remove_all: '()'
+      try_erase: '(key: StringData) -> bool'
+
+  # See Helpers::make_loger_factory to construct one.
+  # Using an opaque class here rather than exposing the factory to avoid having to
+  # involve the SDK in the construction of the logger. For JS at least, that would
+  # require hopping to the JS thread and back, blocking until it completes. Instead,
+  # we just let the C++ code handle it. Hopefully we can change the API here because
+  # it is weird that we need a factory here, rather than passing a Logger instance.
+  LoggerFactory:
+    cppName: std::function<std::shared_ptr<util::Logger>(util::Logger::Level)>
+
+  ThreadSafeReference: {}
+  
+  Scheduler:
+    cppName: util::Scheduler
+    sharedPtrWrapped: SharedScheduler
+    methods:
+      invoke: '(callback: () -> void)'
+      is_on_thread: () const noexcept -> bool
+      is_same_as: '(other: const Scheduler*) const noexcept -> bool'
+      can_invoke: () const noexcept -> bool
+    staticMethods:
+      make_frozen: '(version: VersionID) -> SharedScheduler'
+      make_default: '() -> SharedScheduler'
+      set_default_factory: '(factory: () -> SharedScheduler)'

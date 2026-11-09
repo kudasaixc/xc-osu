@@ -1,0 +1,56 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="Tests.Maui.MainPage"
+             BackgroundColor="{DynamicResource SecondaryColor}">
+
+    <Grid RowSpacing="25" RowDefinitions="Auto,Auto,32,Auto,Auto,*"
+          ColumnDefinitions="*,*"
+            Padding="{OnPlatform iOS='30,60,30,30', Default='30'}"
+            HorizontalOptions="Fill"
+            VerticalOptions="Fill">
+
+        <Label 
+            Text="Realm .NET MAUI Test Runner"
+            Grid.Row="0" Grid.ColumnSpan="2"
+            SemanticProperties.HeadingLevel="Level1"
+            FontSize="32"
+            HorizontalOptions="Center" />
+
+        <Button
+            x:Name="RunTestsButton"
+            Text="Run Tests"
+            FontAttributes="Bold"
+            Grid.Row="1" Grid.ColumnSpan="2"
+            Clicked="OnRunTestsClicked"
+            HorizontalOptions="Center" />
+
+        <ActivityIndicator
+            x:Name="BusyIndicator"
+            IsRunning="True"
+            IsVisible="False"
+            Grid.Row="2" Grid.ColumnSpan="2"
+            HorizontalOptions="Center"/>
+
+        <Label
+            x:Name="ResultsLabel"
+            Text="Tests not run yet."
+            Grid.Row="3" Grid.ColumnSpan="2"
+            HorizontalOptions="Center" />
+
+        <Label Text="Automatically scroll logs"
+               HorizontalOptions="End" VerticalOptions="Center"
+               Grid.Row="4"/>
+        
+        <Switch IsToggled="True"
+                HorizontalOptions="Start" VerticalOptions="Center"
+                x:Name="ScrollLogsToggle"
+                Grid.Row="4" Grid.Column="1"/>
+
+        <ScrollView Grid.Row="5" Grid.ColumnSpan="2" x:Name="LogsScrollView" VerticalScrollBarVisibility="Always">
+            <StackLayout Orientation="Vertical" x:Name="LogsStack">
+                <Label Text="Test output will appear here"/>
+            </StackLayout>
+        </ScrollView>
+    </Grid>
+</ContentPage>

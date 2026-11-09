@@ -1,0 +1,7 @@
+create realm-wrappers.a
+addlib src/librealm-wrappers.a
+addlib realm-core/src/realm/object-store/librealm-object-store.a
+addlib realm-core/src/realm/parser/librealm-parser.a
+addlib realm-core/src/realm/librealm.a
+save
+end

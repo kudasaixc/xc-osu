@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>xc-osu</AssemblyName>
+    <RootNamespace>osu.Web</RootNamespace>
+    <Nullable>enable</Nullable>
+    <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+    <WasmEnableThreads>true</WasmEnableThreads>
+    <WasmBuildNative>true</WasmBuildNative>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <EmccExtraLDFlags>-sMAX_WEBGL_VERSION=2 -sMIN_WEBGL_VERSION=2 -sFULL_ES3=1 -lidbfs.js</EmccExtraLDFlags>
+    <EmccMaximumHeapSize>2147483648</EmccMaximumHeapSize>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\osu.Game\osu.Game.csproj" />
+    <ProjectReference Include="..\osu.Game.Rulesets.Osu\osu.Game.Rulesets.Osu.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <NativeFileReference Include="Native/xcweb.c" />
+    <NativeFileReference Include="Native/e_sqlite3.c" />
+    <NativeFileReference Include="Native/libveldrid-spirv.a" />
+    <NativeFileReference Include="Native/bass.a" />
+    <NativeFileReference Include="Native/bass_fx.c" />
+    <NativeFileReference Include="Native/bassmix.c" />
+    <NativeFileReference Include="Native/basswasapi.c" />
+    <NativeFileReference Include="Native/realm-wrappers.a" />
+    <EmccExportedRuntimeMethod Include="FS" />
+    <EmccExportedRuntimeMethod Include="IDBFS" />
+  </ItemGroup>
+  <Target Name="XcRemoveSingleThreadedSqlite" BeforeTargets="PrepareForBuild;_BrowserWasmLinkDotNet">
+    <ItemGroup>
+      <NativeFileReference Remove="@(NativeFileReference)" Condition="'%(Extension)' == '.a' and $([System.String]::Copy('%(FullPath)').Contains('e_sqlite3'))" />
+    </ItemGroup>
+  </Target>
+  <PropertyGroup>
+    <!-- lets Native/xcweb.c override broken runtime natives (see SystemNative_TryGetUInt32OSThreadId) -->
+    <EmccExtraLDFlags>$(EmccExtraLDFlags) -Wl,--wrap=SystemNative_TryGetUInt32OSThreadId</EmccExtraLDFlags>
+  </PropertyGroup>
+  <!-- wasm C ABI fix for struct-by-value args in realm's native->managed callbacks (see tools/fix-pinvoke-structs.py) -->
+  <Target Name="XcFixPInvokeStructArgs" AfterTargets="_GenerateManagedToNative" Condition="Exists('$(_WasmPInvokeTablePath)')">
+    <Exec Command="python3 /var/www/osu/tools/fix-pinvoke-structs.py &quot;$(_WasmPInvokeTablePath)&quot;" />
+  </Target>
+  <ItemGroup>
+    <!-- xc-osu! branding textures, looked up before osu!.Game.Resources -->
+    <EmbeddedResource Remove="Resources\**\*.png" />
+    <EmbeddedResource Include="Resources\**\*.png" LogicalName="xc-osu.Resources.$([System.String]::Copy(%(RecursiveDir)).Replace('/','.').Replace('\','.'))%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

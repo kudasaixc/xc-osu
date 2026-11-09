@@ -1,0 +1,22 @@
+[Unit]
+Description=xc-osu! server (API v2 + spectator/multiplayer/metadata) — xc softworks
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=admin
+Group=admin
+WorkingDirectory=/var/www/osu/server/publish
+ExecStart=/home/admin/.dotnet/dotnet /var/www/osu/server/publish/xc-osu-server.dll
+Environment=DOTNET_ROOT=/home/admin/.dotnet
+Environment=DataDirectory=/var/lib/xc-osu
+Environment=Urls=http://127.0.0.1:5080
+Environment=ASPNETCORE_ENVIRONMENT=Production
+Environment=DOTNET_gcServer=0
+Environment=DOTNET_GCHeapHardLimit=0x30000000
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

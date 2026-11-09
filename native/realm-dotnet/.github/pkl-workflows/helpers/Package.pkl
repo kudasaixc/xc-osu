@@ -1,0 +1,141 @@
+module package
+
+import "package://pkg.pkl-lang.org/github.com/stefma/pkl-gha/com.github.action@0.0.4#/GitHubAction.pkl" as gha
+import "Actions.pkl"
+import "Common.pkl"
+import "Steps.pkl"
+
+const unityPkgName = "io.realm.unity-${{ needs.\(Common.job_Packages).outputs.\(Steps.getVersionOutput) }}.tgz"
+
+local const setVersionSuffixStep = "set-version-suffix"
+local const checkDocfxCacheStep = "check-docfx-cache"
+
+local const buildSuffixOutput = "build_suffix"
+
+function nuget(shouldBuildDocsCondition: String): gha.Job = new {
+  name = "Package NuGet"
+  `runs-on` = new gha.WindowsLatest {}
+  `if` = Common.ifNotCanceledCondition
+  outputs {
+    [Steps.getVersionOutput] = Steps.getVersionExpresssion
+  }
+  `timeout-minutes` = 30
+  steps {
+    ...Steps.checkout(false)
+    Steps.setupDotnet("8.0.x")
+    setVersionSuffix
+    ...Steps.fetchWrappers(null)
+    ...Steps.msbuild(new Steps.MSBuildConfig {
+      projects = Common.packages.map((pkg) -> "Realm/\(pkg)").toListing()
+      target = "Pack"
+      properties {
+        ["PackageOutputPath"] = "${{ github.workspace }}/Realm/packages"
+        ["VersionSuffix"] = "${{ steps.\(setVersionSuffixStep).outputs.\(buildSuffixOutput) }}"
+      }
+    })
+    Steps.readVersionFromPackage()
+    for (pkgName in Common.packages) {
+      let (finalPkgName = "\(pkgName).\(Steps.getVersionExpresssion)")
+        Steps.uploadArtifacts(finalPkgName, "Realm/packages/\(finalPkgName).*nupkg")
+    }
+    Steps.uploadArtifacts("ExtractedChangelog", "Realm/Realm/ExtractedChangelog.md")
+    ...buildDocs(shouldBuildDocsCondition)
+  }
+}
+function unity(): gha.Job = new {
+  name = "Package Unity"
+  `runs-on` = new gha.WindowsLatest {}
+  `timeout-minutes` = 30
+  `if` = Common.ifNotCanceledCondition
+  needs {
+    Common.job_Packages
+  }
+  steps {
+    ...Steps.checkout(false)
+    ...Steps.fetchPackages(null)
+    new {
+      name = "Build Unity"
+      run = "dotnet run --project Tools/SetupUnityPackage/ -- realm --packages-path Realm/packages --pack"
+    }
+    Steps.uploadArtifacts(unityPkgName, "Realm/Realm.Unity/\(unityPkgName)")
+    new {
+      name = "Build Tests"
+      run = "dotnet run --project Tools/SetupUnityPackage/ -- tests --realm-package Realm/Realm.Unity/\(unityPkgName)"
+    }
+    Steps.uploadArtifacts("UnityTests", "Tests/Tests.Unity")
+  }
+}
+
+local const setVersionSuffix: gha.Step = new {
+  name = "Set version suffix"
+  id = setVersionSuffixStep
+  // Build suffix is pr-1234.5 for pr builds or alpha.123 for branch builds.
+  run = """
+    $suffix = ""
+    if ($env:GITHUB_EVENT_NAME -eq "pull_request")
+    {
+      if (-Not "${{ github.head_ref }}".Contains("release"))
+      {
+        $suffix = "pr-${{ github.event.number }}.$env:GITHUB_RUN_NUMBER"
+      }
+    }
+    else
+    {
+      $suffix = "alpha.$env:GITHUB_RUN_NUMBER"
+    }
+    echo "\(buildSuffixOutput)=$suffix" >> $Env:GITHUB_OUTPUT
+    """
+  shell = "pwsh"
+}
+
+local const function buildDocs(condition: String): Listing<gha.Step> = new {
+  new {
+    name = "Check Docfx cache"
+    id = checkDocfxCacheStep
+    `if` = condition
+    uses = Actions.cache
+    with {
+      ["path"] = "C:\\docfx"
+      ["key"] = "docfx-2.75.2"
+    }
+  }
+  new {
+    name = "Download docfx"
+    `if` = "\(condition) && steps.\(checkDocfxCacheStep).outputs.cache-hit != 'true'"
+    run = """
+      Invoke-WebRequest -Uri https://github.com/dotnet/docfx/releases/download/v2.75.2/docfx-win-x64-v2.75.2.zip -OutFile C:\\docfx.zip
+      Expand-Archive -Path C:\\docfx.zip -DestinationPath C:\\docfx
+      """
+  }
+  new {
+    name = "Build docs"
+    `if` = condition
+    env {
+      ["DOCFX_SOURCE_BRANCH_NAME"] = "${{ github.head_ref }}"
+    }
+    run = "C:\\docfx\\docfx Docs/docfx.json"
+  }
+  new {
+    name = "Update Improve this doc links"
+    `if` = condition
+    run = """
+      Get-ChildItem Docs/_site -Filter *.html -Recurse -File |
+      ForEach-Object {
+        $content = ($_ | Get-Content -Raw)
+        $content = $content -replace "/Docs/apispec/new\\?filename", "/Docs/apispec?filename"
+        Set-Content $_.FullName $content
+      }
+      """
+    shell = "pwsh"
+  }
+  new {
+    name = "Archive docs"
+    `if` = condition
+    run = """
+      Compress-Archive -Path Docs/_site -DestinationPath "Realm/packages/Docs.zip"
+      """
+  }
+  (Steps.uploadArtifacts("Docs.zip", "Realm/packages/Docs.zip")) {
+    `if` = condition
+  }
+}

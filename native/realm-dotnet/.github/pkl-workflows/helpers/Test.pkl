@@ -1,0 +1,513 @@
+module test
+
+import "package://pkg.pkl-lang.org/github.com/stefma/pkl-gha/com.github.action@0.0.4#/GitHubAction.pkl" as gha
+import "Common.pkl"
+import "Package.pkl"
+import "Steps.pkl"
+
+local const actionReportTestResults = "dorny/test-reporter@31a54ee7ebcacc03a09ea97a7e5465a47b84aea5"
+
+local const outputFile = "TestResults.xml"
+local const executableExpression = "${{ steps.dotnet-publish.outputs.executable-path }}"
+
+// Public test targets
+function netFramework(): gha.Job = testJob(
+  new TestConfig {
+    title = ".NET Framework"
+    needsPackages = true
+  },
+  new gha.WindowsLatest {},
+  null,
+  (config) -> new Listing<gha.Step> {
+    ...prepareTests(config)
+    ...buildTests(new Steps.MSBuildConfig {
+      projects {
+        "Tests/Realm.Tests"
+      }
+      properties {
+        ["TargetFramework"] = "net461"
+      }
+      standaloneExe = true
+    })
+    new {
+      name = "Run the tests"
+      run = "./Tests/Realm.Tests/bin/\(Common.configuration)/net461/Realm.Tests.exe --result=\(outputFile) --labels=After"
+    }
+    ...reportTestResults(config)
+  })
+
+function netCore(frameworks: Listing<Common.NetFramework>): gha.Job = testJob(
+  new TestConfig {
+    needsPackages = true
+    title = "${{ matrix.framework }}, ${{ (matrix.os.runner == 'win81' && 'win81') || matrix.os.runtime }}"
+    shouldCleanWorkspace = true
+  },
+  "${{ matrix.os.runner }}",
+  new gha.Strategy {
+    matrix {
+      ["framework"] = frameworks
+      ["os"] = new {
+        new { runner = "windows-latest" runtime = "win-x64" }
+        new { runner = "ubuntu-latest" runtime = "linux-x64" }
+        new { runner = "macos-13" runtime = "osx-x64" }
+        new { runner = "macos-latest" runtime = "osx-arm64" }
+      }
+    }
+    `fail-fast` = false
+  },
+  (config) -> new Listing<gha.Step> {
+    ...prepareTests(config)
+    // To avoid NU5037 error
+    new {
+      name = "Clear nuget cache"
+      run = "dotnet nuget locals all --clear"
+      `if` = "${{ matrix.os.runner == 'win81' }}"
+    }
+    new {
+      id = "get-net-version"
+      name = "Extract .NET version"
+      run = """
+          NET_VERSION=$(echo '${{ matrix.framework }}.x' | sed 's/net//g')
+          echo "version=$NET_VERSION" >> $GITHUB_OUTPUT
+        """
+      shell = "bash"
+    }
+    Steps.setupDotnet("${{ steps.get-net-version.outputs.version }}")
+    ...Steps.dotnetPublish("Tests/Realm.Tests", "${{ matrix.framework }}", "${{ matrix.os.runtime }}", getTestProps(true))
+    ...dotnetRunTests(true)
+    ...reportTestResults(config)
+  })
+
+function weaver(): gha.Job = testJob(
+  new TestConfig {
+    title = "Weaver"
+    shouldCleanWorkspace = true
+  },
+  "${{ matrix.os.runner }}",
+  new gha.Strategy {
+    matrix {
+      ["os"] = new {
+        new { runner = "windows-latest" runtime = "win-x64" }
+        new { runner = "ubuntu-latest" runtime = "linux-x64" }
+        new { runner = "macos-14" runtime = "osx-arm64" }
+      }
+    }
+    `fail-fast` = false
+  },
+  (config) -> new Listing<gha.Step> {
+    ...Steps.checkout(false)
+    ...Steps.dotnetPublish("Tests/Weaver/Realm.Fody.Tests", "net8.0", "${{ matrix.os.runtime }}", new Mapping {}).toList()
+    ...dotnetRunTests(false)
+    ...reportTestResults(config)
+  })
+
+function xunit(): gha.Job = testJob(
+  new TestConfig {
+    title = "xUnit Compatibility"
+    needsPackages = true
+  },
+  new gha.WindowsLatest {},
+  null,
+  (config) -> new Listing<gha.Step> {
+    ...prepareTests(config)
+    ...Steps.dotnetPublish("Tests/Tests.XUnit", "net8.0", "win-x64", new Mapping {}).toList()
+    new {
+      name = "Run Tests"
+      run = "dotnet test \(executableExpression)/Tests.XUnit.dll --logger GitHubActions"
+    }
+  })
+
+function sourceGeneration(): gha.Job = testJob(
+  new TestConfig {
+    title = "Source Generation"
+  },
+  new gha.WindowsLatest {},
+  null,
+  (config) -> new Listing<gha.Step> {
+    ...Steps.checkout(false)
+    ...Steps.dotnetPublish("Tests/SourceGenerators/Realm.SourceGenerator.Tests", "net8.0", "win-x64", new Mapping {}).toList()
+    ...dotnetRunTests(false)
+    ...reportTestResults(config)
+  })
+
+function wovenClasses(): gha.Job = testJob(
+  new TestConfig {
+    needsPackages = true
+    title = "Woven Classes"
+  },
+  new gha.WindowsLatest {},
+  null,
+  (config) -> new Listing<gha.Step> {
+    ...prepareTests(config)
+    ...Steps.dotnetPublish("Tests/Realm.Tests", "net8.0", "win-x64", (getTestProps(true)) {
+      ["TestWeavedClasses"] = "true"
+    })
+    ...dotnetRunTests(false)
+    ...reportTestResults(config)
+  }
+)
+
+function iOS_Maui(): gha.Job = testJob(
+  new TestConfig {
+    needsPackages = true
+    title = "Maui.iOS"
+    transformResults = true
+  },
+  "macos-latest",
+  null,
+  (config) -> new Listing<gha.Step> {
+    ...prepareTests(config)
+    ...Steps.setupMaui()
+    Steps.setupXcode("latest-stable")
+    Steps.dotnetBuild("Tests/Tests.Maui", "net8.0-ios", null, getTestProps(false))
+    Steps.runSimulator(new Steps.SimulatorConfig {
+      appPath = "Tests/Tests.Maui/bin/\(Common.configuration)/net8.0-ios/iossimulator-arm64/Tests.Maui.app"
+      arguments = "--headless --result=${{ github.workspace }}/\(outputFile) --labels=All"
+      bundleId = "io.realm.mauitests"
+      iphoneToSimulate = "iPhone-15"
+      os = "iOS"
+    })
+    ...reportTestResults(config)
+  })
+
+function macOS_Maui(): gha.Job = testJob(
+  new TestConfig {
+    needsPackages = true
+    title = "Maui.MacCatalyst"
+    transformResults = true
+  },
+  "macos-latest",
+  null,
+  (config) -> new Listing<gha.Step> {
+    ...prepareTests(config)
+    ...Steps.setupMaui()
+    Steps.setupXcode("latest-stable")
+    Steps.dotnetBuild("Tests/Tests.Maui", "net8.0-maccatalyst", null, getTestProps(false))
+    new {
+      name = "Run the tests"
+      run = "Tests/Tests.Maui/bin/\(Common.configuration)/net8.0-maccatalyst/maccatalyst-x64/Tests.Maui.app/Contents/MacOS/Tests.Maui --headless --result=${{ github.workspace }}/\(outputFile) --labels=All"
+    }
+    ...reportTestResults(config)
+  })
+
+function uwp(): gha.Job = testJob(
+  new TestConfig {
+    needsPackages = true
+    title = "UWP"
+  },
+  new gha.WindowsLatest {},
+  null,
+  (config) -> new Listing<gha.Step> {
+    ...prepareTests(config)
+    new {
+      name = "Import test certificate"
+      run = """
+        $pfx_cert_byte = [System.Convert]::FromBase64String("${{ secrets.Base64_Encoded_Pfx }}")
+        $currentDirectory = Get-Location
+        [IO.File]::WriteAllBytes("${{ github.workspace }}\\Tests\\Tests.UWP\\Tests.UWP_TemporaryKey.pfx", $pfx_cert_byte)
+        certutil -f -p "${{ secrets.Pfx_Password }}" -importpfx my ${{ github.workspace }}\\Tests\\Tests.UWP\\Tests.UWP_TemporaryKey.pfx
+        """
+      shell = "powershell"
+    }
+    ...buildTests(new Steps.MSBuildConfig {
+      projects {
+        "Tests/Tests.UWP"
+      }
+      properties {
+        ["AppxBundle"] = "Always"
+        ["PackageCertificateKeyFile"] = "${{ github.workspace }}\\Tests\\Tests.UWP\\Tests.UWP_TemporaryKey.pfx"
+        ["PackageCertificatePassword"] = "${{ secrets.Pfx_Password }}"
+        ["UseDotNetNativeToolchain"] = "false"
+        ["AppxBundlePlatforms"] = "x64"
+      }
+    })
+    new {
+      name = "Run the tests"
+      run = "./Tests/Tests.UWP/RunTests.ps1"
+      shell = "powershell"
+    }
+    ...reportTestResultsWithCustomFile("${{ env.TEST_RESULTS }}", config)
+  })
+
+function android_Maui(): gha.Job = testJob(
+  new TestConfig {
+    needsPackages = true
+    title = "Maui.Android"
+    transformResults = true
+  },
+  new gha.WindowsLatest {},
+  null,
+  (config) -> new Listing<gha.Step> {
+    Steps.setupJDK()
+    ...prepareTests(config)
+    ...Steps.setupMaui()
+    ...Steps.dotnetPublish("Tests/Tests.Maui", "net8.0-android", /* runtime */ null, getTestProps(false))
+    ...Steps.runDeviceFarm(new Steps.DeviceFarmConfig {
+      apkPath = "${{ github.workspace }}/Tests/Tests.Maui/bin/Release/net8.0-android/publish/io.realm.mauitests-Signed.apk"
+      appId = "io.realm.mauitests"
+    })
+    ...reportTestResultsWithCustomFile("${{ steps.run_tests.outputs.test-results-path }}", config)
+  })
+
+function codeCoverage(wrappersJob: String): gha.Job = (testJob(
+  new TestConfig {
+    title = "Code Coverage"
+    usedWrappers = List("linux-x86_64")
+  },
+  new gha.UbuntuLatest {},
+  null,
+  (config) -> new Listing<gha.Step> {
+    ...prepareTests(config)
+    new {
+      name = "Setup Coverlet & Report Generator"
+      run = """
+        dotnet tool install coverlet.console --tool-path tools
+        dotnet tool install dotnet-reportgenerator-globaltool --tool-path tools
+        echo "${{ github.workspace }}/tools" >> $GITHUB_PATH
+        """
+    }
+    ...Steps.dotnetPublish("Tests/Realm.Tests", "net8.0", "linux-x64", new Mapping { ["RealmTestsStandaloneExe"] = "true" })
+    new gha.Step {
+      name = "Run the tests"
+      run = "./tools/coverlet ./Tests/Realm.Tests/bin/\(Common.configuration)/net8.0/linux-x64 -t \(executableExpression) -a '--result=\(outputFile) --labels=After' -f lcov -o ./report.lcov --exclude '[Realm.Tests]*' --exclude '[Realm.Fody]*'"
+    } |> enableCoreDumps(true)
+    archiveCoreDump()
+    ...Steps.publishCoverage("./report.lcov")
+    ...reportTestResults(config)
+  })) {
+  needs {
+    wrappersJob
+  }
+}
+
+function unity(config: UnityTestConfig): Mapping<String, gha.Job> = new Mapping<String, gha.Job> {
+  ["build-unity-tests-\(config.os)"] = new gha.Job {
+    name = "Build Unity \(config.os)"
+    `runs-on` = new Listing<String> {
+      "unity"
+      config.os
+    }
+    needs {
+      Common.job_Packages
+      Common.job_Unity
+    }
+    `timeout-minutes` = 30
+    `if` = Common.ifNotCanceledCondition
+    steps {
+      ...Steps.checkout(false)
+      Steps.cleanupWorkspace()
+      Steps.downloadArtifacts(Package.unityPkgName, "Realm/Realm.Unity")
+      Steps.downloadArtifacts("UnityTests", "Tests/Tests.Unity")
+      new {
+        name = "Build Unity Tests"
+        run = "unity-editor -runTests -batchmode -projectPath ${{ github.workspace }}/Tests/Tests.Unity -testPlatform Standalone\(config.platform()) -testSettingsFile ${{ github.workspace }}/Tests/Tests.Unity/.TestConfigs/\(config.settings).json -logFile \(if (config.os == "windows") "build.log" else "-")"
+      }
+      Steps.uploadArtifacts("UnityTestsRunner.\(config.os)", "Tests/Tests.Unity/Player_Standalone\(config.platform())_\(config.settings)/")
+    }
+  }
+  ["run-unity-tests-\(config.os)"] = new gha.Job {
+    name = "Test Unity \(config.os)"
+    `runs-on` = config.runsOn()
+    `timeout-minutes` = 30
+    `if` = Common.ifNotCanceledCondition
+    needs {
+      "build-unity-tests-\(config.os)"
+    }
+    steps {
+      ...Steps.checkout(false)
+      Steps.downloadArtifacts("UnityTestsRunner.\(config.os)", "TestRunner")
+      when (config.os == "linux") {
+        new {
+          name = "Install xvfb"
+          run = "sudo apt install -y xvfb libglu1 libxcursor1"
+        }
+        new {
+          name = "Run Tests"
+          run = """
+            chmod +x ${{ github.workspace }}/TestRunner/PlayerWithTests.x86_64
+            xvfb-run --auto-servernum --server-args='-screen 0 640x480x24:32' ${{ github.workspace }}/TestRunner/PlayerWithTests.x86_64 -logFile - --result=${{ github.workspace }}/\(outputFile)
+            """
+        }
+      }
+      when (config.os == "windows") {
+        new {
+          name = "Run Tests"
+          run = #"""
+            Start-Process ${{ github.workspace }}\TestRunner\PlayerWithTests.exe -Wait -ArgumentList "-logFile","${{ github.workspace }}\test.log","--result=${{ github.workspace }}\\#(outputFile)"
+            cat ${{ github.workspace }}\test.log
+            """#
+          shell = "pwsh"
+        }
+      }
+      ...reportTestResults(new TestConfig {
+        title = "Unity \(config.os) \(config.settings)"
+      })
+    }
+  }
+}
+
+function benchmark(): gha.Job = testJob(
+  new TestConfig {
+    title = "Benchmark"
+    shouldCleanWorkspace = true
+    needsPackages = true
+  },
+  "performance-tests",
+  null,
+  (config) -> new Listing<gha.Step> {
+    local find_results_step = "find-results-file"
+    local find_results_output = "benchmark-results"
+
+    ...prepareTests(config)
+    // To avoid NU5037 error
+    new {
+      name = "Clear nuget cache"
+      run = "dotnet nuget locals all --clear"
+    }
+    ...Steps.dotnetPublish("Tests/Benchmarks/PerformanceTests", "net8.0", "linux-x64", getTestProps(true))
+    new {
+      name = "Run the tests"
+      run = "\(executableExpression)/PerformanceTests -f \"*\" --join"
+    }
+    new {
+      name = "Find Results file"
+      run = """
+        cd BenchmarkDotNet.Artifacts/results
+        file=$(basename BenchmarkRun*json)
+        echo "\(find_results_output)=$file" >> $GITHUB_OUTPUT
+        """
+      shell = "bash"
+      id = find_results_step
+    }
+    new {
+      name = "Publish Benchmark Results"
+      uses = "./github/actions/benchmark-uploader"
+      with {
+        ["realm-token"] = "${{ secrets.Realm_Token }}"
+        ["file"] = "${{ github.workspace }}/BenchmarkDotNet.Artifacts/results/${{ steps.\(find_results_step).outputs.\(find_results_output) }}"
+        ["dashboard-path"] = "dashboard.charts"
+        ["nuget-package"] = "${{ github.workspace }}/Realm/packages/Realm.${{ needs.\(Common.job_Packages).outputs.\(Steps.getVersionOutput) }}.nupkg"
+      }
+    }
+    Steps.uploadArtifacts("dashboard.charts", "dashboard.charts")
+  })
+
+class UnityTestConfig {
+  os: "windows"|"linux"
+  settings: String = "Mono-Net4"
+
+  function platform() = "\(os.capitalize())64"
+  function runsOn(): gha.Machine = if (os == "windows") new gha.WindowsLatest {} else if (os == "linux") new gha.UbuntuLatest {} else throw("invalid os: \(os)")
+}
+
+// Private helpers
+local function testJob(config: TestConfig, runsOn: gha.Machine|String, _strategy: gha.Strategy?, _steps: Function1<TestConfig, Listing<gha.Step>>): gha.Job = (if (_strategy != null) new gha.Job {
+  strategy = _strategy
+} else new gha.Job {}) {
+  name = "Test \(config.title)"
+  `runs-on` = runsOn
+  when (config.needsPackages) {
+    needs {
+      Common.job_Packages
+    }
+  }
+  `if` = Common.ifNotCanceledCondition
+  `timeout-minutes` = Common.testTimeout
+  steps = _steps.apply(config)
+}
+
+local function prepareTests(config: TestConfig(needsPackages == true || !usedWrappers.isEmpty)): Listing<gha.Step> = new Listing {
+  ...Steps.checkout(false)
+  ...cleanWorkspace(config.shouldCleanWorkspace)
+  ...fetchTestArtifacts(config.usedWrappers)
+}
+
+local function cleanWorkspace(shouldClean: Boolean): Listing<gha.Step> = new Listing {
+  when (shouldClean) {
+    Steps.cleanupWorkspace()
+  }
+}
+
+local function fetchTestArtifacts(wrappers: List<String>(every((wrapper) -> Common.wrapperBinaryNames.contains(wrapper)))): List<gha.Step> =
+  if (!wrappers.isEmpty) Steps.fetchWrappers(wrappers)
+  else Steps.fetchPackages(Common.nugetPackages)
+
+local function buildTests(config: Steps.MSBuildConfig): Listing<gha.Step> = Steps.msbuild((config) {
+  properties {
+    ...getTestProps(config.standaloneExe)
+  }
+})
+
+local function reportTestResults(config: TestConfig): Listing<gha.Step> = reportTestResultsWithCustomFile(outputFile, config)
+
+local function reportTestResultsWithCustomFile(_outputFile: String, config: TestConfig): Listing<gha.Step> = new {
+  local __outputFile = if (config.transformResults) "\(_outputFile)_transformed.xml" else _outputFile
+  when (config.transformResults) {
+    new {
+      name = "Transform Results"
+      run = "xsltproc --output \(__outputFile) Tests/Realm.Tests/EmbeddedResources/nunit3-junit.xslt \(_outputFile)"
+    }
+  }
+  new {
+    name = "Publish Unit Test Results"
+    uses = actionReportTestResults
+    `if` = "always()"
+    with {
+      ["name"] = "Results \(config.title)"
+      ["path"] = __outputFile
+      ["reporter"] = "java-junit"
+      ["list-suites"] = "failed"
+      ["path-replace-backslashes"] = true
+      ["fail-on-error"] = true
+    }
+  }
+}
+
+local function getTestProps(standaloneExe: Boolean): Mapping<String, String> = new Mapping {
+  ["RestoreConfigFile"] = "Tests/Test.NuGet.Config"
+  ["UseRealmNupkgsWithVersion"] = "${{ needs.\(Common.job_Packages).outputs.\(Steps.getVersionOutput) }}"
+  when (standaloneExe) {
+    ["RealmTestsStandaloneExe"] = "true"
+  }
+}
+
+local function dotnetRunTests(enableCoreDumps: Boolean): Listing<gha.Step> = new Listing {
+  new gha.Step {
+    name = "Run the tests"
+    run = "\(executableExpression) --result=\(outputFile) --labels=After"
+  } |> enableCoreDumps(enableCoreDumps)
+  when (enableCoreDumps) {
+    archiveCoreDump()
+  }
+}
+
+local function enableCoreDumps(enable: Boolean): Mixin<gha.Step> = new Mixin<gha.Step> {
+  when (enable) {
+    env {
+      ["DOTNET_DbgEnableMiniDump"] = 1
+      ["DOTNET_EnableCrashReport"] = 1
+    }
+  }
+}
+
+local function archiveCoreDump(): gha.Step = (Steps.uploadArtifacts("crash-report-net-core-${{ runner.os }}-${{ runner.arch }}", "/tmp/coredump*")) {
+  name = "Archive core dump"
+  `if` = "${{ failure() && runner.os != 'Windows' }}"
+  with {
+    ["retention-days"] = 30
+    ["if-no-files-found"] = "warn"
+  }
+}
+
+local class MatrixOS {
+  runner: "windows-latest"|"ubuntu-latest"|"macos-13"|"macos-latest"
+  runtime: Common.NetRuntime
+}
+
+local class TestConfig {
+  title: String
+  needsPackages: Boolean = false
+  usedWrappers: List<String>(every((wrapper) -> Common.wrapperBinaryNames.contains(wrapper)))
+  shouldCleanWorkspace: Boolean = false
+  transformResults: Boolean = false
+}

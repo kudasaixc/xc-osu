@@ -1,0 +1,24 @@
+[submodule "ext/SPIRV-Cross"]
+	path = ext/SPIRV-Cross
+	url = https://github.com/KhronosGroup/SPIRV-Cross
+[submodule "ext/shaderc"]
+	path = ext/shaderc
+	url = https://github.com/google/shaderc
+[submodule "ext/glslang"]
+	path = ext/glslang
+	url = https://github.com/KhronosGroup/glslang
+[submodule "ext/re2"]
+	path = ext/re2
+	url = https://github.com/google/re2
+[submodule "ext/effcee"]
+	path = ext/effcee
+	url = https://github.com/google/effcee
+[submodule "ext/googletest"]
+	path = ext/googletest
+	url = https://github.com/google/googletest
+[submodule "ext/spirv-headers"]
+	path = ext/spirv-headers
+	url = https://github.com/KhronosGroup/SPIRV-Headers
+[submodule "ext/spirv-tools"]
+	path = ext/spirv-tools
+	url = https://github.com/KhronosGroup/SPIRV-Tools

@@ -1,0 +1,40 @@
+module pr
+
+amends "package://pkg.pkl-lang.org/github.com/stefma/pkl-gha/com.github.action@0.0.4#/GitHubAction.pkl"
+
+import "helpers/Common.pkl"
+
+local netCoreFrameworks: Listing<Common.NetFramework> = new {
+  "net8.0"
+}
+
+name = "PR Build"
+on {
+  pull_request {
+    paths {
+      "**.cs"
+      "**.cpp"
+      "**.hpp"
+      "**.csproj"
+      "**CMakeLists.txt"
+      "**.ps1"
+      "**.sh"
+      "**.props"
+      "wrappers/realm-core"
+      ".github/workflows/*.yml"
+      "!.github/workflows/main.yml"
+      "!.github/workflows/publish-*.yml"
+      ".github/actions/**"
+      "Tests/Tests.Android/Properties/AndroidManifest.xml"
+    }
+  }
+}
+
+env = Common.defaultEnv
+
+concurrency {
+  group = "${{ github.head_ref || github.run_id }}"
+  `cancel-in-progress` = true
+}
+
+jobs = Common.defaultBuildJobs(netCoreFrameworks)

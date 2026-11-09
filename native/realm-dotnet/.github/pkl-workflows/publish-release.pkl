@@ -1,0 +1,175 @@
+module release
+
+amends "package://pkg.pkl-lang.org/github.com/stefma/pkl-gha/com.github.action@0.0.4#/GitHubAction.pkl"
+
+import "helpers/Common.pkl"
+import "helpers/Steps.pkl"
+import "helpers/Actions.pkl"
+
+local main_job = "main"
+local deployment_step = "deploy-pages"
+
+name = "Publish Release"
+on {
+  workflow_dispatch{}
+}
+env = Common.defaultEnv
+jobs {
+  ["main"] {
+    `runs-on` = new WindowsLatest{}
+    name = "Publish Release"
+    environment {
+      name = "Production"
+    }
+    steps {
+      Steps.checkoutWithoutMatchers(false)
+      Steps.downloadAllArtifacts()
+      Steps.readVersionFromPackage()
+      ...uploadToNuGet()
+      ...Steps.uploadToNPM("latest")
+      ...mergeReleasePR()
+      publishGithubRelease()
+      ...updateChangelogForvNext()
+      postReleaseToSlack()
+    }
+  }
+  ["deploy-docs"] = new Job {
+    `runs-on` = new UbuntuLatest{}
+    name = "Deploy Docs"
+    environment {
+      name = "github-pages"
+      url = "${{ steps.\(deployment_step).outputs.page_url }}"
+    }
+    needs {
+      main_job
+    }
+    permissions {
+      pages = "write"
+      `id-token` = "write"
+      contents = "read"
+    }
+    steps {
+      Steps.checkoutWithoutMatchers(false)
+      Steps.downloadAllArtifacts()
+      ...uploadDocs()
+    }
+  }
+}
+
+local function uploadDocs(): Listing<Step> = new {
+  new Step {
+    name = "Expand docs"
+    run = "Expand-Archive -Path Realm/packages/Docs.zip/Docs.zip -DestinationPath Realm/packages"
+    shell = "pwsh"
+  }
+  new Step {
+    name = "Upload pages artifact"
+    uses = Actions.uploadPagesArtifact
+    with {
+      ["path"] = "${{ github.workspace }}/Realm/packages/_site"
+    }
+  }
+  new Step {
+    name = "Deploy pages"
+    uses = Actions.deployPages
+    id = deployment_step
+  }
+}
+
+local function uploadToNuGet(): Listing<Step> = new {
+  for (package in Common.nugetPackages) {
+    let (packageWithVersion = "\(package).\(Steps.getVersionExpresssion)")
+      new Step {
+        name = "NuGet Publish \(packageWithVersion)"
+        run = "dotnet nuget push ${{ github.workspace }}/Realm/packages/\(packageWithVersion)/\(packageWithVersion).nupkg --skip-duplicate --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json"
+      }
+  }
+}
+
+local function mergeReleasePR(): Listing<Step> = new {
+  local find_pr_step = "find-pull-request"
+  new Step {
+    name = "Find Release PR"
+    uses = Actions.findPR
+    id = find_pr_step
+    with {
+      ["branch"] = "${{ github.ref }}"
+    }
+  }
+  mergePR("${{ steps.\(find_pr_step).outputs.number }}")
+}
+
+local function mergePR(numberExpression: String): Step = new {
+  name = "Merge Pull Request"
+  uses = Actions.mergePR
+  with {
+    ["github-token"] = "${{ secrets.GITHUB_TOKEN }}"
+    ["number"] = numberExpression
+    ["method"] = "squash"
+  }
+}
+
+local function publishGithubRelease(): Step = new {
+  name = "Publish Github Release"
+  uses = Actions.publishGithubRelease
+  with {
+    ["artifacts"] = "Realm/packages/io.realm.unity-\(Steps.getVersionExpresssion).tgz/io.realm.unity-\(Steps.getVersionExpresssion).tgz"
+    ["bodyFile"] = "Realm/packages/ExtractedChangelog/ExtractedChangelog.md"
+    ["name"] = Steps.getVersionExpresssion
+    ["commit"] = Common.mainBranch
+    ["tag"] = Steps.getVersionExpresssion
+    ["token"] = "${{ secrets.GITHUB_TOKEN }}"
+    ["draft"] = false
+  }
+}
+
+local function updateChangelogForvNext(): Listing<Step> = new {
+  local create_pr_step = "vnext-pr"
+  new {
+    name = "Update Changelog"
+    run = """
+      echo "## vNext (TBD)
+
+      ### Enhancements
+      * None
+
+      ### Fixed
+      * None
+
+      ### Compatibility
+      * Realm Studio: 15.0.0 or later.
+
+      ### Internal
+      * Using Core x.y.z.
+      " | cat - CHANGELOG.md >> temp
+      mv temp CHANGELOG.md
+      """
+    shell = "bash"
+  }
+  new {
+    name = "Create vNext PR"
+    id = create_pr_step
+    uses = Actions.createPR
+    with {
+      ["branch"] = "prepare-vnext"
+      ["title"] = "Prepare for vNext"
+      ["body"] = "Update Changelog for vNext"
+      ["delete-branch"] = true
+      ["base"] = Common.mainBranch
+      ["commit-message"] = "Prepare for vNext"
+      ["labels"] = "no-jira-ticket"
+    }
+  }
+  mergePR("${{ steps.\(create_pr_step).outputs.pull-request-number }}")
+}
+
+local function postReleaseToSlack(): Step = new {
+  name = "Post to #realm-releases"
+  uses = Actions.releaseToSlack
+  with {
+    ["changelog"] = "Realm/packages/ExtractedChangelog/ExtractedChangelog.md"
+    ["sdk"] = ".NET"
+    ["webhook-url"] = "${{ secrets.SLACK_RELEASE_WEBHOOK }}"
+    ["version"] = Steps.getVersionExpresssion
+  }
+}
