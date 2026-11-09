@@ -40,11 +40,31 @@
   </PropertyGroup>
   <!-- wasm C ABI fix for struct-by-value args in realm's native->managed callbacks (see tools/fix-pinvoke-structs.py) -->
   <Target Name="XcFixPInvokeStructArgs" AfterTargets="_GenerateManagedToNative" Condition="Exists('$(_WasmPInvokeTablePath)')">
-    <Exec Command="python3 /var/www/osu/tools/fix-pinvoke-structs.py &quot;$(_WasmPInvokeTablePath)&quot;" />
+    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)../../tools/fix-pinvoke-structs.py&quot; &quot;$(_WasmPInvokeTablePath)&quot;" />
   </Target>
   <ItemGroup>
     <!-- xc-osu! branding textures, looked up before osu!.Game.Resources -->
     <EmbeddedResource Remove="Resources\**\*.png" />
     <EmbeddedResource Include="Resources\**\*.png" LogicalName="xc-osu.Resources.$([System.String]::Copy(%(RecursiveDir)).Replace('/','.').Replace('\','.'))%(Filename)%(Extension)" />
   </ItemGroup>
+
+  <!-- xc-osu!: mixed AOT (dotnet publish -p:XcAot=true). Hot assemblies are compiled to wasm with LLVM, the rest stays interpreted. -->
+  <PropertyGroup Condition="'$(XcAot)' == 'true'">
+    <RunAOTCompilation>true</RunAOTCompilation>
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>partial</TrimMode>
+    <DisableParallelAot Condition="'$(DisableParallelAot)' == ''">true</DisableParallelAot>
+    <!-- separate intermediates: AOT strips IL from assemblies, which must never leak into interpreter builds -->
+    <IntermediateOutputPath>obj/aot/</IntermediateOutputPath>
+    <OutputPath>bin/aot/</OutputPath>
+  </PropertyGroup>
+  <Target Name="XcSelectAotAssemblies" BeforeTargets="_WasmAotCompileApp" Condition="'$(XcAot)' == 'true'">
+    <PropertyGroup>
+      <_XcAotKeep>;System.Private.CoreLib;System.Collections;System.Collections.Concurrent;System.Linq;System.Memory;System.Runtime.Intrinsics;System.Numerics.Vectors;osu.Framework;osuTK;osu.Game.Rulesets.Osu;Realm;$(XcAotExtra);</_XcAotKeep>
+    </PropertyGroup>
+    <ItemGroup>
+      <_AOT_InternalForceInterpretAssemblies Include="@(_WasmAssembliesInternal)" Condition="!$(_XcAotKeep.Contains(';%(Filename);'))" />
+    </ItemGroup>
+    <Message Importance="High" Text="xc-osu! AOT: interpreting @(_AOT_InternalForceInterpretAssemblies->Count()) assemblies" />
+  </Target>
 </Project>

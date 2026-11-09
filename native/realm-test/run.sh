@@ -1,8 +1,8 @@
 #!/bin/bash
 # xc-osu! — fast native realm-core check under node (no .NET rebuild needed). xc softworks (kudasaixc)
 set -e
-source /var/www/osu/native/emenv.sh >/dev/null
-R=/var/www/osu/native; D=$(mktemp -d)
+source "$(dirname "$0")/../emenv.sh" >/dev/null
+R=$(cd "$(dirname "$0")/.." && pwd); D=$(mktemp -d)
 ZL=$(find ~/.dotnet/packs -name libz.a | grep multithread | head -1)
 em++ -O1 -pthread -fwasm-exceptions -std=c++17 -I$R/realm-dotnet/wrappers/realm-core/src -I$R/realm-build/realm-core/src \
   ${1:-$R/realm-test/concurrency.cpp} $R/realm-build/realm-core/src/realm/librealm.a $ZL \

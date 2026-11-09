@@ -54,6 +54,25 @@ namespace osu.Game.Graphics.Backgrounds
             if (seasonalBackgrounds.Value != null)
                 return;
 
+            // xc-osu!: the default backgrounds are served to everyone, so guests (no API session) fetch them anonymously.
+            if (api.State.Value == APIState.Offline)
+            {
+                var anonymous = new osu.Framework.IO.Network.JsonWebRequest<APISeasonalBackgrounds>($@"{api.Endpoints.APIUrl}/api/v2/seasonal-backgrounds");
+                anonymous.Finished += () =>
+                {
+                    var response = anonymous.ResponseObject;
+                    if (response == null) return;
+
+                    Schedule(() =>
+                    {
+                        seasonalBackgrounds.Value = response;
+                        current = RNG.Next(0, response.Backgrounds?.Count ?? 0);
+                    });
+                };
+                anonymous.PerformAsync().ContinueWith(t => _ = t.Exception, System.Threading.Tasks.TaskContinuationOptions.OnlyOnFaulted);
+                return;
+            }
+
             var request = new GetSeasonalBackgroundsRequest();
             request.Success += response =>
             {

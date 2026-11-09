@@ -25,7 +25,7 @@ const b = await chromium.launch({ executablePath: process.env.HOME + '/.cache/ms
   send('Target.setDiscoverTargets', { discover: true });
 }
 const p = await b.newPage({ viewport: { width: 1280, height: 720 } });
-p.on('console', m => console.log('[console.' + m.type() + ']', m.text().slice(0, 400)));
+p.on('console', m => console.log('[console.' + m.type() + ']', m.text().slice(0, +(process.env.XC_SHOT_MAX || 400))));
 p.on('response', r => { if (r.status() >= 400) console.log('[http ' + r.status() + ']', r.url()); });
 p.on('pageerror', e => console.log('[pageerror]', e.message));
 await p.goto(url);
@@ -36,6 +36,7 @@ for (const [op, a, c] of JSON.parse(script)) {
   else if (op === 'move') await p.mouse.move(a, c, { steps: 5 });
   else if (op === 'key') await p.keyboard.press(a);
   else if (op === 'type') await p.keyboard.type(a, { delay: 50 });
+  else if (op === 'eval') console.log('[eval] ' + JSON.stringify(await p.evaluate(a).catch(e => 'ERR ' + e.message)));
   else if (op === 'wait') await p.waitForTimeout(a);
   else if (op === 'shot') await p.screenshot({ path: a, timeout: 120000 }).catch(e => console.log('[shot] failed ' + e.message.split('\n')[0]));
   console.log('[script] ' + op + ' ' + (a ?? ''));

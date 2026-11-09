@@ -49,19 +49,15 @@ setInterval(flush, 15000);
 // ---------------------------------------------------------------- audio output (xcbass -> AudioWorklet)
 let audioCtx = null;
 let audioGate = null;
-function showAudioGate() {
-  if (audioGate || !audioCtx || audioCtx.state === 'running') return;
-  audioGate = document.createElement('div');
-  audioGate.id = 'xc-audio-gate';
-  audioGate.textContent = 'click anywhere to enable sound';
-  document.body.appendChild(audioGate);
-}
+function showAudioGate() { /* no prompt: audio starts silently on the first interaction (or immediately when installed as an app) */ }
 globalThis.xcAudioResume = () => {
   if (!audioCtx || audioCtx.state === 'running') return;
-  audioCtx.resume().then(() => { audioGate?.remove(); audioGate = null; }).catch(() => { });
+  audioCtx.resume().catch(() => { });
 };
 globalThis.xcAudioInit = async (memory, ring, ctrl, cap, rate) => {
-  const buffer = (memory ?? rt.Module.HEAPU8).buffer;
+  if (audioCtx) return;
+  const buffer = memory ? memory.buffer : (rt.Module.wasmMemory?.buffer ?? rt.Module.HEAPU8.buffer);
+  if (ctrl + 64 > buffer.byteLength) { console.error('[xc-osu!] audio ring outside the visible heap', ctrl, buffer.byteLength); return; }
   const ctrlView = new Int32Array(buffer, ctrl, 16);
   audioCtx = new AudioContext({ sampleRate: rate, latencyHint: 'interactive' });
   await audioCtx.audioWorklet.addModule(new URL('./js/xc-audio-worklet.js', import.meta.url));
@@ -82,6 +78,14 @@ globalThis.xcAudioInit = async (memory, ring, ctrl, cap, rate) => {
   audioCtx.onstatechange = () => { updateLatency(); if (audioCtx.state !== 'running') showAudioGate(); };
   if (audioCtx.state !== 'running') { xcAudioResume(); setTimeout(showAudioGate, 300); }
   console.log(`[xc-osu!] audio: ${audioCtx.sampleRate} Hz, base latency ${(audioCtx.baseLatency * 1000).toFixed(1)} ms`);
+};
+
+// xcbass may start its output from a worker thread: it then posts the ring location here.
+const audioChannel = new BroadcastChannel('xc-audio');
+audioChannel.onmessage = (e) => {
+  if (audioCtx) return;
+  const { ring, ctrl, cap, rate } = e.data;
+  globalThis.xcAudioInit(null, ring, ctrl, cap, rate).catch((err) => console.error('[xc-osu!] audio init failed', err));
 };
 
 // ---------------------------------------------------------------- UI bridge

@@ -250,7 +250,7 @@ static Chan* new_chan(int type) {
 }
 
 // ------------------------------------------------------------------------------------------------ device state
-static int g_inited[2];
+static int g_inited[3];  // 0 = no sound, 1 = default, 2 = the browser's output (listed so frameworks see a real device)
 static int g_curDevice = 1;
 static int g_rate = DEVICE_RATE;
 static float* g_ring;
@@ -791,13 +791,20 @@ static void mixer_mix(Chan* m, float* out, int frames) {
 
 // ------------------------------------------------------------------------------------------------ device output
 EM_JS(void, xc_audio_js_init, (float* ring, int32_t* ctrl, int cap, int rate), {
-  var mem = (typeof wasmMemory !== 'undefined') ? wasmMemory : null;
-  var go = function () { globalThis.xcAudioInit && globalThis.xcAudioInit(mem, ring, ctrl, cap, rate); };
-  if (typeof ENVIRONMENT_IS_PTHREAD !== 'undefined' && ENVIRONMENT_IS_PTHREAD) { /* proxied below */ }
-  go();
+  // the AudioContext must live on the page. Under .NET's multithreaded runtime this may run on a worker,
+  // so hand the ring over to the page via a BroadcastChannel when xcAudioInit is not in scope.
+  if (typeof globalThis.xcAudioInit === 'function') {
+    globalThis.xcAudioInit((typeof wasmMemory !== 'undefined') ? wasmMemory : null, ring, ctrl, cap, rate);
+    return;
+  }
+  var ch = new BroadcastChannel('xc-audio');
+  ch.postMessage({ ring: ring, ctrl: ctrl, cap: cap, rate: rate });
+  ch.close();
 });
 
 static void js_init_main(void) { xc_audio_js_init(g_ring, g_ctrl, RING_FRAMES, g_rate); }
+
+static Chan g_devMix; // pseudo-mixer standing for the output device (only .freq is used by kid_render)
 
 static void device_block(float* out, int frames) {
   memset(out, 0, sizeof(float) * frames * 2);
@@ -806,7 +813,9 @@ static void device_block(float* out, int frames) {
     if (g_slots[i].type == T_FREE || g_slots[i].type == T_FX || g_slots[i].type == T_SYNC || g_slots[i].type == T_SAMPLE) continue;
     Chan* c = (Chan*)g_slots[i].p;
     if (!c || c->playing != 1 || (c->flags & F_DECODE) || c->mixer) continue;
-    int got = chan_read(c, kb, frames);
+    // resample to the device rate (e.g. osu-framework's 44.1 kHz BASSmix mixer on a 48 kHz output)
+    g_devMix.freq = g_rate;
+    int got = kid_render(&g_devMix, c, kb, frames);
     fx_apply(c, kb, frames, g_rate);
     apply_volpan(c, kb, frames);
     lvl_store(c, kb, frames, g_blockG);
@@ -917,11 +926,11 @@ EXPORT BOOL BASS_SetConfigPtr(DWORD option, const void* value) { if (option < 0x
 EXPORT const void* BASS_GetConfigPtr(DWORD option) { ok(); return option < 0x80 ? g_configPtr[option] : NULL; }
 
 EXPORT BOOL BASS_GetDeviceInfo(DWORD device, BASS_DEVICEINFO* info) {
-  if (device > 1) return fail(E_DEVICE);
+  if (device > 2) return fail(E_DEVICE);
   if (info) {
-    info->name = device == 0 ? "No sound" : "Default";
+    info->name = device == 0 ? "No sound" : device == 1 ? "Default" : "Web Audio (browser output)";
     info->driver = device == 0 ? "" : "xc-osu! Web Audio";
-    info->flags = 1 | (device == 1 ? 2 : 0) | (g_inited[device] ? 4 : 0);
+    info->flags = 1 | (device >= 1 ? 2 : 0) | (g_inited[device] ? 4 : 0);
   }
   ok(); return TRUE;
 }
@@ -930,11 +939,11 @@ EXPORT BOOL BASS_Init(int device, DWORD freq, DWORD flags, void* win, const void
   (void)freq; (void)flags; (void)win; (void)clsid;
   lock();
   if (device == -1) device = 1;
-  if (device < 0 || device > 1) { unlock(); return fail(E_DEVICE); }
+  if (device < 0 || device > 2) { unlock(); return fail(E_DEVICE); }
   if (g_inited[device]) { unlock(); return fail(E_ALREADY); }
   g_inited[device] = 1;
   g_curDevice = device;
-  if (device == 1) start_output();
+  if (device >= 1) start_output();
   unlock(); ok(); return TRUE;
 }
 
@@ -943,7 +952,7 @@ EXPORT BOOL BASS_Free(void) {
   g_inited[g_curDevice] = 0;
   unlock(); ok(); return TRUE;
 }
-EXPORT BOOL BASS_SetDevice(DWORD device) { if (device > 1) return fail(E_DEVICE); if (!g_inited[device]) return fail(E_INIT); g_curDevice = (int)device; ok(); return TRUE; }
+EXPORT BOOL BASS_SetDevice(DWORD device) { if (device > 2) return fail(E_DEVICE); if (!g_inited[device]) return fail(E_INIT); g_curDevice = (int)device; ok(); return TRUE; }
 EXPORT DWORD BASS_GetDevice(void) { if (!g_inited[g_curDevice]) { fail(E_INIT); return (DWORD)-1; } ok(); return (DWORD)g_curDevice; }
 EXPORT BOOL BASS_GetInfo(BASS_INFO* info) {
   if (!g_inited[g_curDevice]) return fail(E_INIT);

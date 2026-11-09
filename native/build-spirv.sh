@@ -1,7 +1,8 @@
 #!/bin/bash
 set -e
-source /var/www/osu/native/emenv.sh
-cd /var/www/osu/native/veldrid-spirv
+N=$(cd "$(dirname "$0")" && pwd)
+source $N/emenv.sh
+cd $N/veldrid-spirv
 mkdir -p build-wasm && cd build-wasm
 FLAGS="-pthread -fwasm-exceptions -msimd128 -O2"
 emcmake cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DPYTHON_EXECUTABLE=$(which python3) \

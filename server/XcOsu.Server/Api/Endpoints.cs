@@ -482,7 +482,20 @@ namespace XcOsu.Server.Api
 
             api.MapGet("/changelog", () => Json.Ok(new { builds = Array.Empty<object>(), streams = Array.Empty<object>() }));
             api.MapGet("/changelog/{stream}/{version}", () => Json.Error("Build not found", 404));
-            api.MapGet("/seasonal-backgrounds", () => Json.Ok(new { ends_at = DateTimeOffset.UtcNow.AddDays(30), backgrounds = Array.Empty<object>() }));
+            // default menu backgrounds for everyone: every image dropped into the site's backgrounds/ folder (no rebuild needed).
+            api.MapGet("/seasonal-backgrounds", (IConfiguration config) =>
+            {
+                string dir = config["BackgroundsDirectory"] ?? "/var/www/osu/site/backgrounds";
+                string publicBase = (config["PublicUrl"] ?? "https://osu.xcsoftworks.com").TrimEnd('/');
+                var files = Directory.Exists(dir)
+                    ? Directory.EnumerateFiles(dir).Where(f => f.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".png", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".webp", StringComparison.OrdinalIgnoreCase)).OrderBy(f => f, StringComparer.Ordinal)
+                    : Enumerable.Empty<string>();
+                return Json.Ok(new
+                {
+                    ends_at = DateTimeOffset.UtcNow.AddYears(1),
+                    backgrounds = files.Select(f => new { url = $"{publicBase}/backgrounds/{Uri.EscapeDataString(Path.GetFileName(f))}", user = (object?)null }).ToArray(),
+                });
+            });
             api.MapGet("/comments", () => Json.Ok(new
             {
                 comments = Array.Empty<object>(), has_more = false, has_more_id = (int?)null, included_comments = Array.Empty<object>(),
