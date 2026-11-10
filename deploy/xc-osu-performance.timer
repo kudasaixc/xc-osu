@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh xc-osu performance history every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+Unit=xc-osu-performance.service
+
+[Install]
+WantedBy=timers.target

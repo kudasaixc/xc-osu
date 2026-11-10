@@ -427,6 +427,7 @@ namespace osu.Framework.Threading
         /// with the time that work took in milliseconds. Must be cheap and must not throw.
         /// </summary>
         public static Action<GameThread, double>? FrameObserver;
+        public double LastSchedulerWorkMs { get; private set; }
 
         private GameThreadState? processFrame()
         {
@@ -463,6 +464,7 @@ namespace osu.Framework.Threading
                     synchronizationContext.RunWork();
                 }
 
+                if (observer != null) LastSchedulerWorkMs = System.Diagnostics.Stopwatch.GetElapsedTime(observedStart).TotalMilliseconds;
                 using (Monitor?.BeginCollecting(PerformanceCollectionType.Work))
                     OnNewFrame?.Invoke();
 

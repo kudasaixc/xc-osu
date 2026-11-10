@@ -16,7 +16,8 @@ import { PerfOverlay } from './js/xc-perf.js';
 const $ = (id) => document.getElementById(id);
 const say = (m) => console.log('[launch] ' + m);
 const query = new URLSearchParams(location.search);
-const build = new URL(import.meta.url).searchParams.get('v') || 'dev';
+const engineBuild = 'source'; // replaced by stamp.py from the published engine asset fingerprints
+const build = 'pacing1:' + engineBuild + ':' + (new URL(import.meta.url).searchParams.get('v') || 'dev');
 
 let options = loadOptions();
 let t = makeT(options.lang);

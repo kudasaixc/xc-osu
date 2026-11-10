@@ -1,0 +1,8 @@
+[Unit]
+Description=Update xc-osu aggregate performance history
+
+[Service]
+Type=oneshot
+User=admin
+WorkingDirectory=/var/www/osu
+ExecStart=/usr/bin/python3 /var/www/osu/tools/performance-history.py --output /var/www/osu/out/performance --public /var/www/osu/site/launcher/performance.json

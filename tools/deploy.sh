@@ -16,5 +16,5 @@ if [ "$2" = "test" ]; then
 fi
 # /dev/ keeps the interpreter build as a fallback once AOT is live
 [ "${1:-dev}" = "dev" ] && rsync -az --delete "$src"/ "$dst/dev/"
-rsync -az --delete --exclude=/dev/ --exclude=/aot/ --exclude=/backgrounds/ "$src"/ "$dst/"
+rsync -az --delete --exclude=/dev/ --exclude=/aot/ --exclude=/backgrounds/ --exclude=/launcher/performance.json "$src"/ "$dst/"
 echo "deployed ${1:-dev} build to https://osu.xcsoftworks.com/"

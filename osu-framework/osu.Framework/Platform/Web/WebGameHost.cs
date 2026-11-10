@@ -106,7 +106,10 @@ namespace osu.Framework.Platform.Web
         protected override void AdjustFrameLimits(ref double drawHz, ref double updateHz)
         {
             if (maxDrawHz is double d) drawHz = Math.Min(drawHz, d);
-            if (maxUpdateHz is double u) updateHz = Math.Min(updateHz, u);
+            // Native unlimited mode can rebuild the entire UI/draw tree ~1000 times per second
+            // for a 60 Hz canvas. Leave CPU time for the draw worker, asset loading and browser.
+            // An explicit launcher ceiling remains authoritative (including values above 240).
+            updateHz = Math.Min(updateHz, maxUpdateHz ?? 240);
         }
 
         protected override void SetupForRun()

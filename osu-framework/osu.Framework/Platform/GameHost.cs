@@ -461,6 +461,11 @@ namespace osu.Framework.Platform
 
         private ulong frameCount;
 
+        // Last update phases, measured only while a frame observer is installed.
+        public double LastUpdateTreeMs { get; private set; }
+        public double LastUpdateMaskMs { get; private set; }
+        public double LastUpdateDrawNodesMs { get; private set; }
+
         protected virtual void UpdateFrame()
         {
             if (Root == null) return;
@@ -480,11 +485,16 @@ namespace osu.Framework.Platform
 
             TypePerformanceMonitor.NewFrame();
 
+            bool observe = GameThread.FrameObserver != null;
+            long phaseStart = observe ? Stopwatch.GetTimestamp() : 0;
             Root.UpdateSubTree();
+            if (observe) { LastUpdateTreeMs = Stopwatch.GetElapsedTime(phaseStart).TotalMilliseconds; phaseStart = Stopwatch.GetTimestamp(); }
             Root.UpdateSubTreeMasking();
+            if (observe) { LastUpdateMaskMs = Stopwatch.GetElapsedTime(phaseStart).TotalMilliseconds; phaseStart = Stopwatch.GetTimestamp(); }
 
             using (var buffer = drawRoots.GetForWrite())
                 buffer.Object = Root.GenerateDrawNodeSubtree(frameCount, buffer.Index, false);
+            if (observe) LastUpdateDrawNodesMs = Stopwatch.GetElapsedTime(phaseStart).TotalMilliseconds;
         }
 
         private bool didRenderFrame;

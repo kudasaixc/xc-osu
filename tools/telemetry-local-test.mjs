@@ -6,6 +6,7 @@ try {
  const page = await browser.newPage(); let sent = 0;
  await page.route('https://local.test/**', async r => {
   const url=new URL(r.request().url());
+  if(url.pathname==='/launcher/performance.json') return r.fulfill({contentType:'application/json',body:JSON.stringify({updated:new Date().toISOString(),rows:[{build:'before',gpu:'Intel test',setup:{browser:'Edge',width:1920,height:1080,refreshHz:60,workers:4,renderScale:100},sessions:1,seconds:100,frames:5901,meanMs:16.997,p99:{lower:33,upper:50},maxMs:200.26,latePercent:1.508}]})});
   if(url.pathname==='/api/xc/tm') { sent++; const b=JSON.parse(r.request().postData()); return r.fulfill({contentType:'application/json',body:JSON.stringify({seq:Math.max(0,...b.items.map(i=>i.q))})}); }
   if(url.pathname.endsWith('.js')) return r.fulfill({contentType:'text/javascript',body:await readFile(new URL('../osu/osu.Web/wwwroot/js/'+url.pathname.split('/').pop(),import.meta.url),'utf8')});
   return r.fulfill({contentType:'text/html',body:'<!doctype html>'});
@@ -42,6 +43,8 @@ try {
   const launcher=new Launcher(root,makeT('fr'),{options:loadOptions(),build:'test',blocked:false});
   launcher.show('options');
  });
+ await page.waitForFunction(()=>document.querySelector('#ln-performance')?.textContent.includes('Intel test'));
+ assert((await page.locator('#ln-performance').textContent()).includes('(33, 50]'));
  await page.locator('#ln-local-telemetry').click();
  assert((await page.locator('#xc-local-telemetry').textContent()).includes('Aucun historique local'));
  console.log('PASS: acknowledged history survives reload, opt-out, curve/context viewer, export, local deletion, no viewer network');

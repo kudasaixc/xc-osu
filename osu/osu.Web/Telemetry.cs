@@ -60,7 +60,7 @@ namespace osu.Web
         {
             public string Thread, Kind, Screen, Overlay;
             public long At;
-            public double Ms, Work, GcPause, SinceScreen, SinceOverlay;
+            public double Ms, Work, GcPause, SinceScreen, SinceOverlay, Scheduler, Tree, Mask, DrawNodes;
             public int Gc0, Gc1, Missed, Tex, TexQueue;
             public bool Playing;
         }
@@ -179,7 +179,7 @@ namespace osu.Web
         private static List<FlightFrame>? flight;
         private static long flightTrigger, flightEnd, flightNext;
         private static int flightDropped, flightSuppressed;
-        private static double latestUpdateWork;
+        private static double latestUpdateWork; // maximum update work since the previous draw callback
         private static string flightScreen = "", flightOverlay = "", flightThread = "";
 
         private static void recordFlight(double interval, double work, double pause, int g0, int g1, int tex, int queue)
@@ -188,6 +188,8 @@ namespace osu.Web
                 Gc0 = g0, Gc1 = g1, Tex = tex, Queue = queue, UpdateWork = latestUpdateWork };
             lock (flightLock)
             {
+                f.UpdateWork = latestUpdateWork;
+                latestUpdateWork = 0;
                 flightRing[flightHead] = f;
                 flightHead = (flightHead + 1) % flightRing.Length;
                 flightCount = Math.Min(flightCount + 1, flightRing.Length);
@@ -199,12 +201,12 @@ namespace osu.Web
             }
         }
 
-        private static void triggerFlight(string thread)
+        private static void triggerFlight(string thread, bool severe = false)
         {
             long at = unixMs();
             lock (flightLock)
             {
-                if (flight != null || at < flightNext) { flightSuppressed++; return; }
+                if (flight != null || (!severe && at < flightNext)) { flightSuppressed++; return; }
                 flight = new List<FlightFrame>(1024);
                 flightTrigger = at;
                 flightEnd = at + 2000;
@@ -247,14 +249,13 @@ namespace osu.Web
                 }
                 emit(new Json().Str("k", "e").Str("n", "flight").Num("at", at).Str("scr", scr).Str("ov", ov)
                     .Str("name", thread).Num("part", start / 100).Num("parts", parts).Num("dropped", dropped).Num("suppressed", suppressed)
-                    .Str("cols", "offset,interval,drawWork,gcPause,gc0,gc1,tex,texQueue,latestUpdateWork")
+                    .Str("cols", "offset,interval,drawWork,gcPause,gc0,gc1,tex,texQueue,maxUpdateWorkSinceDraw")
                     .Raw("frames", rows.Append(']').ToString()));
             }
         }
 
         private static void addSpike(Channel c, string kind, double ms, double work, int gc0, int gc1, double gcPause, int missed = 0, int tex = 0, int texQueued = 0)
         {
-            triggerFlight(c.Name);
             var s = new Spike
             {
                 Thread = c.Name, Kind = kind, At = unixMs(), Ms = ms, Work = work,
@@ -262,6 +263,10 @@ namespace osu.Web
                 Gc0 = gc0, Gc1 = gc1, GcPause = gcPause, Missed = missed, Tex = tex, TexQueue = texQueued,
                 SinceScreen = msSince(Interlocked.Read(ref screenChangedAt)),
                 SinceOverlay = msSince(Interlocked.Read(ref overlayChangedAt)),
+                Scheduler = c == update ? currentThread?.LastSchedulerWorkMs ?? 0 : 0,
+                Tree = c == update ? host?.LastUpdateTreeMs ?? 0 : 0,
+                Mask = c == update ? host?.LastUpdateMaskMs ?? 0 : 0,
+                DrawNodes = c == update ? host?.LastUpdateDrawNodesMs ?? 0 : 0,
             };
 
             lock (spike_lock)
@@ -302,6 +307,8 @@ namespace osu.Web
             int missed = late ? Math.Max(1, (int)Math.Round(interval / p) - 1) : 0;
             bool slow = work > p * 0.9;
 
+            // A tab resumption is not a visible stall and must not join two empty-frame runs.
+            if (resume) c.EmptyRun = 0;
             int endedRun = 0;
 
             lock (c.Lock)
@@ -336,6 +343,11 @@ namespace osu.Web
                 }
             }
 
+            // Capture only missed display deadlines or sustained repeats. A slow update/audio
+            // callback can still meet the next display deadline and must not consume the capture budget.
+            if (StutterCapturePolicy.ShouldCapture(interval, p, c.EmptyRun, endedRun))
+                triggerFlight("draw", StutterCapturePolicy.IsSevere(interval, p, c.EmptyRun, endedRun));
+
             if (late || slow)
                 addSpike(c, late ? "late" : "slow", interval, work, gc0, gc1, gcPause, missed, tex, queued);
 
@@ -363,7 +375,10 @@ namespace osu.Web
 
             var c = currentChannel;
             if (c == null) return;
-            if (c == update) latestUpdateWork = work;
+            if (c == update)
+            {
+                lock (flightLock) latestUpdateWork = Math.Max(latestUpdateWork, work);
+            }
 
             long t = now();
             double interval = c.LastTimestamp == 0 ? 0 : (t - c.LastTimestamp) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
@@ -485,6 +500,8 @@ namespace osu.Web
                 var sj = new Json().Str("th", s.Thread).Str("kd", s.Kind).Num("at", s.At).Num("ms", Math.Round(s.Ms, 2)).Num("w", Math.Round(s.Work, 2))
                                    .Str("scr", s.Screen).Str("ov", s.Overlay).Num("play", s.Playing ? 1 : 0)
                                    .Num("sc", Math.Round(s.SinceScreen));
+                if (s.Thread == "update") sj.Num("scheduler", Math.Round(s.Scheduler, 2)).Num("tree", Math.Round(s.Tree, 2))
+                    .Num("mask", Math.Round(s.Mask, 2)).Num("drawNodes", Math.Round(s.DrawNodes, 2));
                 if (s.SinceOverlay >= 0) sj.Num("so", Math.Round(s.SinceOverlay));
                 if (s.Gc0 != 0) sj.Num("g0", s.Gc0);
                 if (s.Gc1 != 0) sj.Num("g1", s.Gc1);

@@ -15,7 +15,7 @@ const toggle = (key, sec, def, extra = {}) => ({ key, sec, type: 'toggle', def, 
 export const OPTIONS = [
   select('frameSync', 'perf', 'game', ['game', 'VSync', 'Limit2x', 'Limit4x', 'Limit8x', 'Unlimited'], { label: (v, t) => v === 'game' ? t('opt.game') : t('fs.' + v) }),
   range('maxDrawHz', 'perf', 0, 1000, 10, 0, 'fps', { zero: 'off' }),
-  range('maxUpdateHz', 'perf', 0, 2000, 50, 0, 'Hz', { zero: 'off' }),
+  range('maxUpdateHz', 'perf', 0, 2000, 50, 0, 'Hz', { zero: 'webUpdateDefault' }),
   range('inactiveHz', 'perf', 0, 240, 5, 0, 'Hz', { zero: 'default' }),
   range('renderScale', 'perf', 25, 200, 5, 100, '%'),
 
@@ -143,8 +143,37 @@ export class Launcher {
     this.render();
     this.loadNews();
     this.loadBuild();
+    this.loadPerformance();
     this.systemInfo();
     root.classList.add('show');
+  }
+
+  async loadPerformance() {
+    const host = this.root.querySelector('#ln-performance');
+    try {
+      const response = await fetch('./launcher/performance.json', { cache: 'no-store' });
+      if (!response.ok) throw new Error('history unavailable');
+      const history = await response.json();
+      host.replaceChildren();
+      const updated = document.createElement('p'); updated.className = 'muted';
+      updated.textContent = this.t('history.updated') + ' ' + new Date(history.updated).toLocaleString(); host.append(updated);
+      if (!history.rows.length) { host.append(this.t('history.empty')); return; }
+      const table = document.createElement('table'); table.className = 'port'; table.style.minWidth = '850px'; host.append(table);
+      const header = table.createTHead().insertRow();
+      for (const key of ['build','device','sample','mean','p99','max','late']) {
+        const th = document.createElement('th'); th.scope = 'col'; th.style.padding = '8px'; th.textContent = this.t('history.' + key); header.append(th);
+      }
+      const body = table.createTBody();
+      for (const row of history.rows.slice().reverse()) {
+        const r = body.insertRow(); const setup = row.setup || {};
+        const p99 = row.p99 ? (row.p99.upper == null ? '> ' + row.p99.lower : `(${row.p99.lower}, ${row.p99.upper}]`) : '—';
+        const device = `${row.gpu} · ${setup.browser} · ${setup.width}×${setup.height} · ${setup.refreshHz} Hz · scale ${setup.renderScale}% · workers ${setup.workers} · update ${setup.maxUpdateHz || 'auto'}`;
+        for (const value of [row.build + (row.first ? ' · ' + new Date(row.first).toLocaleDateString() : ''), device, `${row.sessions} / ${Math.round(row.seconds)} s / ${row.frames}`, row.meanMs, p99, row.maxMs, row.latePercent + '%']) {
+          const cell = r.insertCell(); cell.textContent = String(value); cell.style.cssText = 'padding:10px 8px;vertical-align:top';
+        }
+        r.cells[0].style.cssText += ';max-width:160px;overflow-wrap:anywhere';
+      }
+    } catch { host.textContent = this.t('history.empty'); }
   }
 
   waitForLaunch() { return new Promise((res) => { this.resolve = res; }); }
@@ -192,6 +221,7 @@ export class Launcher {
 
         <section class="pane" id="pane-status" role="tabpanel" aria-labelledby="tab-status">
           <header class="pane-head"><h1 class="title">${t('nav.status')}</h1></header>
+          <div class="panel" style="margin-bottom:20px"><h2>${t('history.title')}</h2><p>${t('history.help')}</p><div id="ln-performance" style="overflow:auto">${t('news.loading')}</div></div>
           <div class="grid-2">
             <div class="panel"><h2>${t('port.title')}</h2><div id="ln-gauge" class="meter"></div><table class="port" id="ln-port"></table></div>
             <div class="stack">

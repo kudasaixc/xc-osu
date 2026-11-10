@@ -1,5 +1,5 @@
 {
- "generated": "2026-11-10T15:33:10+00:00",
+ "generated": "2026-11-10T16:13:47+00:00",
  "lazer": {
   "release": "2026.1026.0",
   "ahead": 37,
@@ -23,7 +23,7 @@
    "files": 1008,
    "upstream": 131492,
    "changed": 31,
-   "added": 2445,
+   "added": 2460,
    "touched": 29,
    "created": 11
   },
@@ -49,8 +49,8 @@
  "upstreamLines": 670780,
  "upstreamKept": 670625,
  "keptPct": 99.98,
- "portLines": 17807,
- "portInUpstreamTrees": 3363,
- "portStandalone": 14444,
- "upstreamShareOfBuild": 97.41
+ "portLines": 18204,
+ "portInUpstreamTrees": 3378,
+ "portStandalone": 14826,
+ "upstreamShareOfBuild": 97.36
 }

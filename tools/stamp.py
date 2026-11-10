@@ -20,6 +20,17 @@ def stamp(path, prefix, targets):
 for _ in range(len(mods) + 1):
     if not any([stamp(m, './', [f for f in mods if f != m]) for m in mods]): break
 
+# Engine-only changes must also create a new telemetry build id. Published .wasm filenames
+# carry content fingerprints; sorting them keeps repeated stamping stable.
+framework = root / '_framework'
+if framework.exists():
+    assets = '\n'.join(sorted(p.name for p in framework.glob('*.wasm')))
+    if assets:
+        engine = hashlib.sha256(assets.encode()).hexdigest()[:10]
+        main = root / 'main.js'
+        src = main.read_text()
+        main.write_text(re.sub(r"const engineBuild = '[^']*';", "const engineBuild = '" + engine + "';", src))
+
 stamp(root / 'main.js', './js/', mods)
 idx = root / 'index.html'
 html = idx.read_text()

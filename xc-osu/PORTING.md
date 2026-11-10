@@ -144,3 +144,17 @@ memory kills still require iPhone validation. No native/AOT rebuild is needed.
 ### Local telemetry viewer
 
 Launcher → Options → Diagnostics & performance graphs → View local telemetry. The browser retains up to three sessions of 256 KB each independently of server acknowledgements. The viewer shows stutter frame intervals, browser context events, raw GC/texture/frame data, and session JSON; export and delete operate locally. Disabling diagnostics stops new collection on the next launch but preserves existing local history until deleted. Older records are evicted at the limit; partial captures are labelled. No previous server-only sessions are reconstructed. Run `node tools/telemetry-local-test.mjs` to verify archive persistence, opt-out, viewing, export, deletion and launcher integration.
+
+### Stutter pacing and performance history (pacing1)
+
+The web host defaults to a maximum of 240 update iterations/second, preserving explicit launcher caps (even higher ones) and any lower game limit. The old unlimited path could rebuild the entire drawable tree close to 1000 times/second for a 60 Hz canvas. This change reduces redundant work; it does not establish that every synchronous loading stall is fixed.
+
+Flight recordings now trigger only on missed display deadlines or two repeated frames, not isolated slow CPU callbacks that still present on time. Stalls of at least 100 ms bypass the sampling cooldown when no recording is active. Background resumption (> 1 s) is excluded. The update-work column now holds the maximum since the last draw, instead of the last update callback (which could conceal a spike). Slow-update records also contain scheduler, subtree, masking and draw-node preparation durations.
+
+`python3 tools/performance-history.py` reads telemetry in a consistent read-only transaction and maintains aggregate snapshots in `out/performance/`, with an optional `--public site/launcher/performance.json`. The launcher Status tab presents this history. `deploy/xc-osu-performance.{service,timer}` refreshes it every 15 minutes; install these in systemd on the production host. Deployment preserves the generated public history. No individual session IDs are exported. Baseline snapshots are committed under `docs/performance/`.
+
+Mean frame interval is weighted by the histogram sample count. P99 is reported as a histogram bucket range, never as an exact percentile. Grouping includes build, GPU, browser family, core count, screen size, DPR, refresh rate and relevant launcher options. Visible windows include startup/transitions; periods exceeding one second are excluded by the engine. The maximum retained aggregate snapshot for a group is preserved if raw telemetry expires. Headless software-rendered checks are validation, not comparable to hardware user sessions.
+
+Checks: `dotnet run --project tools/tests/stutter-policy/StutterPolicy.csproj`, `python3 tools/performance-history-test.py`, and the browser telemetry tests. The baseline and future observations may differ in workload; no automatic improvement claim is made.
+
+Telemetry build IDs include a fingerprint of the published engine assets as well as the page revision, so an engine-only rebuild cannot silently merge into the previous version’s history. `python3 tools/stamp-test.py` verifies this and repeated stamping stability.
