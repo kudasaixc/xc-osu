@@ -422,6 +422,12 @@ namespace osu.Framework.Threading
         /// Process a single frame of this thread's work.
         /// </summary>
         /// <returns>A potential execution state change.</returns>
+        /// <summary>
+        /// xc-osu! telemetry hook: invoked on every game thread at the end of each frame's work (scheduler + frame delegate),
+        /// with the time that work took in milliseconds. Must be cheap and must not throw.
+        /// </summary>
+        public static Action<GameThread, double>? FrameObserver;
+
         private GameThreadState? processFrame()
         {
             if (state.Value != GameThreadState.Running)
@@ -446,6 +452,9 @@ namespace osu.Framework.Threading
             {
                 FrameIndex++;
 
+                var observer = FrameObserver;
+                long observedStart = observer == null ? 0 : System.Diagnostics.Stopwatch.GetTimestamp();
+
                 Monitor?.NewFrame();
 
                 using (Monitor?.BeginCollecting(PerformanceCollectionType.Scheduler))
@@ -456,6 +465,9 @@ namespace osu.Framework.Threading
 
                 using (Monitor?.BeginCollecting(PerformanceCollectionType.Work))
                     OnNewFrame?.Invoke();
+
+                // xc-osu! telemetry: time spent working this frame, before the frame limiter sleeps
+                observer?.Invoke(this, System.Diagnostics.Stopwatch.GetElapsedTime(observedStart).TotalMilliseconds);
 
                 using (Monitor?.BeginCollecting(PerformanceCollectionType.Sleep))
                     Clock.ProcessFrame();

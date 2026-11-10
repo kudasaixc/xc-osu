@@ -203,6 +203,7 @@ export class BootScreen {
   }
 
   finish() {
+    if (!this.done) dispatchEvent(new CustomEvent('xc-boot-complete', { detail: performance.now() }));
     if (this.done) return;
     const ms = performance.now() - this.started;
     this.stage('components', 'done', this.t('stage.componentsN', this.components));

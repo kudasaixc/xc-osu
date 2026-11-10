@@ -313,6 +313,52 @@ namespace XcOsu.Server.Api
             return map;
         }
 
+        /// <summary>
+        /// Listing variant of <see cref="decorateSet"/>: same xc-osu! numbers, but batched queries and none of the per-set
+        /// extras (related tags, user tags) the cards never show — they made a 50-set page weigh ~1 MB.
+        /// </summary>
+        private static IEnumerable<JObject> decorateListing(List<JObject> sets, Microsoft.Data.Sqlite.SqliteConnection c, int? viewer)
+        {
+            if (sets.Count == 0) return Array.Empty<JObject>();
+
+            string setIds = string.Join(',', sets.Select(s => s.Value<int>("id")));
+            var favCounts = c.Query($"SELECT beatmapset_id, COUNT(*) FROM favourites WHERE beatmapset_id IN ({setIds}) GROUP BY beatmapset_id",
+                r => (r.GetInt32(0), r.GetInt64(1))).ToDictionary(r => r.Item1, r => r.Item2);
+            var mine = viewer == null
+                ? new HashSet<int>()
+                : c.Query($"SELECT beatmapset_id FROM favourites WHERE user_id = $u AND beatmapset_id IN ({setIds})", r => r.GetInt32(0), ("$u", viewer)).ToHashSet();
+
+            var mapIds = sets.SelectMany(s => (s["beatmaps"] as JArray)?.Select(m => m.Value<int>("id")) ?? Enumerable.Empty<int>()).ToList();
+            var plays = mapIds.Count == 0
+                ? new Dictionary<int, (long, long)>()
+                : c.Query($"SELECT beatmap_id, COUNT(*), SUM(passed) FROM scores WHERE beatmap_id IN ({string.Join(',', mapIds)}) GROUP BY beatmap_id",
+                    r => (r.GetInt32(0), r.GetInt64(1), r.IsDBNull(2) ? 0 : r.GetInt64(2))).ToDictionary(r => r.Item1, r => (r.Item2, r.Item3));
+
+            return sets.Select(src =>
+            {
+                var set = (JObject)src.DeepClone();
+                int id = set.Value<int>("id");
+                set["favourite_count"] = favCounts.GetValueOrDefault(id);
+                set["has_favourited"] = mine.Contains(id);
+
+                long total = 0;
+                if (set["beatmaps"] is JArray maps)
+                {
+                    foreach (var m in maps.OfType<JObject>())
+                    {
+                        var (pc, ps) = plays.GetValueOrDefault(m.Value<int>("id"));
+                        m["playcount"] = pc;
+                        m["passcount"] = ps;
+                        total += pc;
+                    }
+                }
+
+                set["play_count"] = total;
+                set.Remove("converts");
+                return set;
+            });
+        }
+
         private static JObject decorateSet(JObject set, Microsoft.Data.Sqlite.SqliteConnection c, int? viewer, bool nested = false)
         {
             set = (JObject)set.DeepClone();
@@ -350,29 +396,20 @@ namespace XcOsu.Server.Api
 
         private static void mapBeatmaps(RouteGroupBuilder api)
         {
-            api.MapGet("/beatmapsets/search", async (HttpContext ctx, Mirrors mirrors, Db db, CancellationToken ct) =>
+            api.MapGet("/beatmapsets/search", async (HttpContext ctx, BeatmapSearch search, Db db, CancellationToken ct) =>
             {
                 var req = ctx.Request;
-                int page = int.TryParse(req.Query["cursor[page]"], out int p) ? p : int.TryParse(req.Query["cursor_string"], out p) ? p : 0;
-                var sets = await mirrors.Search(req.Query, page, ct);
-
-                // "played" / "favourites" filters are personal: xc-osu! answers them from its own data.
-                using var c = db.Open();
                 int? me = uid(ctx);
-                if (me != null && req.Query["played"] is { Count: > 0 } played && played.ToString() is "played" or "unplayed")
-                {
-                    var mine = c.Query("SELECT DISTINCT beatmap_id FROM beatmap_playcounts WHERE user_id = $u", r => r.GetInt32(0), ("$u", me)).ToHashSet();
-                    bool want = played.ToString() == "played";
-                    sets = new JArray(sets.OfType<JObject>().Where(s => (s["beatmaps"] as JArray)?.Any(b => mine.Contains(b.Value<int>("id"))) == want));
-                }
+                var result = await search.Search(req.Query, me, ct);
 
-                var decorated = new JArray(sets.OfType<JObject>().Select(s => decorateSet(s, c, me)));
+                using var c = db.Open();
+                var decorated = new JArray(decorateListing(result.Sets, c, me));
                 return Json.Ok(new JObject
                 {
                     ["beatmapsets"] = decorated,
-                    ["total"] = sets.Count < 50 ? page * 50 + sets.Count : (page + 2) * 50,
-                    ["cursor"] = sets.Count < 50 ? null : new JObject { ["page"] = page + 1 },
-                    ["cursor_string"] = sets.Count < 50 ? null : (page + 1).ToString(),
+                    ["total"] = result.Total,
+                    ["cursor"] = result.Cursor,
+                    ["cursor_string"] = result.Cursor?.Value<int>("page").ToString(),
                     ["search"] = new JObject { ["sort"] = req.Query["sort"].ToString() is { Length: > 0 } sort ? sort : "ranked_desc" },
                 });
             });

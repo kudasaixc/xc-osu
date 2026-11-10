@@ -35,6 +35,55 @@ namespace osu.Web
 
         public override EndpointConfiguration CreateEndpoints() => new XcEndpointConfiguration(Origin);
 
+        // ---- telemetry context: which screen / overlay the frame timings belong to (see Telemetry.cs)
+
+        protected override void ScreenChanged(osu.Game.Screens.IOsuScreen current, osu.Game.Screens.IOsuScreen newScreen)
+        {
+            base.ScreenChanged(current, newScreen);
+            Telemetry.SetScreen(current?.GetType().Name, newScreen?.GetType().Name);
+        }
+
+        protected override void LoadComplete()
+        {
+            base.LoadComplete();
+
+            if (Telemetry.Enabled)
+                Add(new TelemetryProbe(this));
+        }
+
+        private partial class TelemetryProbe : osu.Framework.Graphics.Component
+        {
+            private readonly XcOsuGame game;
+            private readonly System.Text.StringBuilder names = new System.Text.StringBuilder();
+            private double nextCheck;
+
+            public TelemetryProbe(XcOsuGame game)
+            {
+                this.game = game;
+            }
+
+            protected override void Update()
+            {
+                base.Update();
+
+                if (Time.Current < nextCheck) return;
+
+                nextCheck = Time.Current + 200;
+                names.Clear();
+
+                foreach (var o in game.FocusedOverlays)
+                {
+                    if (o.State.Value != osu.Framework.Graphics.Containers.Visibility.Visible) continue;
+
+                    if (names.Length > 0) names.Append('+');
+                    names.Append(o.GetType().Name);
+                }
+
+                Telemetry.SetOverlay(names.ToString());
+                Telemetry.SetPlaying(game.UserPlayingState.Value == osu.Game.Screens.Play.LocalUserPlayingState.Playing);
+            }
+        }
+
         public override void SetHost(GameHost host)
         {
             base.SetHost(host);

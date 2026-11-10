@@ -1,5 +1,5 @@
 {
- "generated": "2026-11-10T10:42:31+00:00",
+ "generated": "2026-11-10T15:33:10+00:00",
  "lazer": {
   "release": "2026.1026.0",
   "ahead": 37,
@@ -14,16 +14,16 @@
    "files": 2991,
    "upstream": 355625,
    "changed": 87,
-   "added": 227,
-   "touched": 43,
+   "added": 230,
+   "touched": 44,
    "created": 1
   },
   {
    "name": "osu-framework",
    "files": 1008,
    "upstream": 131492,
-   "changed": 30,
-   "added": 2270,
+   "changed": 31,
+   "added": 2445,
    "touched": 29,
    "created": 11
   },
@@ -47,10 +47,10 @@
   }
  ],
  "upstreamLines": 670780,
- "upstreamKept": 670626,
+ "upstreamKept": 670625,
  "keptPct": 99.98,
- "portLines": 15397,
- "portInUpstreamTrees": 3185,
- "portStandalone": 12212,
- "upstreamShareOfBuild": 97.76
+ "portLines": 17807,
+ "portInUpstreamTrees": 3363,
+ "portStandalone": 14444,
+ "upstreamShareOfBuild": 97.41
 }

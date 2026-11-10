@@ -54,7 +54,7 @@ export function installUi(rt, canvas, hooks) {
   // ------------------------------------------------------------------ geometry
   // render resolution = CSS size x devicePixelRatio x launcher scale (the browser upscales the canvas when < 1)
   const renderScale = Math.min(2, Math.max(0.25, +globalThis.xcRenderScale || 1));
-  function renderDpr() { return (devicePixelRatio || 1) * renderScale; }
+  function renderDpr() { const scaled = (devicePixelRatio || 1) * renderScale; return globalThis.xcIosCompat ? Math.min(1, scaled) : scaled; }
   let dpr = renderDpr(), pixW = 0, pixH = 0;
   function publishSize(w, h) {
     pixW = Math.max(1, w | 0); pixH = Math.max(1, h | 0);
@@ -93,13 +93,15 @@ export function installUi(rt, canvas, hooks) {
   let wantLock = false, wantFullscreen = -1;
   const lockOpts = { unadjustedMovement: true };
   function tryLock() {
-    if (!wantLock || document.pointerLockElement === canvas) return;
+    if (!wantLock || !canvas.requestPointerLock || globalThis.xcIosCompat || document.pointerLockElement === canvas) return;
     const p = canvas.requestPointerLock(lockOpts);
     if (p && p.catch) p.catch(() => { try { canvas.requestPointerLock(); } catch { } });
   }
   function tryFullscreen() {
-    if (wantFullscreen === 1 && !document.fullscreenElement) document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => { });
-    else if (wantFullscreen === 0 && document.fullscreenElement) document.exitFullscreen().catch(() => { });
+    try {
+      if (!globalThis.xcIosCompat && wantFullscreen === 1 && !document.fullscreenElement) document.documentElement.requestFullscreen?.({ navigationUI: 'hide' })?.catch(() => { });
+      else if (wantFullscreen === 0 && document.fullscreenElement) document.exitFullscreen?.()?.catch(() => { });
+    } catch { /* Unsupported browser APIs must not interrupt input or audio unlock. */ }
     wantFullscreen = -1;
   }
   function onGesture() { tryLock(); if (wantFullscreen >= 0) tryFullscreen(); audioUnlock(); }
@@ -160,7 +162,8 @@ export function installUi(rt, canvas, hooks) {
 
   // pointerrawupdate fires at device rate before rAF alignment (Chromium); fall back to pointermove
   const moveEvent = 'onpointerrawupdate' in window ? 'pointerrawupdate' : 'pointermove';
-  canvas.addEventListener(moveEvent, onMove);
+  // Touch uses pointermove only: Chromium also emits pointerrawupdate for the same sample.
+  canvas.addEventListener(moveEvent, (e) => { if (moveEvent === 'pointermove' || e.pointerType !== 'touch') onMove(e); });
   if (moveEvent !== 'pointermove') canvas.addEventListener('pointermove', (e) => { if (e.pointerType === 'touch') onMove(e); });
 
   canvas.addEventListener('pointerdown', (e) => {
@@ -344,7 +347,21 @@ export function installUi(rt, canvas, hooks) {
     hooks.onAttached?.();
   };
 
+  // screen wake lock (released by the browser whenever the tab is hidden, so re-acquire on return)
+  let wakeWanted = false, wakeLock = null;
+  async function setWakeLock(on) {
+    wakeWanted = on;
+    try {
+      if (on && !wakeLock && document.visibilityState === 'visible' && navigator.wakeLock) {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
+      } else if (!on && wakeLock) { const l = wakeLock; wakeLock = null; await l.release(); }
+    } catch { wakeLock = null; }
+  }
+  document.addEventListener('visibilitychange', () => { if (wakeWanted && document.visibilityState === 'visible') setWakeLock(true); });
+
   globalThis.xcUi = (op, a, b, s) => {
+    globalThis.xcTelemetryEvent?.('worker-ui', { op });
     switch (op) {
       case 1: document.title = s || 'xc-osu!'; break;
       case 2: canvas.style.cursor = a ? 'default' : 'none'; break;
@@ -357,7 +374,10 @@ export function installUi(rt, canvas, hooks) {
       case 9: case 14: if (s) hooks.download(s); break;
       case 10: hooks.onExit?.(a, s); break;
       case 11: break; // cursor confinement is implicit with pointer lock
-      case 12: navigator.vibrate?.(a); break;
+      case 12:
+        // a < 0: screen suspension control (b = 1 keeps the screen awake while playing), otherwise a vibration in ms
+        if (a < 0) setWakeLock(!!b); else navigator.vibrate?.(a);
+        break;
       case 13: pickFiles(s); break;
       case 15: hooks.onStartGate?.(); break; // engine loaded, waiting for the player's click
     }

@@ -13,6 +13,8 @@
 
 EM_JS(void, xc_worker_install, (), {
   self.xcRaf = () => new Promise(r => requestAnimationFrame(r));
+  // permanent loop: the next frame is requested before the callback runs, so a long frame never costs an extra refresh
+  self.xcRafLoop = (cb) => { const step = (t) => { requestAnimationFrame(step); cb(t); }; requestAnimationFrame(step); };
   self.addEventListener('message', function (e) {
     if (e.data && e.data.xcCanvas) { self.__xcCanvas = e.data.xcCanvas; self.__xcGl = e.data.xcGl || null; }
   });
@@ -31,7 +33,7 @@ EM_JS(int, xc_gl_attach, (), {
   var c = self.__xcCanvas;
   if (!c) return 0;
   var attrs = { alpha: false, depth: true, stencil: true, antialias: false, premultipliedAlpha: false,
-                preserveDrawingBuffer: false, powerPreference: 'high-performance', desynchronized: true,
+                preserveDrawingBuffer: false, powerPreference: 'high-performance', desynchronized: false,
                 failIfMajorPerformanceCaveat: false };
   var o = self.__xcGl;
   if (o) {

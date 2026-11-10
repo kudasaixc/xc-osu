@@ -60,6 +60,19 @@ namespace osu.Framework.Platform.Web
 
         protected override DrawThread CreateDrawThread(Action onNewFrame) => new WebDrawThread(onNewFrame, this);
 
+        // The draw worker runs once per requestAnimationFrame. Spinning there for a new update frame (stock behaviour, up to
+        // 100 ms) makes it miss display refreshes whenever the update thread hitches; without a new frame it simply keeps the
+        // previous one on screen. XC_DRAW_WAIT=1 restores the stock wait for A/B comparisons.
+        private static readonly bool draw_wait = Environment.GetEnvironmentVariable("XC_DRAW_WAIT") == "1";
+
+        protected override int DrawReadTimeout => draw_wait ? base.DrawReadTimeout : 0;
+
+        protected override void DrawFrame()
+        {
+            base.DrawFrame();
+            WebDrawWorker.NoteFrame(DidRenderFrame);
+        }
+
         protected override void SetupConfig(IDictionary<FrameworkSetting, object> defaultOverrides)
         {
             defaultOverrides[FrameworkSetting.ExecutionMode] = ExecutionMode.MultiThreaded;
@@ -69,19 +82,61 @@ namespace osu.Framework.Platform.Web
             var executionMode = Config.GetBindable<ExecutionMode>(FrameworkSetting.ExecutionMode);
             executionMode.Value = ExecutionMode.MultiThreaded;
             executionMode.Disabled = true;
+
+            // xc-osu! launcher overrides (only present when chosen on the launch screen)
+            if (Enum.TryParse(Environment.GetEnvironmentVariable("XC_FRAMESYNC"), true, out FrameSync frameSync))
+            {
+                Config.SetValue(FrameworkSetting.FrameSync, frameSync);
+                Logger.Log($"launcher: frame limiter forced to {frameSync}");
+            }
+
+            if (launchHz("XC_INACTIVE_HZ") is double inactive)
+            {
+                MaximumInactiveHz = inactive;
+                Logger.Log($"launcher: inactive rate capped at {inactive} Hz");
+            }
+        }
+
+        private static double? launchHz(string name)
+            => double.TryParse(Environment.GetEnvironmentVariable(name), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double hz) && hz > 0 ? hz : null;
+
+        private readonly double? maxDrawHz = launchHz("XC_MAX_DRAW_HZ");
+        private readonly double? maxUpdateHz = launchHz("XC_MAX_UPDATE_HZ");
+
+        protected override void AdjustFrameLimits(ref double drawHz, ref double updateHz)
+        {
+            if (maxDrawHz is double d) drawHz = Math.Min(drawHz, d);
+            if (maxUpdateHz is double u) updateHz = Math.Min(updateHz, u);
         }
 
         protected override void SetupForRun()
         {
             base.SetupForRun();
 
-            bool verboseLog = DebugUtils.IsDebugBuild || Environment.GetEnvironmentVariable("XC_VERBOSE_LOG") == "1";
+            // XC_LOG: "verbose" = everything for the whole session, "boot" = everything until the menu shows up (the launch
+            // screen renders those lines), anything else = Important and above. XC_VERBOSE_LOG=1 (?log) is the legacy switch.
+            string logMode = Environment.GetEnvironmentVariable("XC_LOG") ?? string.Empty;
+            bool verboseLog = DebugUtils.IsDebugBuild || Environment.GetEnvironmentVariable("XC_VERBOSE_LOG") == "1" || logMode == "verbose" || logMode == "boot";
+            bool bootSignalled = false;
+            bool bootOnly = logMode == "boot" && !DebugUtils.IsDebugBuild && Environment.GetEnvironmentVariable("XC_VERBOSE_LOG") != "1";
 
             // Mirror the framework log to the browser devtools console (files in the virtual FS are invisible otherwise).
             Logger.NewEntry += entry =>
             {
                 if (entry.Target == LoggingTarget.Performance)
                     return;
+
+                // the intro (or the main menu when the intro is skipped) means the boot is over; the launch screen waits for
+                // this line, so it is printed whatever the log level
+                if (!bootSignalled && entry.Message.Contains(" entered ", StringComparison.Ordinal)
+                                   && (entry.Message.Contains(" entered Intro", StringComparison.Ordinal) || entry.Message.Contains(" entered MainMenu", StringComparison.Ordinal)))
+                {
+                    bootSignalled = true;
+                    if (bootOnly) verboseLog = false;
+                    Console.WriteLine($"[{entry.LoggerName ?? entry.Target?.ToString()}] {entry.Message}");
+                    Console.WriteLine("[launch] boot complete" + (bootOnly ? ", console back to important messages only" : string.Empty));
+                    return;
+                }
 
                 if (entry.Level < LogLevel.Important && !verboseLog && entry.Exception == null)
                     return;

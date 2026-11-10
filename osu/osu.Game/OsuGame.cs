@@ -245,6 +245,9 @@ namespace osu.Game
         private readonly string[] args;
 
         private readonly List<OsuFocusedOverlayContainer> focusedOverlays = new List<OsuFocusedOverlayContainer>();
+
+        /// <summary>xc-osu! telemetry: the focused overlays (settings, beatmap listing, profile, chat…), to tell which one is open.</summary>
+        protected IReadOnlyList<OsuFocusedOverlayContainer> FocusedOverlays => focusedOverlays;
         private readonly List<OverlayContainer> externalOverlays = new List<OverlayContainer>();
 
         private readonly List<OverlayContainer> visibleBlockingOverlays = new List<OverlayContainer>();

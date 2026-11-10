@@ -489,6 +489,15 @@ namespace osu.Framework.Platform
 
         private bool didRenderFrame;
 
+        /// <summary>Whether the last <see cref="DrawFrame"/> call presented a new frame.</summary>
+        protected bool DidRenderFrame => didRenderFrame;
+
+        /// <summary>
+        /// How long (ms) the draw thread spins waiting for a new update frame before giving up on this draw frame.
+        /// xc-osu! web: 0, the draw worker is paced by requestAnimationFrame and must never block a display refresh.
+        /// </summary>
+        protected virtual int DrawReadTimeout => TripleBuffer<DrawNode>.DEFAULT_READ_TIMEOUT;
+
         protected virtual void DrawFrame()
         {
             Debug.Assert(Window != null);
@@ -519,7 +528,7 @@ namespace osu.Framework.Platform
                     Renderer.WaitUntilNextFrameReady();
 
                 didRenderFrame = false;
-                buffer = drawRoots.GetForRead(IsActive.Value ? TripleBuffer<DrawNode>.DEFAULT_READ_TIMEOUT : 0);
+                buffer = drawRoots.GetForRead(IsActive.Value ? DrawReadTimeout : 0);
             }
 
             if (buffer == null)
@@ -1385,8 +1394,17 @@ namespace osu.Framework.Platform
                 updateLimiter = Math.Min(maximum_sane_fps, updateLimiter);
             }
 
+            AdjustFrameLimits(ref drawLimiter, ref updateLimiter);
+
             MaximumDrawHz = drawLimiter;
             MaximumUpdateHz = executionMode.Value == ExecutionMode.SingleThread ? drawLimiter : updateLimiter;
+        }
+
+        /// <summary>
+        /// Lets a platform host clamp the limits chosen by the frame limiter (xc-osu! web port: launcher caps).
+        /// </summary>
+        protected virtual void AdjustFrameLimits(ref double drawHz, ref double updateHz)
+        {
         }
 
         private void setVSyncMode()

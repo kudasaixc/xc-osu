@@ -88,9 +88,24 @@ namespace XcOsu.Server.Services
 
             user.Cover = new APIUser.UserCover { Url = CoverUrl(row), CustomUrl = row.CoverVersion > 0 ? CoverUrl(row) : null };
             user.Kudosu = new APIUser.KudosuCount();
-            user.Badges = row.IsAdmin
-                ? new[] { new Badge { Description = "xc softworks team", ImageUrl = $"{publicBase}/api/xc/badge/xc.png", AwardedAt = row.JoinDate } }
-                : Array.Empty<Badge>();
+            // "badges" and "title" in profile_json are staff-assigned: PUT /api/xc/account never writes them.
+            var badges = new List<Badge>();
+            if (row.IsAdmin)
+                badges.Add(new Badge { Description = "xc softworks team", ImageUrl = $"{publicBase}/api/xc/badge/xc.png", AwardedAt = row.JoinDate });
+            foreach (var b in profile["badges"]?.OfType<JObject>() ?? Enumerable.Empty<JObject>())
+            {
+                if (b.Value<string>("image") is not { Length: > 0 } image) continue;
+
+                badges.Add(new Badge
+                {
+                    Description = b.Value<string>("description") ?? string.Empty,
+                    ImageUrl = $"{publicBase}/api/xc/badge/{Uri.EscapeDataString(image)}",
+                    Url = b.Value<string>("url") ?? string.Empty,
+                    AwardedAt = DateTimeOffset.TryParse(b.Value<string>("awarded_at"), out var at) ? at : row.JoinDate,
+                });
+            }
+            user.Badges = badges.ToArray();
+            user.Title = profile.Value<string>("title");
             user.Groups = row.IsAdmin
                 ? new[] { new APIUserGroup { Id = 1, Identifier = "xc", Name = "xc softworks", ShortName = "XC", Colour = "#ff66aa", IsProbationary = false } }
                 : Array.Empty<APIUserGroup>();

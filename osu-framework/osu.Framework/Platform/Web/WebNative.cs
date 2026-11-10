@@ -54,6 +54,13 @@ namespace osu.Framework.Platform.Web
         internal static partial Task<double> RequestAnimationFrame();
 
         /// <summary>
+        /// Installs a permanent requestAnimationFrame loop on the calling worker; <paramref name="callback"/> runs synchronously
+        /// inside every animation frame (no promise / task hop between the display refresh and the draw).
+        /// </summary>
+        [JSImport("globalThis.xcRafLoop")]
+        internal static partial void RequestAnimationFrameLoop([JSMarshalAs<JSType.Function<JSType.Number>>] Action<double> callback);
+
+        /// <summary>
         /// Runs <paramref name="body"/> on a new dedicated web worker thread which owns a JS event loop (internal runtime API).
         /// </summary>
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, "System.Runtime.InteropServices.JavaScript.JSWebWorker", "System.Runtime.InteropServices.JavaScript")]
@@ -83,6 +90,7 @@ namespace osu.Framework.Platform.Web
         Vibrate = 12,
         RequestFiles = 13,
         DownloadFile = 14,
+        StartGateReady = 15,
     }
 
     /// <summary>
@@ -98,7 +106,7 @@ namespace osu.Framework.Platform.Web
 
         public const int MAGIC = 0, WIDTH = 1, HEIGHT = 2, DPR_MILLI = 3, FOCUSED = 4, VISIBLE = 5, CURSOR_INSIDE = 6, POINTER_LOCKED = 7,
                          FULLSCREEN = 8, REFRESH_MILLIHZ = 9, CAPS_LOCK = 10, SCREEN_W = 11, SCREEN_H = 12, RING_CAP = 13, WRITE_INDEX = 14,
-                         READ_INDEX = 15, KEYBOARD_ATTACHED = 16, CLIPBOARD_SEQ = 17;
+                         READ_INDEX = 15, KEYBOARD_ATTACHED = 16, CLIPBOARD_SEQ = 17, START_GATE = 20;
 
         public static readonly WebShared Instance = new WebShared();
 

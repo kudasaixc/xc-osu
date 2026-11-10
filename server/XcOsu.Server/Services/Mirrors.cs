@@ -134,11 +134,30 @@ namespace XcOsu.Server.Services
             return map;
         }
 
-        private void cacheSet(JObject set)
+        /// <summary>Caches search results in one transaction (search used to open a connection per set and per difficulty).</summary>
+        public void CacheSets(IEnumerable<JObject> sets)
+        {
+            try
+            {
+                using var c = db.Open();
+                c.Exec("BEGIN");
+                foreach (var s in sets)
+                    cacheSet(s, c);
+                c.Exec("COMMIT");
+            }
+            catch (Exception e)
+            {
+                log.LogWarning("caching search results failed: {Msg}", e.Message);
+            }
+        }
+
+        private void cacheSet(JObject set, Microsoft.Data.Sqlite.SqliteConnection? conn = null)
         {
             int? id = set.Value<int?>("id");
             if (id == null) return;
-            using var c = db.Open();
+            var owned = conn == null ? db.Open() : null;
+            var c = conn ?? owned!;
+            using var _ = owned;
             c.Exec("INSERT OR REPLACE INTO beatmapsets (id, json, fetched_at) VALUES ($i, $j, $t)", ("$i", id), ("$j", set.ToString(Newtonsoft.Json.Formatting.None)), ("$t", now()));
             if (set["beatmaps"] is JArray maps)
             {

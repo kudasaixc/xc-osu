@@ -2,6 +2,7 @@
 // Web port by xc softworks (kudasaixc). osu!lazer by ppy Pty Ltd, MIT licence.
 
 using System;
+using System.Linq;
 using System.Threading;
 using osu.Framework;
 using osu.Framework.Platform;
@@ -66,20 +67,42 @@ namespace osu.Web
                 {
                     Thread.Sleep(perfInterval);
 
+                    try
+                    {
+                        probe(host, lastCount, ref lastPause);
+                    }
+                    catch (Exception)
+                    {
+                        // threads / clocks do not exist yet while the host is still starting: skip the sample, never die
+                    }
+                }
+            }) { IsBackground = true, Name = "perf probe" }.Start();
+        }
+
+        private static void probe(GameHost host, int[] lastCount, ref TimeSpan lastPause)
+        {
+            {
+                {
                     var sb = new System.Text.StringBuilder("[perf]");
 
-                    foreach (var t in host.Threads)
+                    foreach (var t in host.Threads.ToArray())
+                    {
+                        if (t?.Clock == null) continue;
+
                         sb.Append($" {t.Name}={t.Clock.FramesPerSecond:0}fps/{t.Clock.ElapsedFrameTime:0.0}ms");
+                    }
 
                     var pause = GC.GetTotalPauseDuration();
                     sb.Append($" gc0+{GC.CollectionCount(0) - lastCount[0]} gc1+{GC.CollectionCount(1) - lastCount[1]} gc2+{GC.CollectionCount(2) - lastCount[2]}");
                     sb.Append($" pause+{(pause - lastPause).TotalMilliseconds:0}ms heap={GC.GetTotalMemory(false) / 1048576}MB alloc/s={GC.GetTotalAllocatedBytes() / 1048576}MB-total");
 
+                    sb.Append(' ').Append(WebDrawWorker.TakeStats());
+
                     for (int i = 0; i < 3; i++) lastCount[i] = GC.CollectionCount(i);
                     lastPause = pause;
                     Console.WriteLine(sb.ToString());
                 }
-            }) { IsBackground = true, Name = "perf probe" }.Start();
+            }
         }
 
         private static void run()
@@ -105,6 +128,8 @@ namespace osu.Web
                 GameHost host = new WebGameHost(GAME_NAME, new HostOptions { FriendlyGameName = "xc-osu!" });
                 if (Environment.GetEnvironmentVariable("XC_PERF") == "1")
                     startPerfProbe(host);
+                if (Environment.GetEnvironmentVariable("XC_TM") == "1")
+                    Telemetry.Start(host);
 
                 host.Run(new XcOsuGame());
                 Console.WriteLine("xc-osu! host loop returned (state " + host.ExecutionState + ")");

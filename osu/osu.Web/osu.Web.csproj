@@ -26,6 +26,8 @@
     <NativeFileReference Include="Native/bassmix.c" />
     <NativeFileReference Include="Native/basswasapi.c" />
     <NativeFileReference Include="Native/realm-wrappers.a" />
+    <!-- xc-osu!: stb_image (StbiSharp module "stbi") — native image decoding instead of managed ImageSharp. native/stbi/build.sh -->
+    <NativeFileReference Include="Native/stbi.a" />
     <EmccExportedRuntimeMethod Include="FS" />
     <EmccExportedRuntimeMethod Include="IDBFS" />
   </ItemGroup>
@@ -57,7 +59,14 @@
     <!-- separate intermediates: AOT strips IL from assemblies, which must never leak into interpreter builds -->
     <IntermediateOutputPath>obj/aot/</IntermediateOutputPath>
     <OutputPath>bin/aot/</OutputPath>
+    <!-- no DWARF in the AOT objects: it is stripped from the final wasm anyway, and generating it slows every compile
+         step down and multiplies the memory the link + wasm-opt need. tools/aotpub.sh XC_SYMBOLS=1 turns it back on. -->
+    <WasmNativeDebugSymbols Condition="'$(WasmNativeDebugSymbols)' == ''">false</WasmNativeDebugSymbols>
   </PropertyGroup>
+  <ItemGroup Condition="'$(XcAot)' == 'true'">
+    <TrimmableAssembly Include="osuTK" />
+    <TrimmerRootDescriptor Include="XcTrim.osuTK.xml" />
+  </ItemGroup>
   <Target Name="XcSelectAotAssemblies" BeforeTargets="_WasmAotCompileApp" Condition="'$(XcAot)' == 'true'">
     <PropertyGroup>
       <_XcAotKeep>;System.Private.CoreLib;System.Collections;System.Collections.Concurrent;System.Linq;System.Memory;System.Runtime.Intrinsics;System.Numerics.Vectors;osu.Framework;osuTK;osu.Game;osu.Game.Rulesets.Osu;Realm;$(XcAotExtra);</_XcAotKeep>

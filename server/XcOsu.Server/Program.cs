@@ -24,6 +24,7 @@ builder.Services.AddSingleton<Accounts>();
 builder.Services.AddSingleton<Presence>();
 builder.Services.AddSingleton<Users>();
 builder.Services.AddSingleton<Mirrors>();
+builder.Services.AddSingleton<BeatmapSearch>();
 builder.Services.AddSingleton<Performance>();
 builder.Services.AddSingleton<Scores>();
 builder.Services.AddSingleton<Chat>();
@@ -33,6 +34,7 @@ builder.Services.AddSingleton<Medals>();
 builder.Services.AddSingleton<MapPool>();
 builder.Services.AddSingleton<Matchmaking>();
 builder.Services.AddSingleton<DailyChallenge>();
+builder.Services.AddSingleton<Telemetry>();
 builder.Services.AddHostedService<Maintenance>();
 
 builder.Services.AddAuthentication(XcTokenAuthHandler.SCHEME)
@@ -80,6 +82,25 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapGet("/api/xc/health", () => Results.Ok(new { name = "xc-osu! server", by = "xc softworks (kudasaixc)", ok = true }));
+
+// client telemetry (see Services/Telemetry.cs). Anonymous: the caller's address is deliberately never read here.
+_ = app.Services.GetRequiredService<Telemetry>();
+app.MapPost("/api/xc/tm", async (HttpRequest req, Telemetry telemetry) =>
+{
+    if (req.ContentLength > Telemetry.MAX_BODY_BYTES) return Results.StatusCode(413);
+
+    // sendBeacon posts text/plain: read the body whatever its declared type
+    using var reader = new StreamReader(req.Body);
+    char[] buffer = new char[Telemetry.MAX_BODY_BYTES + 1];
+    int read = await reader.ReadBlockAsync(buffer, 0, buffer.Length);
+    if (read > Telemetry.MAX_BODY_BYTES) return Results.StatusCode(413);
+
+    long? seq;
+    try { seq = telemetry.Ingest(new string(buffer, 0, read)); }
+    catch (Exception e) when (e is Newtonsoft.Json.JsonException or FormatException or InvalidCastException or ArgumentException or OverflowException)
+    { return Results.BadRequest(); }
+    return seq == null ? Results.StatusCode(400) : Results.Json(new { seq });
+});
 
 Endpoints.Map(app);
 Proxy.Map(app);

@@ -5,6 +5,7 @@
 // attribute, AudioContext option, or canvas resolution); see buildLaunch().
 
 const KEY = 'xc.launcher.v1';
+const OPTIONS_REV = 2;
 const cores = navigator.hardwareConcurrency || 4;
 
 const range = (key, sec, min, max, step, def, unit, extra = {}) => ({ key, sec, type: 'range', min, max, step, def, unit, ...extra });
@@ -24,10 +25,11 @@ export const OPTIONS = [
 
   select('softHeap', 'mem', 0, [0, 256, 384, 512, 768, 1024, 1536, 2048, 3072], { num: true, label: (v, t) => v ? mb(v) : t('opt.off') }),
   select('hardHeap', 'mem', 0, [0, 512, 768, 1024, 1536, 2048, 3072, 4096], { num: true, label: (v, t) => v ? mb(v) : t('opt.off') }),
-  select('nursery', 'mem', 0, [0, 1, 2, 4, 8, 16, 32, 64], { num: true, label: (v, t) => v ? v + ' MB' : t('opt.default') }),
+  select('nursery', 'mem', 32, [0, 1, 2, 4, 8, 16, 32, 64], { num: true, label: (v, t) => v ? v + ' MB' : t('opt.default') }),
 
   select('gpu', 'gfx', 'high-performance', ['high-performance', 'default', 'low-power'], { label: (v, t) => t('gpu.' + v) }),
-  toggle('lowLatency', 'gfx', true),
+  toggle('lowLatency', 'gfx', false),
+  toggle('iosCompat', 'gfx', false),
   toggle('msaa', 'gfx', false),
   toggle('fullscreen', 'gfx', true),
 
@@ -39,6 +41,7 @@ export const OPTIONS = [
   select('perfPos', 'diag', 'tr', ['tr', 'tl', 'br', 'bl'], { label: (v, t) => t('pos.' + v) }),
   select('perfMs', 'diag', 1000, [500, 1000, 2000, 5000], { num: true, label: (v) => v >= 1000 ? v / 1000 + ' s' : v + ' ms' }),
   toggle('diag', 'diag', false),
+  toggle('telemetry', 'diag', true),
 
   { key: 'server', sec: 'net', type: 'text', def: '', placeholder: () => location.origin },
 
@@ -47,11 +50,12 @@ export const OPTIONS = [
   select('lang', 'launcher', 'en', ['en', 'fr'], { label: (v) => v === 'fr' ? 'Français' : 'English' }),
 ];
 const SECTIONS = ['perf', 'cpu', 'mem', 'gfx', 'audio', 'diag', 'net', 'launcher'];
-const NOT_PRESET = new Set(['server', 'autoLaunch', 'lang', 'perfPos', 'startGate', 'fullscreen']);
+const NOT_PRESET = new Set(['telemetry', 'server', 'autoLaunch', 'lang', 'perfPos', 'startGate', 'fullscreen']);
 
 export const PRESETS = {
   balanced: {},
-  competitive: { frameSync: 'Unlimited', lowLatency: true, gpu: 'high-performance', audioLatency: 'interactive', renderScale: 100, msaa: false },
+  ios: { iosCompat: true, frameSync: 'VSync', maxDrawHz: 60, maxUpdateHz: 240, inactiveHz: 10, renderScale: 50, workers: 4, cpuCount: 2, softHeap: 512, nursery: 4, audioLatency: 'playback', msaa: false, lowLatency: false, fullscreen: false },
+  competitive: { frameSync: 'Unlimited', lowLatency: false, gpu: 'high-performance', audioLatency: 'interactive', renderScale: 100, msaa: false },
   battery: { frameSync: 'VSync', maxDrawHz: 60, maxUpdateHz: 240, inactiveHz: 10, gpu: 'low-power', renderScale: 75, workers: 8, softHeap: 768, audioLatency: 'balanced', lowLatency: false },
   potato: { frameSync: 'VSync', maxDrawHz: 60, maxUpdateHz: 500, inactiveHz: 15, renderScale: 50, workers: 8, softHeap: 512, nursery: 4, audioLatency: 'balanced' },
   debug: { log: 'verbose', realmTrace: true, perfOverlay: true, perfMs: 500, diag: true },
@@ -65,7 +69,15 @@ export function defaults() { return Object.fromEntries(OPTIONS.map((o) => [o.key
 export function loadOptions() {
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch { }
-  const o = { ...defaults(), ...saved };
+  // rev 2: Mono's default 4 MB nursery and the desynchronized (low-latency) canvas turned out to be the source of the
+  // overlay / scrolling stutter. Options saved before that still carry the old defaults: reset those two once.
+  if ((saved.rev || 1) < OPTIONS_REV) { delete saved.nursery; delete saved.lowLatency; }
+  const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (ios && saved.iosDefaultsVersion !== 1) {
+    saved = { ...saved, ...PRESETS.ios, iosDefaultsVersion: 1 };
+    try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch { }
+  }
+  const o = { ...defaults(), ...saved, rev: OPTIONS_REV };
   if (o.lang !== 'fr') o.lang = 'en'; // the launcher is English unless French was picked explicitly
   // legacy URL switches still work (not saved)
   const q = new URLSearchParams(location.search);
@@ -74,7 +86,7 @@ export function loadOptions() {
   if (q.has('diag')) o.diag = true;
   return o;
 }
-export function saveOptions(o) { try { localStorage.setItem(KEY, JSON.stringify(o)); } catch { } }
+export function saveOptions(o) { try { localStorage.setItem(KEY, JSON.stringify({ ...o, rev: OPTIONS_REV })); } catch { } }
 
 /** Turns launcher options into what the boot actually consumes. */
 export function buildLaunch(o) {
@@ -90,6 +102,7 @@ export function buildLaunch(o) {
   if (o.hardHeap > 0) gc.push(`max-heap-size=${o.hardHeap}m`);
   if (o.nursery > 0) gc.push(`nursery-size=${o.nursery}m`);
   if (gc.length) env.MONO_GC_PARAMS = gc.join(',');
+  env.XC_TM = o.telemetry ? '1' : '0';
   env.XC_LOG = o.log;
   if (o.realmTrace) env.XC_REALM_TRACE = '1';
   if (o.perfOverlay) { env.XC_PERF = '1'; env.XC_PERF_MS = String(o.perfMs); }
@@ -101,7 +114,8 @@ export function buildLaunch(o) {
     gl: { powerPreference: o.gpu, desynchronized: !!o.lowLatency, antialias: !!o.msaa },
     renderScale: o.renderScale / 100,
     audioLatency: o.audioLatency,
-    fullscreen: !!o.fullscreen,
+    fullscreen: !!o.fullscreen && !o.iosCompat,
+    iosCompat: !!o.iosCompat,
     startGate: !!o.startGate,
     perfOverlay: !!o.perfOverlay,
     perfPos: o.perfPos,
@@ -229,7 +243,7 @@ export class Launcher {
   // Erases the game's persistent storage (the IDBFS mount = IndexedDB, holding realm, beatmaps, skins, settings,
   // login). Runs before the runtime mounts it, so nothing in this tab holds the database open. Launcher options are kept.
   async wipeStorage() {
-    const btn = this.root.querySelector('#ln-wipe');
+    const t = this.t, btn = this.root.querySelector('#ln-wipe');
     if (!confirm(t('wipe.confirm'))) return;
     btn.disabled = true; btn.textContent = t('wipe.busy');
     let names = ['/xc'];
@@ -388,6 +402,16 @@ export class Launcher {
         this.changed(false);
       });
     }
+    const local = document.createElement('button');
+    local.type = 'button'; local.className = 'btn'; local.id = 'ln-local-telemetry';
+    local.textContent = t('tm.local');
+    local.onclick = async () => {
+      local.disabled = true;
+      try { const { showLocalTelemetry } = await import('./xc-telemetry-viewer.js'); showLocalTelemetry(t); }
+      catch { local.textContent = t('tm.failed'); }
+      finally { local.disabled = false; }
+    };
+    host.querySelector('[data-sec="diag"]').append(local);
     this.renderPresets();
     this.root.querySelector('#ln-cmd').textContent = commandLine(o);
   }
@@ -425,7 +449,8 @@ export class Launcher {
     if (dp) dp.textContent = this.t('dock.preset', this.t('preset.' + (cur || 'custom')));
     box.querySelectorAll('[data-p]').forEach((b) => b.onclick = () => {
       const keep = Object.fromEntries([...NOT_PRESET].map((k) => [k, this.o[k]]));
-      this.o = { ...defaults(), ...PRESETS[b.dataset.p], ...keep };
+      this.o = { ...defaults(), ...PRESETS[b.dataset.p], ...keep, iosDefaultsVersion: this.o.iosDefaultsVersion };
+      if (b.dataset.p === 'ios') this.o.fullscreen = false;
       this.changed(true);
     });
   }
@@ -445,7 +470,7 @@ export class Launcher {
     this.launched = true;
     saveOptions(this.o);
     // still inside the click: the only moment a page may enter fullscreen
-    if (this.o.fullscreen && !this.o.startGate && !document.fullscreenElement) document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => { });
+    if (this.o.fullscreen && !this.o.iosCompat && !this.o.startGate) requestGameFullscreen();
     this.root.classList.add('gone');
     setTimeout(() => { this.root.classList.remove('show', 'gone'); this.root.innerHTML = ''; }, 450);
     this.resolve?.(this.o);
@@ -605,4 +630,10 @@ export class Launcher {
     if (dl) dl.innerHTML = rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('');
     this.renderSpec();
   }
+}
+
+// Unsupported fullscreen APIs and synchronous browser errors must never block the start gate.
+export async function requestGameFullscreen() {
+  if (document.fullscreenElement || !document.documentElement.requestFullscreen) return false;
+  try { await document.documentElement.requestFullscreen({ navigationUI: 'hide' }); return true; } catch { return false; }
 }

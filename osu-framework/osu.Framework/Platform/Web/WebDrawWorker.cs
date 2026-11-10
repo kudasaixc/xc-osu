@@ -15,7 +15,7 @@ namespace osu.Framework.Platform.Web
     /// Owns the web worker that holds the OffscreenCanvas + WebGL2 context. The framework's <see cref="DrawThread"/>
     /// is pumped from here once per display refresh (requestAnimationFrame), so frames are presented with no extra copies.
     /// </summary>
-    internal static class WebDrawWorker
+    public static class WebDrawWorker
     {
         private static readonly ConcurrentQueue<(Action action, ManualResetEventSlim? done, Exception?[] error)> work = new ConcurrentQueue<(Action, ManualResetEventSlim?, Exception?[])>();
         private static readonly ManualResetEventSlim contextReady = new ManualResetEventSlim();
@@ -41,7 +41,8 @@ namespace osu.Framework.Platform.Web
             if (Interlocked.Exchange(ref started, 1) == 1)
                 return;
 
-            WebNative.RunInWebWorker(loop).ContinueWith(t =>
+            workerTask = WebNative.RunInWebWorker(loop);
+            workerTask.ContinueWith(t =>
             {
                 if (t.Exception != null)
                     Console.Error.WriteLine("xc-osu! draw worker crashed: " + t.Exception);
@@ -72,9 +73,9 @@ namespace osu.Framework.Platform.Web
 
         public static void Post(Action action) => work.Enqueue((action, null, new Exception?[1]));
 
-        public static void Attach(WebDrawThread thread) => drawThread = thread;
+        internal static void Attach(WebDrawThread thread) => drawThread = thread;
 
-        public static void Detach(WebDrawThread thread)
+        internal static void Detach(WebDrawThread thread)
         {
             if (drawThread == thread)
                 drawThread = null;
@@ -124,11 +125,51 @@ namespace osu.Framework.Platform.Web
             ContextHandle = handle;
             contextReady.Set();
 
-            var shared = WebShared.Instance;
-            Logger.Log($"Draw worker running (GL context {handle})");
+            bool legacy = Environment.GetEnvironmentVariable("XC_DRAW_LEGACY") == "1";
+            Logger.Log($"Draw worker running (GL context {handle}, {(legacy ? "awaited rAF" : "direct rAF pump")})");
+
+            if (!legacy)
+            {
+                // The frame runs synchronously inside the browser's animation frame callback. Awaiting a rAF promise instead
+                // (legacy path below) adds a promise -> Task -> synchronization context hop per frame, which regularly lands
+                // after the frame deadline and shows up as dropped / repeated frames.
+                rafCallback = time =>
+                {
+                    noteRaf(time);
+                    frame(workerContext);
+                    Stage = "awaiting rAF";
+                };
+                WebNative.RequestAnimationFrameLoop(rafCallback);
+
+                // keeps the worker (and its JS event loop) alive for the lifetime of the page
+                // Must stay rooted: an unreachable pending task lets the GC finalise the whole
+                // JSWebWorker ("JSWebWorker was disposed while running" => FailFast).
+                keepAlive = new TaskCompletionSource<bool>();
+                await keepAlive.Task.ConfigureAwait(true);
+                return;
+            }
 
             while (true)
             {
+                frame(workerContext);
+                Stage = "awaiting rAF";
+                noteRaf(await WebNative.RequestAnimationFrame().ConfigureAwait(true));
+            }
+        }
+
+        // rooted: the JS side holds the only other reference to the delegate
+        private static Action<double>? rafCallback;
+        private static TaskCompletionSource<bool>? keepAlive;
+        private static Task? workerTask;
+
+        private static void frame(SynchronizationContext? workerContext)
+        {
+            long start = System.Diagnostics.Stopwatch.GetTimestamp();
+
+            try
+            {
+                var shared = WebShared.Instance;
+
                 Interlocked.Increment(ref Loops);
                 Stage = "resize";
                 WebNative.xc_canvas_resize(Math.Max(1, shared.Read(WebShared.WIDTH)), Math.Max(1, shared.Read(WebShared.HEIGHT)));
@@ -151,12 +192,104 @@ namespace osu.Framework.Platform.Web
                         Logger.Error(e, "Draw frame failed");
                     }
                 }
-
+            }
+            catch (Exception e)
+            {
+                // never let an exception escape into the JS animation frame callback
+                Console.Error.WriteLine("xc-osu! draw worker frame failed: " + e);
+            }
+            finally
+            {
                 if (SynchronizationContext.Current != workerContext)
                     SynchronizationContext.SetSynchronizationContext(workerContext);
 
-                Stage = "awaiting rAF";
-                LastFrameTime = await WebNative.RequestAnimationFrame().ConfigureAwait(true);
+                double work = System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+
+                lock (stats_lock)
+                {
+                    statWork += work;
+                    if (work > statWorkMax) statWorkMax = work;
+                }
+
+                try
+                {
+                    FrameObserver?.Invoke(lastInterval, work, framePresented);
+                }
+                catch
+                {
+                }
+
+                lastInterval = 0;
+                framePresented = false;
+            }
+        }
+
+        // ---- frame pacing statistics (shown by the perf probe / overlay) ----
+        private static readonly object stats_lock = new object();
+        private static int statFrames, statLate, statPresented, statEmpty;
+        private static double statInterval, statIntervalMax, statWork, statWorkMax, statBest = double.MaxValue;
+
+        /// <summary>
+        /// xc-osu! telemetry hook, invoked on the draw worker after every animation frame: the interval since the previous
+        /// requestAnimationFrame callback (ms, 0 when unknown), the time spent in the frame (ms) and whether a new frame
+        /// was presented (false = the update thread had nothing new, the previous image stays on screen).
+        /// </summary>
+        public static Action<double, double, bool>? FrameObserver;
+
+        // draw worker only
+        private static double lastInterval;
+        private static bool framePresented;
+
+        private static void noteRaf(double time)
+        {
+            double last = LastFrameTime;
+            LastFrameTime = time;
+
+            if (last <= 0)
+                return;
+
+            double interval = time - last;
+            lastInterval = interval;
+
+            lock (stats_lock)
+            {
+                statFrames++;
+                statInterval += interval;
+                if (interval > statIntervalMax) statIntervalMax = interval;
+                if (interval < statBest && interval > 1) statBest = interval;
+                // a "late" frame took at least half a refresh longer than the shortest interval seen in this window
+                if (statBest < double.MaxValue && interval > statBest * 1.5) statLate++;
+            }
+        }
+
+        /// <summary>Called by the host after every draw frame: whether a new frame was presented or nothing new was available.</summary>
+        internal static void NoteFrame(bool presented)
+        {
+            if (presented) framePresented = true;
+
+            lock (stats_lock)
+            {
+                if (presented) statPresented++;
+                else statEmpty++;
+            }
+        }
+
+        /// <summary>
+        /// Frame pacing over the period since the last call: rAF callbacks, average / worst interval, late callbacks, frames
+        /// presented vs. skipped because the update thread had nothing new, and time spent drawing.
+        /// </summary>
+        public static string TakeStats()
+        {
+            lock (stats_lock)
+            {
+                string result = statFrames == 0
+                    ? "raf=idle"
+                    : FormattableString.Invariant($"raf={statFrames} avg={statInterval / statFrames:0.00}ms max={statIntervalMax:0.0}ms late={statLate} presented={statPresented} empty={statEmpty} work={statWork / Math.Max(1, statPresented + statEmpty):0.00}ms/max{statWorkMax:0.0}");
+
+                statFrames = statLate = statPresented = statEmpty = 0;
+                statInterval = statIntervalMax = statWork = statWorkMax = 0;
+                statBest = double.MaxValue;
+                return result;
             }
         }
     }

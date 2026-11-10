@@ -39,7 +39,7 @@ function push(level, args) {
   const t = performance.now() - t0;
   for (const part of text.split('\n')) {
     const line = { t, level, text: part };
-    xcLog.lines.push(line);
+    if (!part.startsWith('[tm] ')) xcLog.lines.push(line);
     for (const fn of xcLog.listeners) { try { fn(line); } catch { } }
   }
   if (xcLog.lines.length > MAX_LINES) xcLog.lines.splice(0, xcLog.lines.length - MAX_LINES);
@@ -51,7 +51,7 @@ export function captureConsole() {
   installed = true;
   for (const level of ['log', 'info', 'warn', 'error', 'debug']) {
     const orig = console[level].bind(console);
-    console[level] = (...args) => { orig(...args); push(level === 'info' || level === 'debug' ? 'log' : level, args); };
+    console[level] = (...args) => { if (!String(args[0]).startsWith('[tm] ')) orig(...args); push(level === 'info' || level === 'debug' ? 'log' : level, args); };
   }
   addEventListener('error', (e) => push('error', ['uncaught: ' + (e.error?.stack || e.message)]));
   addEventListener('unhandledrejection', (e) => push('error', ['unhandled rejection: ' + stringify(e.reason)]));

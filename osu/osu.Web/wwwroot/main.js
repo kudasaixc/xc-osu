@@ -8,8 +8,9 @@ captureConsole();
 import { dotnet } from './_framework/dotnet.js';
 import { installUi } from './js/xc-ui.js';
 import { makeT } from './js/xc-i18n.js';
-import { Launcher, loadOptions, buildLaunch, fmtBytes } from './js/xc-launcher.js';
+import { Launcher, loadOptions, buildLaunch, fmtBytes, requestGameFullscreen } from './js/xc-launcher.js';
 import { BootScreen, LogViewer } from './js/xc-boot.js';
+import { startTelemetry } from './js/xc-telemetry.js';
 import { PerfOverlay } from './js/xc-perf.js';
 
 const $ = (id) => document.getElementById(id);
@@ -42,9 +43,31 @@ if (typeof PerformanceObserver !== 'undefined') {
   }).observe({ type: 'resource', buffered: true });
 }
 
+// The browser HTTP cache refuses entries above a fraction of its total size, so the 110 MB+ resources
+// assembly was downloaded again on every visit. Keep it in Cache Storage instead (file names are
+// content-fingerprinted, so a new build simply misses and replaces the old entry).
+const BIG_ASSET = /^osu\.Game\.Resources\./;
+const BIG_CACHE = 'xc-big-assets-v1';
+async function bigAsset(uri) {
+  const url = new URL(uri, document.baseURI).href;
+  let cache = null;
+  try {
+    cache = await caches.open(BIG_CACHE);
+    const hit = await cache.match(url);
+    if (hit) return hit;
+  } catch { cache = null; }
+  const res = await fetch(url, { credentials: 'same-origin' });
+  if (cache && res.ok && res.status === 200) {
+    cache.put(url, res.clone()).then(async () => {
+      for (const k of await cache.keys()) if (k.url !== url) await cache.delete(k);
+    }).catch(e => console.warn('[launch] could not keep ' + url + ' offline: ' + e));
+  }
+  return res;
+}
+
 const builder = dotnet
-  .withConfig({ pthreadPoolInitialSize: options.workers, pthreadPoolUnusedSize: Math.min(4, options.workers) })
-  .withResourceLoader((type, name, defaultUri) => defaultUri)
+  .withConfig({ pthreadPoolInitialSize: options.workers, pthreadPoolUnusedSize: options.iosCompat ? 0 : Math.min(4, options.workers) })
+  .withResourceLoader((type, name, defaultUri) => BIG_ASSET.test(name) ? bigAsset(defaultUri) : defaultUri)
   .withModuleConfig({ onDownloadResourceProgress: (loaded, total) => { dl.loaded = loaded; dl.total = total; emit(); } });
 
 const dlStart = performance.now();
@@ -74,6 +97,7 @@ if (!auto) {
   if (blocked) throw new Error('not cross-origin isolated');
 }
 
+startTelemetry(options, build, xcLog);
 const L = buildLaunch(options);
 let lastBoot = null;
 try { lastBoot = JSON.parse(localStorage.getItem('xc.lastBoot') || 'null'); } catch { }
@@ -85,6 +109,7 @@ say(`webgl: ${JSON.stringify(L.gl)} · render scale ${Math.round(L.renderScale *
 
 // globals read by xc-ui.js (canvas resolution), the native GL glue (context attributes) and the audio init below
 globalThis.xcRenderScale = L.renderScale;
+globalThis.xcIosCompat = L.iosCompat;
 globalThis.xcGlAttributes = L.gl;
 
 // ---------------------------------------------------------------- overlays
@@ -115,7 +140,9 @@ boot.stage('download', 'done', `${dl.total} · ${fmtBytes(dl.bytes)}${dl.network
 say(`engine assets: ${dl.total} files, ${fmtBytes(dl.bytes)} (${fmtBytes(dl.network)} over the network)`);
 
 boot.stage('runtime', 'active');
-builder.withConfig({ pthreadPoolInitialSize: L.workers, pthreadPoolUnusedSize: Math.min(4, L.workers) });
+builder.withConfig({ pthreadPoolInitialSize: L.workers, pthreadPoolUnusedSize: L.iosCompat ? 0 : Math.min(4, L.workers) });
+// awaited rAF loop by default; XC_DRAW_LEGACY=0 opts into the direct rAF pump (see PORTING.md, frame pacing)
+if (!('XC_DRAW_LEGACY' in L.env)) builder.withEnvironmentVariable('XC_DRAW_LEGACY', '1');
 for (const [k, v] of Object.entries(L.env)) builder.withEnvironmentVariable(k, v);
 if (query.has('log')) builder.withEnvironmentVariable('XC_VERBOSE_LOG', '1');
 let rt;
@@ -197,6 +224,7 @@ globalThis.xcAudioInit = async (memory, ring, ctrl, cap, rate) => {
 // xcbass may start its output from a worker thread: it then posts the ring location here.
 const audioChannel = new BroadcastChannel('xc-audio');
 audioChannel.onmessage = (e) => {
+  globalThis.xcTelemetryEvent?.('worker', { name: 'audio-init' });
   if (audioCtx) return;
   const { ring, ctrl, cap, rate } = e.data;
   globalThis.xcAudioInit(null, ring, ctrl, cap, rate).catch((err) => console.error('[xc-osu!] audio init failed', err));
@@ -217,9 +245,11 @@ const ui = installUi(rt, canvas, {
     say(`engine ready ${((performance.now() - t0) / 1000).toFixed(1)} s after the download, waiting for the start click`);
     boot.showGate(() => {
       // still inside the player's gesture: the only moment the page may go fullscreen and start audio
-      if (L.fullscreen && !document.fullscreenElement) document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch((e) => say('fullscreen refused: ' + e.message));
+      globalThis.xcTelemetryCheckpoint?.('start-click');
+      if (L.fullscreen) requestGameFullscreen();
       globalThis.xcAudioResume?.();
       ui.openStartGate();
+      globalThis.xcTelemetryCheckpoint?.('gate-open');
       canvas.focus({ preventScroll: true });
       say('start click: fullscreen ' + (L.fullscreen ? 'requested' : 'off') + ', audio ' + (globalThis.xcAudioDebug?.().state || 'not initialised yet'));
     });

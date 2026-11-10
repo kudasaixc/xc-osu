@@ -1,0 +1,10 @@
+<!-- xc-osu!: osuTK is trimmed in AOT builds (its desktop GL / AL bindings are ~80% of the assembly and were all being
+     AOT-compiled for nothing: the web port renders through osu.Framework.Platform.Web.WebGL). Everything the game can
+     reach by reflection or serialisation (maths, colours, input enums) is kept whole. -->
+<linker>
+  <assembly fullname="osuTK">
+    <namespace fullname="osuTK" preserve="all" />
+    <namespace fullname="osuTK.Input" preserve="all" />
+    <namespace fullname="osuTK.Graphics" preserve="all" />
+  </assembly>
+</linker>
