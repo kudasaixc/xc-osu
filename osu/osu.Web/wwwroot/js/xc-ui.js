@@ -99,12 +99,39 @@ export function installUi(rt, canvas, hooks) {
   }
   function tryFullscreen() {
     try {
-      if (!globalThis.xcIosCompat && wantFullscreen === 1 && !document.fullscreenElement) document.documentElement.requestFullscreen?.({ navigationUI: 'hide' })?.catch(() => { });
-      else if (wantFullscreen === 0 && document.fullscreenElement) document.exitFullscreen?.()?.catch(() => { });
-    } catch { /* Unsupported browser APIs must not interrupt input or audio unlock. */ }
-    wantFullscreen = -1;
+      if (wantFullscreen === 1) {
+        // a refused request (no user activation yet) stays pending and is retried on the next key press / click
+        if (globalThis.xcIosCompat || document.fullscreenElement || !document.documentElement.requestFullscreen) wantFullscreen = -1;
+        else document.documentElement.requestFullscreen({ navigationUI: 'hide' })?.then(() => { wantFullscreen = -1; }, () => { });
+      } else if (wantFullscreen === 0) {
+        if (document.fullscreenElement) document.exitFullscreen?.()?.catch(() => { });
+        wantFullscreen = -1;
+      }
+    } catch { wantFullscreen = -1; /* Unsupported browser APIs must not interrupt input or audio unlock. */ }
   }
   function onGesture() { tryLock(); if (wantFullscreen >= 0) tryFullscreen(); audioUnlock(); }
+
+  // ------------------------------------------------------------------ held keys / buttons
+  // The browser never delivers the key-up of a key that is still held when the page loses focus (Alt+Tab, leaving
+  // fullscreen, switching tabs, OS shortcuts). The engine would keep it pressed forever: a stuck Alt turns every scroll
+  // and arrow key into a volume change and breaks every shortcut. Track what is down and release it ourselves.
+  const downKeys = new Set(), downButtons = new Set();
+  function releaseAll() {
+    for (const k of downKeys) push(7, k);
+    downKeys.clear();
+    for (const b of downButtons) push(4, b);
+    downButtons.clear();
+  }
+  const MODIFIERS = [['altKey', 'AltLeft', 'AltRight'], ['ctrlKey', 'ControlLeft', 'ControlRight'], ['shiftKey', 'ShiftLeft', 'ShiftRight'], ['metaKey', 'MetaLeft', 'MetaRight']]
+    .map(([flag, ...codes]) => [flag, codes.map((c) => keyIndex.get(c)).filter((k) => k !== undefined)]);
+  // every keyboard / mouse / wheel event carries the real modifier state: drop modifiers the engine still believes held
+  function syncModifiers(e) {
+    if (!downKeys.size) return;
+    for (const [flag, keys] of MODIFIERS) {
+      if (e[flag] !== false) continue;
+      for (const k of keys) if (downKeys.delete(k)) push(7, k);
+    }
+  }
   let audioUnlocked = false;
   function audioUnlock() { audioUnlocked = true; hooks.onFirstGesture?.(); }
 
@@ -169,6 +196,7 @@ export function installUi(rt, canvas, hooks) {
   canvas.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     onGesture();
+    syncModifiers(e);
     if (e.pointerType === 'pen') { try { canvas.setPointerCapture(e.pointerId); } catch { } penSample(e, directPen ? PEN.Direct : 0); return; }
     if (e.pointerType === 'touch') {
       let id = 0; const used = new Set(touchIds.values());
@@ -181,6 +209,7 @@ export function installUi(rt, canvas, hooks) {
       try { canvas.setPointerCapture(e.pointerId); } catch { }
       const [x, y] = px(e); push(1, fb(x), fb(y));
     }
+    downButtons.add(e.button);
     push(3, e.button);
   });
 
@@ -191,6 +220,7 @@ export function installUi(rt, canvas, hooks) {
       if (id !== undefined) { touchIds.delete(e.pointerId); const [x, y] = px(e); push(11, id, fb(x), fb(y)); }
       return;
     }
+    downButtons.delete(e.button);
     push(4, e.button);
   };
   canvas.addEventListener('pointerup', up);
@@ -208,15 +238,26 @@ export function installUi(rt, canvas, hooks) {
   // mouse buttons other than pointerdown's first button (chorded presses come as pointermove with button != -1)
   canvas.addEventListener('pointermove', (e) => {
     if (e.pointerType !== 'mouse' || e.button < 0) return;
-    if (e.buttons & (1 << [0, 2, 1, 3, 4][e.button])) push(3, e.button); else push(4, e.button);
+    if (e.buttons & (1 << [0, 2, 1, 3, 4][e.button])) { downButtons.add(e.button); push(3, e.button); }
+    else { downButtons.delete(e.button); push(4, e.button); }
   });
 
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
+    syncModifiers(e);
+    // the scroll must land on what is under the cursor even if no move event preceded it
+    if (!locked()) { const [x, y] = px(e); push(1, fb(x), fb(y)); }
     let dx = -e.deltaX, dy = -e.deltaY, precise = 0;
-    if (e.deltaMode === 0) { dx /= 100; dy /= 100; precise = (Math.abs(e.deltaY) % 100 !== 0 || e.deltaX !== 0) ? 1 : 0; }
-    else if (e.deltaMode === 2) { dx *= 3; dy *= 3; }
+    if (e.deltaMode === 0) {
+      // A mouse wheel notch is 100 px only at 100 % zoom / scaling (125, 133.33... otherwise), so the pixel delta cannot
+      // tell a wheel from a touchpad. The legacy wheelDelta stays a multiple of 120 per notch on every browser that has it.
+      // (touchpads can also land on a multiple of 120 with a small pixel delta, hence the size check)
+      const notches = e.wheelDeltaY !== undefined && e.deltaX === 0 && e.wheelDeltaY !== 0 && e.wheelDeltaY % 120 === 0 && Math.abs(e.deltaY) >= 80;
+      if (notches) { dx = 0; dy = e.wheelDeltaY / 120; }
+      else { dx /= 100; dy /= 100; precise = 1; }
+    }
+    else if (e.deltaMode === 1) { dx /= 3; dy /= 3; } // lines (Firefox mouse wheel): 3 lines per notch
     push(5, fb(dx), fb(dy), precise);
   }, { passive: false });
 
@@ -224,7 +265,22 @@ export function installUi(rt, canvas, hooks) {
     slot(S.POINTER_LOCKED, locked() ? 1 : 0);
     if (locked()) push(16, 1);
   });
-  document.addEventListener('fullscreenchange', () => slot(S.FULLSCREEN, document.fullscreenElement ? 1 : 0));
+  // Escape belongs to the game (pause, back): while fullscreen, ask the browser to deliver it instead of leaving
+  // fullscreen (Keyboard Lock, Chromium; holding Escape still exits). F11 / Alt+Enter toggle fullscreen from the game.
+  function onFullscreenChange() {
+    const on = !!document.fullscreenElement;
+    rectCache.r = null;
+    wantFullscreen = -1;
+    slot(S.FULLSCREEN, on ? 1 : 0);
+    try {
+      if (on) navigator.keyboard?.lock?.(['Escape'])?.catch(() => { });
+      else navigator.keyboard?.unlock?.();
+    } catch { }
+    // the browser drops pointer lock together with fullscreen and may swallow key-ups during the transition
+    releaseAll();
+    if (wantLock) setTimeout(tryLock, 100);
+  }
+  document.addEventListener('fullscreenchange', onFullscreenChange);
 
   // ------------------------------------------------------------------ keyboard + text
   const hiddenInput = document.createElement('textarea');
@@ -240,7 +296,8 @@ export function installUi(rt, canvas, hooks) {
     onGesture();
     slot(S.CAPS_LOCK, e.getModifierState && e.getModifierState('CapsLock') ? 1 : 0);
     const k = keyIndex.get(e.code);
-    if (k !== undefined) push(6, k);
+    syncModifiers(e);
+    if (k !== undefined) { downKeys.add(k); push(6, k); }
     // let the hidden textarea receive printable keys/IME when text input is active; block everything else
     const printable = e.key.length === 1 && !e.ctrlKey && !e.metaKey;
     if (!(textInputActive && (printable || composing || e.key === 'Process' || e.key === 'Dead'))) e.preventDefault();
@@ -249,7 +306,8 @@ export function installUi(rt, canvas, hooks) {
   addEventListener('keyup', (e) => {
     if (passthrough(e)) return;
     const k = keyIndex.get(e.code);
-    if (k !== undefined) push(7, k);
+    if (k !== undefined) { downKeys.delete(k); push(7, k); }
+    syncModifiers(e);
     e.preventDefault();
   }, true);
 
@@ -272,8 +330,14 @@ export function installUi(rt, canvas, hooks) {
 
   // ------------------------------------------------------------------ focus / visibility
   const publishFocus = () => { slot(S.FOCUSED, document.hasFocus() ? 1 : 0); slot(S.VISIBLE, document.visibilityState === 'visible' ? 1 : 0); };
-  addEventListener('focus', publishFocus); addEventListener('blur', publishFocus);
-  document.addEventListener('visibilitychange', () => { publishFocus(); if (document.visibilityState === 'hidden') hooks.onHidden?.(); });
+  addEventListener('focus', () => { publishFocus(); rectCache.r = null; });
+  addEventListener('blur', () => { releaseAll(); publishFocus(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') { releaseAll(); hooks.onHidden?.(); }
+    else { rectCache.r = null; globalThis.xcAudioResume?.(); }
+    publishFocus();
+  });
+  addEventListener('pagehide', releaseAll);
 
   // ------------------------------------------------------------------ clipboard
   addEventListener('paste', (e) => {

@@ -133,10 +133,14 @@ const t0 = performance.now();
 try {
   await downloaded;
 } catch (e) {
+  console.error('[launch] engine download failed: ' + dl.error);
+  globalThis.xcTelemetryCheckpoint?.('download-failed');
   boot.fail(t('dl.failed', dl.error));
   throw e;
 }
 listeners.delete(dlStage);
+// boot checkpoints: a session that never reaches the menu (seen on iOS) shows where it stopped
+globalThis.xcTelemetryCheckpoint?.('download-done');
 boot.stage('download', 'done', `${dl.total} · ${fmtBytes(dl.bytes)}${dl.network === 0 ? ' · ' + t('dl.cached') : ' · ' + fmtBytes(dl.network) + ' net'}`, dl.ms);
 say(`engine assets: ${dl.total} files, ${fmtBytes(dl.bytes)} (${fmtBytes(dl.network)} over the network)`);
 
@@ -152,8 +156,10 @@ try {
   rt = rtRef = await builder.create();
   say(`.NET runtime created in ${(performance.now() - c0).toFixed(0)} ms · wasm memory ${fmtBytes(rt.Module.HEAP8.buffer.byteLength)}`);
   boot.stage('runtime', 'done', `.NET ${rt.runtimeBuildInfo?.productVersion || ''}`.trim());
+  globalThis.xcTelemetryCheckpoint?.('runtime-created');
 } catch (e) {
   console.error('[launch] runtime start failed', e);
+  globalThis.xcTelemetryCheckpoint?.('runtime-failed');
   boot.fail(String(e?.message || e));
   throw e;
 }
@@ -207,7 +213,9 @@ globalThis.xcAudioInit = async (memory, ring, ctrl, cap, rate) => {
     numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2],
     processorOptions: { buffer, ring, ctrl, cap },
   });
-  node.connect(audioCtx.destination);
+  // ?mute: silent output for test runs (the audio clock keeps running)
+  if (query.has('mute')) { const silent = audioCtx.createGain(); silent.gain.value = 0; node.connect(silent).connect(audioCtx.destination); }
+  else node.connect(audioCtx.destination);
   const updateLatency = () => {
     const secs = (audioCtx.outputLatency || 0) + (audioCtx.baseLatency || 0);
     // frames consumed by the worklet one render quantum before they reach the output stage
@@ -243,6 +251,7 @@ for (const type of ['keydown', 'keyup']) addEventListener(type, (e) => {
 const ui = installUi(rt, canvas, {
   onStartGate: () => {
     clearTimeout(fallback);
+    globalThis.xcTelemetryCheckpoint?.('gate-shown');
     say(`engine ready ${((performance.now() - t0) / 1000).toFixed(1)} s after the download, waiting for the start click`);
     boot.showGate(() => {
       // still inside the player's gesture: the only moment the page may go fullscreen and start audio
@@ -257,6 +266,7 @@ const ui = installUi(rt, canvas, {
   },
   onAttached: () => {
     attachedAt = performance.now();
+    globalThis.xcTelemetryCheckpoint?.('attached');
     say(`window attached to the engine (${canvas.width}x${canvas.height} px)`);
     // safety net: if the intro marker never shows up (log format change), don't keep the game hidden forever
     fallback = setTimeout(() => { if (!boot.done && !boot.gate) { say('no intro marker after 120 s, showing the game anyway'); boot.finish(); } }, 120000);

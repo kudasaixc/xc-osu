@@ -97,7 +97,13 @@ The C# collector in `osu.Web/Telemetry.cs` measures draw/update/audio/input fram
 10-second histograms, GC pauses/allocation, texture uploads, screen/overlay context,
 and bounded individual stutter samples every 2 seconds (overflow counts are reported).
 `js/xc-telemetry.js` adds GPU/browser/hardware, boot duration, long tasks, audio state,
-visibility and error categories. Raw console/chat/account content is not uploaded.
+visibility and error/warning messages. Each distinct message is sent once per session, truncated to
+300 characters and scrubbed (URL queries and numeric path parts, e-mails, tokens, long identifiers);
+repeats are only counted (`log-repeats`). Other console/chat/account content is not uploaded.
+Boot checkpoints (`download-done`, `runtime-created`, `attached`, `gate-shown`, `start-click`, `gate-open`,
+plus `download-failed` / `runtime-failed`) show where a session that never reached the menu stopped.
+GC pause: Mono does not implement `GC.GetTotalPauseDuration()` (always 0), so the pause is estimated from
+stalls of the 1 kHz input thread during frames in which a collection happened (`gc.est = 1` in windows).
 
 Batches POST to `/api/xc/tm` every 2 seconds. Each page has a random session ID and a
 48 KB localStorage outbox. Server sequence acknowledgements remove delivered items;
@@ -158,3 +164,27 @@ Mean frame interval is weighted by the histogram sample count. P99 is reported a
 Checks: `dotnet run --project tools/tests/stutter-policy/StutterPolicy.csproj`, `python3 tools/performance-history-test.py`, and the browser telemetry tests. The baseline and future observations may differ in workload; no automatic improvement claim is made.
 
 Telemetry build IDs include a fingerprint of the published engine assets as well as the page revision, so an engine-only rebuild cannot silently merge into the previous version’s history. `python3 tools/stamp-test.py` verifies this and repeated stamping stability.
+
+### Input, pointer lock and fullscreen in the browser (2026-11-10)
+
+All in `wwwroot/js/xc-ui.js` and `Platform/Web/WebWindow.cs`.
+
+- **Stuck keys.** A browser never delivers the key-up of a key still held when the page loses focus (Alt+Tab, tab
+  switch, leaving fullscreen). The engine kept it pressed: a stuck Alt turns every scroll and arrow key into a volume
+  change and breaks every shortcut. `xc-ui.js` tracks held keys / mouse buttons, releases them all on `blur`, hidden,
+  `pagehide` and fullscreen changes, and drops stale modifiers using the modifier flags carried by every key, pointer
+  and wheel event.
+- **Pointer lock only while confined.** A page cannot warp the OS cursor, so the stock "leave relative mode at the
+  window edge" made the cursor jump back to where the lock started. `WebWindow.RelativeMouseMode` is now only granted
+  while `CursorState.Confined` is set (fullscreen, or `ConfineMouseMode.Always` = gameplay with osu!'s default
+  setting); the cursor is then clamped to the canvas by `UserInputManager`. In windowed menus the absolute cursor is
+  used and leaves the canvas freely. `WebWindow` binds `FrameworkSetting.ConfineMouseMode` itself (the SDL window did).
+- **Fullscreen state is the browser's.** `fullscreenchange` writes the `FULLSCREEN` slot; `WebWindow.syncFullscreen`
+  mirrors it into `FrameworkSetting.WindowMode` on the update thread without sending a request back. The setting is
+  reset to windowed at startup (a page always starts windowed). A refused `requestFullscreen` (no user activation)
+  stays pending and is retried on the next key press / click.
+- **Escape.** While fullscreen, `navigator.keyboard.lock(['Escape'])` (Chromium) delivers Escape to the game instead of
+  leaving fullscreen; holding Escape still exits. F11 and Alt+Enter toggle fullscreen (`FrameworkAction.ToggleFullscreen`
+  -> `CycleMode`). Firefox / Safari have no Keyboard Lock: Escape still leaves fullscreen there.
+- **Wheel.** Notches are detected with `wheelDeltaY % 120` (the pixel delta is 100 only at 100 % scaling), everything
+  else is a precise (touchpad) scroll; Firefox line deltas are 3 lines per notch.

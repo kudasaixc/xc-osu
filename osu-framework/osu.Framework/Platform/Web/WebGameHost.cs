@@ -52,7 +52,15 @@ namespace osu.Framework.Platform.Web
 
         public override void OpenUrlExternally(string url) => WebNative.UiCall(UiOp.OpenUrl, s: url);
 
-        protected override IWindow CreateWindow(GraphicsSurfaceType preferredSurface) => new WebWindow();
+        protected override IWindow CreateWindow(GraphicsSurfaceType preferredSurface) => new WebWindow
+        {
+            ScheduleToUpdate = action =>
+            {
+                var scheduler = UpdateThread?.Scheduler;
+                if (scheduler != null) scheduler.Add(action);
+                else action();
+            },
+        };
 
         protected override Clipboard CreateClipboard() => new WebClipboard();
 

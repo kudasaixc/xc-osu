@@ -69,8 +69,15 @@ export function startTelemetry(options, build, log) {
     if (!persistTimer) persistTimer = setTimeout(persist, 100);
   }
   function event(n, data = {}) { remember(n, data); add({ k: 'e', n, ...data }); }
-  let logCount = 0;
+  let logCount = 0, logRepeats = 0;
+  const logSeen = new Map();
   setInterval(() => { logCount = 0; }, 10000);
+  const scrub = (s) => String(s)
+    .replace(/https?:\/\/[^\s"')]+/g, (u) => { try { const x = new URL(u); return x.origin + x.pathname.replace(/\/\d+/g, '/#'); } catch { return '<url>'; } })
+    .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '<email>')
+    .replace(/\b(bearer|token|password|secret|authorization)\b\s*[:=]?\s*\S+/gi, '$1 <redacted>')
+    .replace(/\b[A-Za-z0-9_-]{32,}\b/g, '<id>')
+    .replace(/\s+/g, ' ').trim().slice(0, 300);
   log.on(line => {
     if (line.text.startsWith('[tm] ')) {
       try {
@@ -85,11 +92,19 @@ export function startTelemetry(options, build, log) {
         if (item.k === 'w') item.js = { hidden: +document.hidden, audio: globalThis.xcAudioDebug?.(), heap: performance.memory?.usedJSHeapSize };
         add(item);
       } catch { }
-    } else if ((line.level === 'error' || line.level === 'warn') && logCount++ < 20) {
-      // No raw game/chat/account log text: diagnostic categories only.
-      event('log', { name: line.level, category: /webgl|graphics|render/i.test(line.text) ? 'graphics' : /audio|bass/i.test(line.text) ? 'audio' : /memory|heap|alloc/i.test(line.text) ? 'memory' : 'runtime' });
+    } else if (line.level === 'error' || line.level === 'warn') {
+      // A category alone cannot be acted upon: send the message itself, scrubbed (no addresses, tokens, e-mails or
+      // long identifiers), truncated, and only once per distinct message (repeats are counted, see 'log-repeats').
+      const text = scrub(line.text);
+      if (!text) return;
+      const seen = logSeen.get(text);
+      if (seen !== undefined) { logSeen.set(text, seen + 1); logRepeats++; return; }
+      if (logSeen.size >= 200 || logCount++ >= 20) return;
+      logSeen.set(text, 1);
+      event('log', { name: line.level, text, category: /webgl|graphics|render|shader|texture/i.test(text) ? 'graphics' : /audio|bass/i.test(text) ? 'audio' : /memory|heap|alloc/i.test(text) ? 'memory' : 'runtime' });
     }
   });
+  setInterval(() => { if (logRepeats) { event('log-repeats', { count: logRepeats }); logRepeats = 0; } }, 30000);
   try {
     new PerformanceObserver(list => {
       for (const e of list.getEntries()) event('longtask', { ms: e.duration, start: e.startTime, hidden: +document.hidden });

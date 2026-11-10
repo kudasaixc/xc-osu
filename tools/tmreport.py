@@ -9,6 +9,8 @@ for title, query in [
     ('Sessions by GPU/build', 'SELECT gpu, build, count(*) sessions, round(avg(boot_ms)) boot_ms FROM tm_sessions GROUP BY gpu, build ORDER BY sessions DESC LIMIT 30'),
     ('Worst frame windows', 'SELECT s.gpu, s.build, w.scr, w.ov, w.draw_max, w.update_max, w.gc_pause, w.late, w.empty FROM tm_windows w JOIN tm_sessions s USING(sid) ORDER BY draw_max DESC LIMIT 30'),
     ('Stutters by context', "SELECT name, scr, ov, count(*) count, round(avg(ms),2) avg_ms, max(ms) max_ms FROM tm_events WHERE kind='spike' GROUP BY name,scr,ov ORDER BY count DESC LIMIT 30"),
+    ('Boot checkpoints reached (sessions)', "SELECT name, count(DISTINCT sid) sessions FROM tm_events WHERE kind='boot-checkpoint' GROUP BY name ORDER BY sessions DESC"),
+    ('Error / warning messages', "SELECT name level, json_extract(data,'$.category') category, json_extract(data,'$.text') text, count(*) count, count(DISTINCT sid) sessions FROM tm_events WHERE kind='log' AND json_extract(data,'$.text') IS NOT NULL GROUP BY level, text ORDER BY count DESC LIMIT 40"),
     ('Diagnostic events', 'SELECT kind, name, count(*) count FROM tm_events GROUP BY kind,name ORDER BY count DESC LIMIT 30')]:
     print(title)
     for row in c.execute(query): print(json.dumps(dict(row), ensure_ascii=False))

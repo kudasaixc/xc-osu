@@ -82,11 +82,20 @@ namespace osu.Framework.Platform.Web
 
         private bool relativeMouseMode;
 
+        /// <summary>
+        /// Relative mode = browser pointer lock. A browser cannot warp the OS cursor, so the stock behaviour (leave relative
+        /// mode when the cursor crosses the window edge and hand the position back to the OS) makes the cursor reappear
+        /// wherever the lock started. Pointer lock is therefore only taken while the cursor is confined (fullscreen, or
+        /// gameplay with the default confine setting): the game cursor is then clamped to the canvas and never escapes.
+        /// Everywhere else the regular absolute cursor is used and can leave the canvas freely.
+        /// </summary>
         public bool RelativeMouseMode
         {
             get => relativeMouseMode;
             set
             {
+                value &= CursorState.HasFlagFast(CursorState.Confined);
+
                 if (relativeMouseMode == value) return;
 
                 relativeMouseMode = value;
@@ -190,9 +199,62 @@ namespace osu.Framework.Platform.Web
             return cachedDisplay = new Display(0, "Browser", bounds, bounds, new[] { mode });
         }
 
+        /// <summary>Runs an action on the update thread (set by the host). Bindables shared with the game must only change there.</summary>
+        internal Action<Action>? ScheduleToUpdate;
+
+        private readonly Bindable<ConfineMouseMode> confineMouseMode = new Bindable<ConfineMouseMode>();
+
         public void SetupWindow(FrameworkConfigManager config)
         {
             config.BindWith(FrameworkSetting.WindowMode, WindowMode);
+
+            // The page always starts windowed (fullscreen needs a click, the launch screen asks for it when enabled) and the
+            // browser can leave fullscreen on its own, so the stored mode means nothing here: the real state is mirrored
+            // into the setting instead (see syncFullscreen).
+            WindowMode.Value = Configuration.WindowMode.Windowed;
+
+            config.BindWith(FrameworkSetting.ConfineMouseMode, confineMouseMode);
+            confineMouseMode.BindValueChanged(_ => updateConfineMode());
+            WindowMode.BindValueChanged(_ => updateConfineMode(), true);
+        }
+
+        private void updateConfineMode()
+        {
+            bool confine = confineMouseMode.Value == ConfineMouseMode.Always || WindowMode.Value != Configuration.WindowMode.Windowed;
+
+            if (confine)
+                CursorStateBindable.Value |= CursorState.Confined;
+            else
+                CursorStateBindable.Value &= ~CursorState.Confined;
+        }
+
+        private int lastFullscreen;
+
+        /// <summary>
+        /// Follows fullscreen changes made by the browser (launch screen click, Escape held, F11 handled by the browser,
+        /// tab switch): the window mode setting always reflects what is really on screen.
+        /// </summary>
+        private void syncFullscreen()
+        {
+            int fullscreen = shared.Read(WebShared.FULLSCREEN);
+            if (fullscreen == lastFullscreen) return;
+
+            lastFullscreen = fullscreen;
+            var mode = fullscreen != 0 ? Configuration.WindowMode.Fullscreen : Configuration.WindowMode.Windowed;
+
+            void apply()
+            {
+                // already known to the page: no request must go back to it
+                windowState = fullscreen != 0 ? WindowState.Fullscreen : WindowState.Normal;
+
+                if ((WindowMode.Value != Configuration.WindowMode.Windowed) != (fullscreen != 0))
+                    WindowMode.Value = mode;
+
+                WindowStateChanged?.Invoke(windowState);
+            }
+
+            if (ScheduleToUpdate != null) ScheduleToUpdate(apply);
+            else apply();
         }
 
         public void Create()
@@ -260,6 +322,8 @@ namespace osu.Framework.Platform.Web
                 wasVisible = visible;
                 if (visible) Resumed?.Invoke();
             }
+
+            syncFullscreen();
 
             int* ev = stackalloc int[WebShared.EVENT_INTS];
 
@@ -397,7 +461,8 @@ namespace osu.Framework.Platform.Web
         {
         }
 
-        public void CycleMode() => WindowState = WindowState == WindowState.Fullscreen ? WindowState.Normal : WindowState.Fullscreen;
+        // F11 / Alt+Enter. Goes through the setting so the settings screen and the confine logic follow.
+        public void CycleMode() => WindowMode.Value = WindowMode.Value == Configuration.WindowMode.Windowed ? Configuration.WindowMode.Fullscreen : Configuration.WindowMode.Windowed;
 
         public void OnDraw()
         {

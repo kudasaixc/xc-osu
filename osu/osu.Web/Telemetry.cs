@@ -154,16 +154,35 @@ namespace osu.Web
             int c0 = GC.CollectionCount(0), c1 = GC.CollectionCount(1);
             gc0 = c0 - c.LastGc0;
             gc1 = c1 - c.LastGc1;
-            pauseMs = 0;
 
             if (gc0 != 0 || gc1 != 0)
             {
-                var pause = GC.GetTotalPauseDuration();
-                pauseMs = (pause - c.LastPause).TotalMilliseconds;
-                c.LastPause = pause;
                 c.LastGc0 = c0;
                 c.LastGc1 = c1;
             }
+
+            // read every frame: the estimate (see totalPause) may be recorded by the input thread after the collection itself
+            var pause = totalPause();
+            pauseMs = (pause - c.LastPause).TotalMilliseconds;
+            c.LastPause = pause;
+        }
+
+        /// <summary>
+        /// Mono (the WebAssembly runtime) does not implement <see cref="GC.GetTotalPauseDuration"/>: it always returns zero.
+        /// Collections stop every managed thread, so the pause is estimated from the input thread, which otherwise ticks
+        /// every 1-2 ms: whenever a collection happened during one of its frames, the time beyond a normal frame is counted.
+        /// </summary>
+        private static long estimatedPauseUs;
+
+        private static bool pauseEstimated;
+
+        private static TimeSpan totalPause()
+        {
+            var real = GC.GetTotalPauseDuration();
+            if (real > TimeSpan.Zero) return real;
+
+            pauseEstimated = true;
+            return TimeSpan.FromMilliseconds(Interlocked.Read(ref estimatedPauseUs) / 1000.0);
         }
 
         // Fixed ring: every draw frame, no allocation on the normal frame path.
@@ -386,6 +405,9 @@ namespace osu.Web
 
             gcSince(c, out int gc0, out int gc1, out double gcPause);
 
+            if (c == input && (gc0 != 0 || gc1 != 0) && interval > 4 && interval < 1000)
+                Interlocked.Add(ref estimatedPauseUs, (long)((interval - 2) * 1000));
+
             lock (c.Lock)
             {
                 c.Frames++;
@@ -415,7 +437,7 @@ namespace osu.Web
         private static void report()
         {
             int[] lastGc = new int[3];
-            TimeSpan lastPause = GC.GetTotalPauseDuration();
+            TimeSpan lastPause = totalPause();
             long lastAlloc = GC.GetTotalAllocatedBytes();
             long lastCompleted = ThreadPool.CompletedWorkItemCount;
             long windowStart = now();
@@ -445,7 +467,7 @@ namespace osu.Web
                     j.Raw("th", "{" + string.Join(",", channel(draw, true), channel(update, false), channel(audio, false), channel(input, false)) + "}");
                     j.Num("per", Math.Round(period, 3));
 
-                    var pause = GC.GetTotalPauseDuration();
+                    var pause = totalPause();
                     long alloc = GC.GetTotalAllocatedBytes();
                     var gc = new Json();
                     for (int i = 0; i < 3; i++)
@@ -456,6 +478,7 @@ namespace osu.Web
                     }
 
                     gc.Num("pause", Math.Round((pause - lastPause).TotalMilliseconds, 1));
+                    if (pauseEstimated) gc.Num("est", 1); // estimated from input thread stalls, not reported by the runtime
                     gc.Num("heap", Math.Round(GC.GetTotalMemory(false) / 1048576.0, 1));
                     gc.Num("alloc", Math.Round((alloc - lastAlloc) / 1048576.0, 1));
                     lastPause = pause;
