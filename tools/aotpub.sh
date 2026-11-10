@@ -10,6 +10,7 @@ log="$ROOT/out/aotpub.log"
 memgb=$(awk '/MemTotal/ {print int($2/1048576)}' /proc/meminfo)
 if [ "$memgb" -ge 15 ]; then par="-p:DisableParallelAot=false"; else par="-p:DisableParallelAot=true -m:1"; fi
 echo "aotpub: ${memgb} GB RAM, $(nproc) cores ($par)"
+python3 "$ROOT/tools/portstats.py" "$ROOT/osu/osu.Web/wwwroot/launcher/build.json" || true
 dotnet publish -c Release -o "$ROOT/out/aot" -p:XcAot=true -p:CompressionEnabled=false -p:WasmEmitSymbolMap=true $par "$@" > "$log" 2>&1
 rc=$?
 grep -E " error |error :|xc-osu! AOT|AOT'ing|Build succeeded" "$log" | sed 's/\[\/.*//' | sort -u | head -40

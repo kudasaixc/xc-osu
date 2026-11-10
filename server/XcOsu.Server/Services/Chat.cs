@@ -56,6 +56,18 @@ namespace XcOsu.Server.Services
             return ch;
         }
 
+        /// <summary>Channel JSON as osu-web sends it (osu!'s Channel model only reads "users", it never writes it).</summary>
+        public static Newtonsoft.Json.Linq.JObject ToJson(Channel ch)
+        {
+            var j = Newtonsoft.Json.Linq.JObject.FromObject(ch, JsonSerializer.Create(Api.Json.SETTINGS));
+            j["users"] = new Newtonsoft.Json.Linq.JArray(ch.Users.Select(u => u.Id));
+            j["moderated"] = false;
+            j["current_user_attributes"] = new Newtonsoft.Json.Linq.JObject { ["can_message"] = true, ["can_message_error"] = null, ["last_read_id"] = ch.LastReadId };
+            return j;
+        }
+
+        public static Newtonsoft.Json.Linq.JArray ToJson(IEnumerable<Channel> channels) => new Newtonsoft.Json.Linq.JArray(channels.Select(ToJson));
+
         public List<Channel> PublicChannels(int viewer)
         {
             using var c = db.Open();
@@ -133,9 +145,9 @@ namespace XcOsu.Server.Services
         {
             using var c = db.Open();
             var rows = c.Query("""
-                SELECT id, channel_id, sender_id, content, is_action, timestamp FROM chat_messages
+                SELECT id, channel_id, sender_id, content, is_action, timestamp, uuid FROM chat_messages
                 WHERE channel_id = $c AND id > $s ORDER BY id DESC LIMIT $l
-                """, r => (r.GetInt64(0), r.GetInt32(1), r.GetInt32(2), r.GetString(3), r.GetInt32(4) != 0, r.GetString(5), ""),
+                """, r => (r.GetInt64(0), r.GetInt32(1), r.GetInt32(2), r.GetString(3), r.GetInt32(4) != 0, r.GetString(5), r.IsDBNull(6) ? "" : r.GetString(6)),
                 ("$c", channelId), ("$s", since ?? 0), ("$l", limit));
             rows.Reverse();
             var cache = new Dictionary<int, APIUser>();
@@ -150,8 +162,8 @@ namespace XcOsu.Server.Services
             List<int> recipients;
             using (var c = db.Open())
             {
-                id = c.Insert("INSERT INTO chat_messages (channel_id, sender_id, content, is_action, timestamp) VALUES ($c, $s, $m, $a, $t)",
-                    ("$c", channelId), ("$s", senderId), ("$m", content), ("$a", isAction ? 1 : 0), ("$t", ts));
+                id = c.Insert("INSERT INTO chat_messages (channel_id, sender_id, content, is_action, timestamp, uuid) VALUES ($c, $s, $m, $a, $t, $g)",
+                    ("$c", channelId), ("$s", senderId), ("$m", content), ("$a", isAction ? 1 : 0), ("$t", ts), ("$g", uuid));
                 c.Exec("INSERT OR IGNORE INTO chat_members (channel_id, user_id) VALUES ($c, $u)", ("$c", channelId), ("$u", senderId));
                 c.Exec("UPDATE chat_members SET last_read_id = $m WHERE channel_id = $c AND user_id = $u", ("$m", id), ("$c", channelId), ("$u", senderId));
                 recipients = c.Query("SELECT user_id FROM chat_members WHERE channel_id = $c", r => r.GetInt32(0), ("$c", channelId));
@@ -170,6 +182,79 @@ namespace XcOsu.Server.Services
             var msg = toMessage((id, channelId, senderId, content, isAction, ts, uuid ?? ""), new Dictionary<int, APIUser>());
             _ = broadcast(recipients, "chat.message.new", new { messages = new[] { msg }, users = new[] { msg.Sender } });
             return msg;
+        }
+
+        /// <summary>Why a user may not post right now (silence / restriction / PM rules), or null if they can.</summary>
+        public string? PostRestriction(int channelId, int senderId)
+        {
+            var sender = accounts.Get(senderId);
+            if (sender == null) return "unknown user";
+            if (sender.Restricted) return "Your account is restricted.";
+            if (sender.SilencedUntil is DateTimeOffset until && until > DateTimeOffset.UtcNow) return $"You are silenced until {until:u}.";
+
+            using var c = db.Open();
+            var pm = c.Query("SELECT pm_user_a, pm_user_b FROM chat_channels WHERE id = $c AND type = 'PM'", r => (r.GetInt32(0), r.GetInt32(1)), ("$c", channelId)).FirstOrDefault();
+            if (pm != default)
+            {
+                int other = pm.Item1 == senderId ? pm.Item2 : pm.Item1;
+                return PmRestriction(senderId, other);
+            }
+
+            if (c.Scalar<long>("SELECT moderated FROM chat_channels WHERE id = $c", ("$c", channelId)) == 1 && !sender.IsAdmin)
+                return "This channel is moderated.";
+            return null;
+        }
+
+        public string? PmRestriction(int sender, int target)
+        {
+            using var c = db.Open();
+            if (c.Scalar<long>("SELECT COUNT(*) FROM blocks WHERE user_id = $t AND target_id = $u", ("$t", target), ("$u", sender)) > 0)
+                return "You cannot message this user.";
+            if (c.Scalar<long>("SELECT COUNT(*) FROM blocks WHERE user_id = $u AND target_id = $t", ("$t", target), ("$u", sender)) > 0)
+                return "You have blocked this user.";
+            var t = accounts.Get(target);
+            if (t == null) return "User not found.";
+            if (Newtonsoft.Json.Linq.JObject.Parse(t.ProfileJson).Value<bool?>("pm_friends_only") == true
+                && c.Scalar<long>("SELECT COUNT(*) FROM friends WHERE user_id = $t AND target_id = $u", ("$t", target), ("$u", sender)) == 0)
+                return "This user only accepts messages from friends.";
+            return null;
+        }
+
+        /// <summary>Creates a channel bound to a multiplayer / playlists room.</summary>
+        public int CreateRoomChannel(long roomId, string roomName)
+        {
+            using var c = db.Open();
+            return (int)c.Insert("INSERT INTO chat_channels (name, description, type, room_id) VALUES ($n, $d, 'MULTIPLAYER', $r)",
+                ("$n", $"#mp_{roomId}"), ("$d", roomName), ("$r", roomId));
+        }
+
+        public void RenameRoomChannel(int channelId, string roomName)
+        {
+            using var c = db.Open();
+            c.Exec("UPDATE chat_channels SET description = $d WHERE id = $c", ("$d", roomName), ("$c", channelId));
+        }
+
+        /// <summary>Joins a user to a channel and tells their clients (chat.channel.join), like osu-web does for multiplayer rooms.</summary>
+        public async Task JoinAndNotify(int channelId, int userId)
+        {
+            var ch = Join(channelId, userId);
+            if (ch != null) await broadcast(new[] { userId }, "chat.channel.join", ToJson(ch));
+        }
+
+        public async Task PartAndNotify(int channelId, int userId)
+        {
+            var ch = Get(channelId, userId);
+            Leave(channelId, userId);
+            if (ch != null) await broadcast(new[] { userId }, "chat.channel.part", ToJson(ch));
+        }
+
+        public async Task CloseRoomChannel(int channelId)
+        {
+            List<int> members;
+            using (var c = db.Open())
+                members = c.Query("SELECT user_id FROM chat_members WHERE channel_id = $c", r => r.GetInt32(0), ("$c", channelId));
+            foreach (int u in members)
+                await PartAndNotify(channelId, u);
         }
 
         public int OpenPm(int a, int b)
@@ -206,6 +291,8 @@ namespace XcOsu.Server.Services
                     try { await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None); } catch { }
             }
         }
+
+        public Task SendEvent(IEnumerable<int> userIds, string evt, object data) => broadcast(userIds, evt, data);
 
         private async Task broadcast(IEnumerable<int> userIds, string evt, object data)
         {

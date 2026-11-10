@@ -213,6 +213,9 @@ namespace osu.Game.Online.API.Requests.Responses
         [JsonProperty(@"profile_hue")]
         public int? ProfileHue;
 
+        [JsonProperty(@"page")]
+        public APIUserPage Page;
+
         [JsonProperty(@"profile_order")]
         public string[] ProfileOrder;
 

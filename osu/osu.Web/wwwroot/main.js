@@ -1,54 +1,157 @@
 // xc-osu! bootstrap — xc softworks (kudasaixc)
+// 1. the engine starts downloading immediately (dotnet.download(): assets only, no runtime yet)
+// 2. the launcher shows while it downloads; launch options are applied when the runtime is created
+// 3. the launch screen follows the real boot (loader events + the engine's own log lines) until the intro
+import { captureConsole, xcLog } from './js/xc-log.js';
+captureConsole();
+
 import { dotnet } from './_framework/dotnet.js';
-import { installUi } from './js/xc-ui.js?v=8209999e6f';
+import { installUi } from './js/xc-ui.js';
+import { makeT } from './js/xc-i18n.js';
+import { Launcher, loadOptions, buildLaunch, fmtBytes } from './js/xc-launcher.js';
+import { BootScreen, LogViewer } from './js/xc-boot.js';
+import { PerfOverlay } from './js/xc-perf.js';
 
 const $ = (id) => document.getElementById(id);
-const status = (t) => { const el = $('xc-status'); if (el) el.textContent = t; console.log('[xc-osu!] ' + t); };
+const say = (m) => console.log('[launch] ' + m);
+const query = new URLSearchParams(location.search);
+const build = new URL(import.meta.url).searchParams.get('v') || 'dev';
 
-if (!crossOriginIsolated) {
-  status('This page needs cross-origin isolation (COOP/COEP headers) to run.');
-  throw new Error('not cross-origin isolated');
+let options = loadOptions();
+let t = makeT(options.lang);
+const blocked = !crossOriginIsolated;
+
+// ---------------------------------------------------------------- background download
+const dl = { loaded: 0, total: 0, bytes: 0, network: 0, speed: 0, done: false, error: null };
+const listeners = new Set();
+const emit = () => { for (const fn of listeners) fn(dl); };
+const recent = []; // [time, bytes] for the speed readout
+
+if (typeof PerformanceObserver !== 'undefined') {
+  new PerformanceObserver((list) => {
+    for (const e of list.getEntries()) {
+      if (!e.name.includes('/_framework/')) continue;
+      dl.bytes += e.decodedBodySize || e.encodedBodySize || 0;
+      dl.network += e.transferSize || 0;
+      recent.push([performance.now(), e.transferSize || 0]);
+    }
+    const now = performance.now();
+    while (recent.length && now - recent[0][0] > 2000) recent.shift();
+    dl.speed = recent.reduce((a, r) => a + r[1], 0) / 2;
+    emit();
+  }).observe({ type: 'resource', buffered: true });
 }
 
-status('loading runtime…');
-
-// URL switches: ?log ?perf ?diag (diagnostics) · ?mute (no audio output) · ?nursery=16m (GC young generation size)
-// A/B switches for frame pacing work (each restores the pre-fix behaviour): ?legacyraf ?desync ?drawwait ?uncapped
-const params = new URLSearchParams(location.search);
-const flag = (name) => (params.has(name) ? '1' : '');
-// Mono's default 4 MB nursery fills several times per second at osu!'s allocation rate, and every minor collection stops
-// all threads (draw worker included). A larger nursery means proportionally fewer of those pauses.
-const nursery = /^\d+[km]$/.test(params.get('nursery') || '') ? params.get('nursery') : '32m';
-
-const rt = await dotnet
-  .withConfig({ pthreadPoolInitialSize: 12, pthreadPoolUnusedSize: 4 })
-  .withEnvironmentVariable('XC_ORIGIN', location.origin)
-  .withEnvironmentVariable('XC_VERBOSE_LOG', flag('log'))
-  .withEnvironmentVariable('XC_PERF', flag('perf'))
-  .withEnvironmentVariable('XC_DIAG', flag('diag'))
-  .withEnvironmentVariable('XC_DRAW_LEGACY', flag('legacyraf'))
-  .withEnvironmentVariable('XC_DESYNC', flag('desync'))
-  .withEnvironmentVariable('XC_DRAW_WAIT', flag('drawwait'))
-  .withEnvironmentVariable('XC_UPDATE_UNCAPPED', flag('uncapped'))
-  .withEnvironmentVariable('MONO_GC_PARAMS', `nursery-size=${nursery}`)
+const builder = dotnet
+  .withConfig({ pthreadPoolInitialSize: options.workers, pthreadPoolUnusedSize: Math.min(4, options.workers) })
   .withResourceLoader((type, name, defaultUri) => defaultUri)
-  .withModuleConfig({
-    onDownloadResourceProgress: (loaded, total) => status(`downloading ${loaded}/${total}`),
-  })
-  .create();
+  .withModuleConfig({ onDownloadResourceProgress: (loaded, total) => { dl.loaded = loaded; dl.total = total; emit(); } });
+
+const dlStart = performance.now();
+const downloaded = blocked ? new Promise(() => { }) : builder.download().then(() => {
+  dl.ms = performance.now() - dlStart;
+  dl.done = true; dl.speed = 0; emit();
+}, (e) => { dl.error = e?.message || String(e); emit(); throw e; });
+downloaded.catch(() => { });
+
+// ---------------------------------------------------------------- launcher
+const auto = !blocked && ((options.autoLaunch && !query.has('launcher')) || query.has('launch') || query.has('play'));
+let launcher = null;
+function openLauncher() {
+  launcher = new Launcher($('xc-launcher'), t, {
+    options, build, blocked,
+    onLangChange: (lang) => { options = { ...launcher.o, lang }; t = makeT(lang); openLauncher(); launcher.download(dl); },
+  });
+  return launcher;
+}
+if (!auto) {
+  openLauncher();
+  const update = (s) => launcher?.download(s);
+  listeners.add(update);
+  update(dl);
+  options = await launcher.waitForLaunch();
+  listeners.delete(update);
+  if (blocked) throw new Error('not cross-origin isolated');
+}
+
+const L = buildLaunch(options);
+let lastBoot = null;
+try { lastBoot = JSON.parse(localStorage.getItem('xc.lastBoot') || 'null'); } catch { }
+const boot = new BootScreen($('xc-boot'), t, { lastBoot, auto });
+
+say(`xc-osu! build ${build} · ${navigator.hardwareConcurrency || '?'} logical cores · devicePixelRatio ${devicePixelRatio}`);
+say('options: ' + Object.entries(L.env).map(([k, v]) => `${k}=${v}`).join(' '));
+say(`webgl: ${JSON.stringify(L.gl)} · render scale ${Math.round(L.renderScale * 100)}% · audio latency ${L.audioLatency} · ${L.workers} worker threads`);
+
+// globals read by xc-ui.js (canvas resolution), the native GL glue (context attributes) and the audio init below
+globalThis.xcRenderScale = L.renderScale;
+globalThis.xcGlAttributes = L.gl;
+
+// ---------------------------------------------------------------- overlays
+let rtRef = null;
+const perf = new PerfOverlay($('xc-perf'), t, { position: L.perfPos, getWasmBytes: () => rtRef?.Module?.HEAP8?.buffer.byteLength || 0 });
+xcLog.on((l) => perf.feed(l.text));
+const logViewer = new LogViewer($('xc-logview'), t);
+addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey && e.altKey)) return;
+  if (e.code === 'KeyP') perf.toggle();
+  else if (e.code === 'KeyL') logViewer.toggle();
+}, true);
+boot.onFinished = () => { if (L.perfOverlay) perf.toggle(true); };
+
+// ---------------------------------------------------------------- download -> runtime
+const dlStage = (s) => boot.download(s.loaded, s.total, s.bytes ? fmtBytes(s.bytes) + (s.done && s.network === 0 ? ' · cache' : '') : '');
+listeners.add(dlStage);
+dlStage(dl);
+const t0 = performance.now();
+try {
+  await downloaded;
+} catch (e) {
+  boot.fail(t('dl.failed', dl.error));
+  throw e;
+}
+listeners.delete(dlStage);
+boot.stage('download', 'done', `${dl.total} · ${fmtBytes(dl.bytes)}${dl.network === 0 ? ' · ' + t('dl.cached') : ' · ' + fmtBytes(dl.network) + ' net'}`, dl.ms);
+say(`engine assets: ${dl.total} files, ${fmtBytes(dl.bytes)} (${fmtBytes(dl.network)} over the network)`);
+
+boot.stage('runtime', 'active');
+builder.withConfig({ pthreadPoolInitialSize: L.workers, pthreadPoolUnusedSize: Math.min(4, L.workers) });
+for (const [k, v] of Object.entries(L.env)) builder.withEnvironmentVariable(k, v);
+if (query.has('log')) builder.withEnvironmentVariable('XC_VERBOSE_LOG', '1');
+let rt;
+try {
+  const c0 = performance.now();
+  rt = rtRef = await builder.create();
+  say(`.NET runtime created in ${(performance.now() - c0).toFixed(0)} ms · wasm memory ${fmtBytes(rt.Module.HEAP8.buffer.byteLength)}`);
+  boot.stage('runtime', 'done', `.NET ${rt.runtimeBuildInfo?.productVersion || ''}`.trim());
+} catch (e) {
+  console.error('[launch] runtime start failed', e);
+  boot.fail(String(e?.message || e));
+  throw e;
+}
 
 const FS = rt.Module.FS;
 const ROOT = '/xc';
 
 // ---------------------------------------------------------------- persistent storage (IDBFS)
+boot.stage('storage', 'active');
 try { FS.mkdir(ROOT); } catch { }
 let persistent = false;
 try {
+  const s0 = performance.now();
   FS.mount(rt.Module.IDBFS || FS.filesystems.IDBFS, { autoPersist: false }, ROOT);
   await new Promise((res) => FS.syncfs(true, (err) => { if (err) console.warn(err); res(); }));
   persistent = true;
-  navigator.storage?.persist?.();
-} catch (e) { console.warn('xc-osu!: persistent storage unavailable, running in memory', e); }
+  let files = 0;
+  const walk = (p) => { for (const n of FS.readdir(p)) { if (n === '.' || n === '..') continue; const f = p + '/' + n; if (FS.isDir(FS.stat(f).mode)) walk(f); else files++; } };
+  try { walk(ROOT); } catch { }
+  const persisted = await navigator.storage?.persist?.().catch(() => false);
+  say(`IndexedDB storage mounted at ${ROOT}: ${files} files loaded in ${(performance.now() - s0).toFixed(0)} ms (persistent: ${!!persisted})`);
+  boot.stage('storage', 'done', t('stage.files', files));
+} catch (e) {
+  console.warn('[launch] persistent storage unavailable, running in memory', e);
+  boot.stage('storage', 'fail', 'in memory');
+}
 
 let syncing = false, dirty = false;
 function flush() {
@@ -61,8 +164,6 @@ setInterval(flush, 15000);
 
 // ---------------------------------------------------------------- audio output (xcbass -> AudioWorklet)
 let audioCtx = null;
-let audioGate = null;
-function showAudioGate() { /* no prompt: audio starts silently on the first interaction (or immediately when installed as an app) */ }
 globalThis.xcAudioResume = () => {
   if (!audioCtx || audioCtx.state === 'running') return;
   audioCtx.resume().catch(() => { });
@@ -72,18 +173,13 @@ globalThis.xcAudioInit = async (memory, ring, ctrl, cap, rate) => {
   const buffer = memory ? memory.buffer : (rt.Module.wasmMemory?.buffer ?? rt.Module.HEAPU8.buffer);
   if (ctrl + 64 > buffer.byteLength) { console.error('[xc-osu!] audio ring outside the visible heap', ctrl, buffer.byteLength); return; }
   const ctrlView = new Int32Array(buffer, ctrl, 16);
-  audioCtx = new AudioContext({ sampleRate: rate, latencyHint: 'interactive' });
-  await audioCtx.audioWorklet.addModule(new URL('./js/xc-audio-worklet.js?v=e862fb3f11', import.meta.url));
+  audioCtx = new AudioContext({ sampleRate: rate, latencyHint: L.audioLatency || 'interactive' });
+  await audioCtx.audioWorklet.addModule(new URL('./js/xc-audio-worklet.js', import.meta.url));
   const node = new AudioWorkletNode(audioCtx, 'xc-output', {
     numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2],
     processorOptions: { buffer, ring, ctrl, cap },
   });
-  if (params.has('mute')) {
-    // keep the audio clock running (the game syncs to it) but output silence
-    const silent = audioCtx.createGain();
-    silent.gain.value = 0;
-    node.connect(silent).connect(audioCtx.destination);
-  } else node.connect(audioCtx.destination);
+  node.connect(audioCtx.destination);
   const updateLatency = () => {
     const secs = (audioCtx.outputLatency || 0) + (audioCtx.baseLatency || 0);
     // frames consumed by the worklet one render quantum before they reach the output stage
@@ -93,9 +189,9 @@ globalThis.xcAudioInit = async (memory, ring, ctrl, cap, rate) => {
   updateLatency();
   setInterval(updateLatency, 500);
   globalThis.xcAudioDebug = () => ({ state: audioCtx.state, rate: audioCtx.sampleRate, read: ctrlView[0], write: ctrlView[1], cap: ctrlView[2], latency: ctrlView[3], running: ctrlView[6], underruns: ctrlView[5] });
-  audioCtx.onstatechange = () => { updateLatency(); if (audioCtx.state !== 'running') showAudioGate(); };
-  if (audioCtx.state !== 'running') { xcAudioResume(); setTimeout(showAudioGate, 300); }
-  console.log(`[xc-osu!] audio: ${audioCtx.sampleRate} Hz, base latency ${(audioCtx.baseLatency * 1000).toFixed(1)} ms`);
+  audioCtx.onstatechange = updateLatency;
+  if (audioCtx.state !== 'running') xcAudioResume();
+  console.log(`[xc-osu!] audio: ${audioCtx.sampleRate} Hz, latencyHint ${L.audioLatency}, base latency ${(audioCtx.baseLatency * 1000).toFixed(1)} ms, state ${audioCtx.state}`);
 };
 
 // xcbass may start its output from a worker thread: it then posts the ring location here.
@@ -108,11 +204,39 @@ audioChannel.onmessage = (e) => {
 
 // ---------------------------------------------------------------- UI bridge
 const canvas = $('xc-canvas');
-installUi(rt, canvas, {
-  onAttached: () => { $('xc-splash')?.classList.add('gone'); },
+let attachedAt = 0, fallback = 0;
+// while the launch screen is up, keys belong to it (start gate), not to the game: registered before xc-ui.js's listeners
+for (const type of ['keydown', 'keyup']) addEventListener(type, (e) => {
+  if (boot.done || (e.ctrlKey && e.altKey)) return;
+  e.stopImmediatePropagation();
+  if (type === 'keydown') boot.key(e);
+}, true);
+const ui = installUi(rt, canvas, {
+  onStartGate: () => {
+    clearTimeout(fallback);
+    say(`engine ready ${((performance.now() - t0) / 1000).toFixed(1)} s after the download, waiting for the start click`);
+    boot.showGate(() => {
+      // still inside the player's gesture: the only moment the page may go fullscreen and start audio
+      if (L.fullscreen && !document.fullscreenElement) document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch((e) => say('fullscreen refused: ' + e.message));
+      globalThis.xcAudioResume?.();
+      ui.openStartGate();
+      canvas.focus({ preventScroll: true });
+      say('start click: fullscreen ' + (L.fullscreen ? 'requested' : 'off') + ', audio ' + (globalThis.xcAudioDebug?.().state || 'not initialised yet'));
+    });
+  },
+  onAttached: () => {
+    attachedAt = performance.now();
+    say(`window attached to the engine (${canvas.width}x${canvas.height} px)`);
+    // safety net: if the intro marker never shows up (log format change), don't keep the game hidden forever
+    fallback = setTimeout(() => { if (!boot.done && !boot.gate) { say('no intro marker after 120 s, showing the game anyway'); boot.finish(); } }, 120000);
+  },
   onHidden: flush,
   onFirstGesture: () => { globalThis.xcAudioResume?.(); },
-  onExit: (code, msg) => { flush(); status(code ? 'xc-osu! crashed:\n' + msg : 'xc-osu! has exited.'); $('xc-splash')?.classList.remove('gone'); },
+  onExit: (code, msg) => {
+    flush();
+    if (code) { console.error('[launch] xc-osu! crashed:\n' + msg); if (!boot.done) boot.fail(msg); else { logViewer.show(); } }
+    else say('xc-osu! has exited.');
+  },
   storeImport: async (file) => {
     const dir = ROOT + '/imports';
     try { FS.mkdir(dir); } catch { }
@@ -133,5 +257,6 @@ installUi(rt, canvas, {
 });
 
 globalThis.xcFlushStorage = flush;
-status('starting xc-osu!…');
+boot.stage('host', 'active');
+say(`starting the game (${((performance.now() - t0) / 1000).toFixed(2)} s after the download finished)`);
 await rt.runMain();

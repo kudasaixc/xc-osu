@@ -1,12 +1,12 @@
 // xc-osu! UI thread bridge — xc softworks (kudasaixc)
 // Owns the DOM: captures input at full device rate and writes it into a shared-memory ring that the
 // osu-framework input thread drains every frame. Never calls into .NET synchronously.
-import { XC_KEY_CODES } from './keys.js?v=e6fa4eb159';
+import { XC_KEY_CODES } from './keys.js';
 
 const S = {
   MAGIC: 0, WIDTH: 1, HEIGHT: 2, DPR_MILLI: 3, FOCUSED: 4, VISIBLE: 5, CURSOR_INSIDE: 6, POINTER_LOCKED: 7,
   FULLSCREEN: 8, REFRESH_MILLIHZ: 9, CAPS_LOCK: 10, SCREEN_W: 11, SCREEN_H: 12, RING_CAP: 13, WRITE_INDEX: 14,
-  READ_INDEX: 15, KEYBOARD_ATTACHED: 16, CLIPBOARD_SEQ: 17, CLIPBOARD_START: 18, CLIPBOARD_LEN: 19,
+  READ_INDEX: 15, KEYBOARD_ATTACHED: 16, CLIPBOARD_SEQ: 17, CLIPBOARD_START: 18, CLIPBOARD_LEN: 19, START_GATE: 20,
 };
 const HEADER_INTS = 32, EVENT_INTS = 8, TEXT_CAPACITY = 1 << 17;
 
@@ -52,7 +52,10 @@ export function installUi(rt, canvas, hooks) {
   }
 
   // ------------------------------------------------------------------ geometry
-  let dpr = devicePixelRatio || 1, pixW = 0, pixH = 0;
+  // render resolution = CSS size x devicePixelRatio x launcher scale (the browser upscales the canvas when < 1)
+  const renderScale = Math.min(2, Math.max(0.25, +globalThis.xcRenderScale || 1));
+  function renderDpr() { return (devicePixelRatio || 1) * renderScale; }
+  let dpr = renderDpr(), pixW = 0, pixH = 0;
   function publishSize(w, h) {
     pixW = Math.max(1, w | 0); pixH = Math.max(1, h | 0);
     slot(S.WIDTH, pixW); slot(S.HEIGHT, pixH); slot(S.DPR_MILLI, Math.round(dpr * 1000));
@@ -60,8 +63,8 @@ export function installUi(rt, canvas, hooks) {
   }
   const ro = new ResizeObserver((entries) => {
     const e = entries[0];
-    dpr = devicePixelRatio || 1;
-    if (e.devicePixelContentBoxSize) publishSize(e.devicePixelContentBoxSize[0].inlineSize, e.devicePixelContentBoxSize[0].blockSize);
+    dpr = renderDpr();
+    if (e.devicePixelContentBoxSize && renderScale === 1) publishSize(e.devicePixelContentBoxSize[0].inlineSize, e.devicePixelContentBoxSize[0].blockSize);
     else publishSize(e.contentRect.width * dpr, e.contentRect.height * dpr);
   });
   try { ro.observe(canvas, { box: 'device-pixel-content-box' }); } catch { ro.observe(canvas); }
@@ -77,7 +80,7 @@ export function installUi(rt, canvas, hooks) {
     };
     requestAnimationFrame(step);
   }
-  matchMedia(`(resolution: ${dpr}dppx)`).addEventListener?.('change', () => { dpr = devicePixelRatio; measureRefresh(); });
+  matchMedia(`(resolution: ${devicePixelRatio || 1}dppx)`).addEventListener?.('change', () => { dpr = renderDpr(); measureRefresh(); });
 
   // ------------------------------------------------------------------ coordinates
   const rectCache = { r: null };
@@ -157,8 +160,7 @@ export function installUi(rt, canvas, hooks) {
 
   // pointerrawupdate fires at device rate before rAF alignment (Chromium); fall back to pointermove
   const moveEvent = 'onpointerrawupdate' in window ? 'pointerrawupdate' : 'pointermove';
-  // Touch uses pointermove only: Chromium also emits pointerrawupdate for the same sample.
-  canvas.addEventListener(moveEvent, (e) => { if (moveEvent === 'pointermove' || e.pointerType !== 'touch') onMove(e); });
+  canvas.addEventListener(moveEvent, onMove);
   if (moveEvent !== 'pointermove') canvas.addEventListener('pointermove', (e) => { if (e.pointerType === 'touch') onMove(e); });
 
   canvas.addEventListener('pointerdown', (e) => {
@@ -228,7 +230,8 @@ export function installUi(rt, canvas, hooks) {
   document.body.appendChild(hiddenInput);
   let textInputActive = false, composing = false;
 
-  const passthrough = (e) => e.code === 'F12' || (e.ctrlKey && e.shiftKey && (e.code === 'KeyI' || e.code === 'KeyJ'));
+  const passthrough = (e) => e.code === 'F12' || (e.ctrlKey && e.shiftKey && (e.code === 'KeyI' || e.code === 'KeyJ'))
+    || (e.target instanceof Element && e.target.closest('[data-xc-own-keys]') !== null); // launcher overlays (log viewer filter box)
   addEventListener('keydown', (e) => {
     if (passthrough(e)) return;
     onGesture();
@@ -332,7 +335,7 @@ export function installUi(rt, canvas, hooks) {
     ringCap = i32[(base >> 2) + S.RING_CAP];
     attached = true;
     const r = canvas.getBoundingClientRect();
-    dpr = devicePixelRatio || 1;
+    dpr = renderDpr();
     publishSize(r.width * dpr, r.height * dpr);
     publishFocus();
     slot(S.KEYBOARD_ATTACHED, 1);
@@ -340,19 +343,6 @@ export function installUi(rt, canvas, hooks) {
     for (const p of pending.splice(0)) push(...p);
     hooks.onAttached?.();
   };
-
-  // screen wake lock (released by the browser whenever the tab is hidden, so re-acquire on return)
-  let wakeWanted = false, wakeLock = null;
-  async function setWakeLock(on) {
-    wakeWanted = on;
-    try {
-      if (on && !wakeLock && document.visibilityState === 'visible' && navigator.wakeLock) {
-        wakeLock = await navigator.wakeLock.request('screen');
-        wakeLock.addEventListener('release', () => { wakeLock = null; });
-      } else if (!on && wakeLock) { const l = wakeLock; wakeLock = null; await l.release(); }
-    } catch { wakeLock = null; }
-  }
-  document.addEventListener('visibilitychange', () => { if (wakeWanted && document.visibilityState === 'visible') setWakeLock(true); });
 
   globalThis.xcUi = (op, a, b, s) => {
     switch (op) {
@@ -367,13 +357,12 @@ export function installUi(rt, canvas, hooks) {
       case 9: case 14: if (s) hooks.download(s); break;
       case 10: hooks.onExit?.(a, s); break;
       case 11: break; // cursor confinement is implicit with pointer lock
-      case 12:
-        // a < 0: screen suspension control (b = 1 keeps the screen awake while playing), otherwise a vibration in ms
-        if (a < 0) setWakeLock(!!b); else navigator.vibrate?.(a);
-        break;
+      case 12: navigator.vibrate?.(a); break;
       case 13: pickFiles(s); break;
+      case 15: hooks.onStartGate?.(); break; // engine loaded, waiting for the player's click
     }
   };
 
-  return { push, writeText, pickFiles, importFiles };
+  const openStartGate = () => slot(S.START_GATE, 1);
+  return { push, writeText, pickFiles, importFiles, openStartGate };
 }

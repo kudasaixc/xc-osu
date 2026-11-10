@@ -16,7 +16,7 @@ namespace XcOsu.Server.Api
 
         public static void Map(RouteGroupBuilder api)
         {
-            api.MapGet("/rooms", async (HttpContext ctx, RoomStore store, UsersService users, Accounts accounts) =>
+            api.MapGet("/rooms", async (HttpContext ctx, RoomStore store, UsersService users, Accounts accounts, Db db) =>
             {
                 string category = ctx.Request.Query["category"].ToString();
                 string mode = ctx.Request.Query["mode"].ToString();
@@ -25,6 +25,27 @@ namespace XcOsu.Server.Api
                 int? me = uid(ctx);
 
                 var list = new JArray();
+                if (status == "ended")
+                {
+                    // history of finished rooms (playlists "ended" filter / daily challenge history)
+                    using var c = db.Open();
+                    var ended = c.Query($"""
+                        SELECT id, json FROM rooms WHERE active = 0 AND length(json) > 2 {(category == "daily_challenge" ? "AND category = 'daily_challenge'" : "")}
+                        {(mode == "participated" && me != null ? $"AND id IN (SELECT DISTINCT room_id FROM score_tokens WHERE user_id = {me} AND room_id IS NOT NULL)" : "")}
+                        {(mode == "owned" && me != null ? $"AND host_id = {me}" : "")}
+                        ORDER BY id DESC LIMIT 50
+                        """, r => JObject.Parse(r.GetString(1)));
+                    foreach (var j in ended)
+                    {
+                        if (type == "realtime" && j.Value<string>("type") == "playlists") continue;
+                        if (type == "playlists" && j.Value<string>("type") != "playlists") continue;
+                        j.Remove("password");
+                        list.Add(j);
+                    }
+
+                    return Json.Ok(list);
+                }
+
                 foreach (var room in store.Rooms.Values.OrderByDescending(r => r.Id))
                 {
                     if (room.Realtime) await store.SyncJson(room, users, accounts);
@@ -37,7 +58,10 @@ namespace XcOsu.Server.Api
                     if (string.IsNullOrEmpty(type) && category == "realtime" != realtime && category is "realtime" or "normal") continue;
                     if (mode == "owned" && j["host"]?.Value<int?>("id") != me) continue;
                     if (mode == "participated" && (me == null || !room.Participants.Contains(me.Value))) continue;
-                    if (status == "ended") continue;
+                    string roomCategory = j.Value<string>("category") ?? "normal";
+                    if (category == "daily_challenge" ? roomCategory != "daily_challenge" : roomCategory == "daily_challenge") continue;
+                    if (roomCategory == "matchmaking" || j.Value<string>("type") is "matchmaking" or "ranked_play") continue;
+                    if (j.Value<DateTimeOffset?>("ends_at") is DateTimeOffset end && end < DateTimeOffset.UtcNow && !realtime) continue;
 
                     j.Remove("password");
                     list.Add(j);
@@ -46,7 +70,7 @@ namespace XcOsu.Server.Api
                 return Json.Ok(list);
             });
 
-            api.MapPost("/rooms", async (HttpContext ctx, RoomStore store, UsersService users, Accounts accounts, Mirrors mirrors) =>
+            api.MapPost("/rooms", async (HttpContext ctx, RoomStore store, UsersService users, Accounts accounts, Mirrors mirrors, Chat chat) =>
             {
                 if (uid(ctx) is not int u) return Json.Error("unauthorized", 401);
                 var body = await Json.Body<JObject>(ctx.Request);
@@ -67,12 +91,16 @@ namespace XcOsu.Server.Api
                 }
 
                 if (playlist.Count == 0) return Json.Error("A playlist needs at least one item.", 422);
+                if (playlist.Any(p => p["beatmap"]?["checksum"] == null)) return Json.Error("One of the beatmaps couldn't be found on the mirrors.", 422);
+                string name = body.Value<string>("name") is { Length: > 0 } n ? (n.Length > 100 ? n[..100] : n) : $"{host.Username}'s playlist";
+                int channelId = chat.CreateRoomChannel(id, name);
+                await chat.JoinAndNotify(channelId, u);
                 foreach (var item in playlist) item["room_id"] = id;
 
                 var json = new JObject
                 {
                     ["id"] = id,
-                    ["name"] = body.Value<string>("name") ?? "xc-osu! playlist",
+                    ["name"] = name,
                     ["description"] = body.Value<string>("description"),
                     ["category"] = "normal",
                     ["type"] = "playlists",
@@ -85,7 +113,7 @@ namespace XcOsu.Server.Api
                     ["recent_participants"] = new JArray(),
                     ["playlist"] = playlist,
                     ["current_playlist_item"] = playlist[0],
-                    ["channel_id"] = 0,
+                    ["channel_id"] = channelId,
                     ["status"] = "idle",
                     ["has_password"] = false,
                     ["queue_mode"] = "host_only",
@@ -97,7 +125,7 @@ namespace XcOsu.Server.Api
                     },
                 };
 
-                var room = new ServerRoom { Id = id, Json = json };
+                var room = new ServerRoom { Id = id, Json = json, ChannelId = channelId };
                 store.Rooms[id] = room;
                 store.Persist(room);
                 foreach (var item in playlist) persistItem(ctx, item, id);
@@ -122,19 +150,21 @@ namespace XcOsu.Server.Api
                 }
             });
 
-            api.MapDelete("/rooms/{id:long}", (long id, HttpContext ctx, RoomStore store) =>
+            api.MapDelete("/rooms/{id:long}", async (long id, HttpContext ctx, RoomStore store, Chat chat) =>
             {
                 if (!store.Rooms.TryGetValue(id, out var room) || room.Realtime) return Json.Error("Room not found", 404);
                 if (room.Json["host"]?.Value<int?>("id") != uid(ctx)) return Json.Error("forbidden", 403);
                 store.Close(room);
+                if (room.Json.Value<int?>("channel_id") is int ch and > 0) await chat.CloseRoomChannel(ch);
                 return Results.NoContent();
             });
 
-            api.MapPut("/rooms/{id:long}/users/{user:int}", async (long id, int user, HttpContext ctx, RoomStore store, UsersService users, Accounts accounts) =>
+            api.MapPut("/rooms/{id:long}/users/{user:int}", async (long id, int user, HttpContext ctx, RoomStore store, UsersService users, Accounts accounts, Chat chat) =>
             {
                 if (uid(ctx) != user) return Json.Error("forbidden", 403);
                 if (!store.Rooms.TryGetValue(id, out var room)) return Json.Error("Room not found", 404);
                 if (room.Realtime) await store.SyncJson(room, users, accounts);
+                else if (room.Json.Value<int?>("channel_id") is int ch and > 0) await chat.JoinAndNotify(ch, user);
                 lock (room.Lock)
                 {
                     if (!room.Realtime && room.Participants.Add(user))
@@ -151,26 +181,40 @@ namespace XcOsu.Server.Api
                 }
             });
 
-            api.MapDelete("/rooms/{id:long}/users/{user:int}", () => Results.NoContent());
+            api.MapDelete("/rooms/{id:long}/users/{user:int}", async (long id, int user, HttpContext ctx, RoomStore store, Chat chat) =>
+            {
+                if (uid(ctx) == user && store.Rooms.TryGetValue(id, out var room) && !room.Realtime && room.Json.Value<int?>("channel_id") is int ch and > 0)
+                    await chat.PartAndNotify(ch, user);
+                return Results.NoContent();
+            });
 
             // ---------------------------------------------------------------- scores
 
-            api.MapPost("/rooms/{id:long}/playlist/{item:long}/scores", async (long id, long item, HttpContext ctx, Db db, RoomStore store) =>
+            api.MapPost("/rooms/{id:long}/playlist/{item:long}/scores", async (long id, long item, HttpContext ctx, Db db, RoomStore store, Scores scores) =>
             {
                 if (uid(ctx) is not int u) return Json.Error("unauthorized", 401);
                 var p = await Json.Params(ctx.Request);
                 int beatmapId = findBeatmap(store, db, id, item) ?? 0;
 
-                using var c = db.Open();
-                if (store.Rooms.TryGetValue(id, out var room) && room.Json.Value<int?>("max_attempts") is int max)
+                if (beatmapId == 0) return Json.Error("Playlist item not found", 404);
+                if (!store.Rooms.TryGetValue(id, out var room)) return Json.Error("This room has ended.", 422);
+                if (room.Json.Value<DateTimeOffset?>("ends_at") is DateTimeOffset end && end < DateTimeOffset.UtcNow && !room.Realtime) return Json.Error("This room has ended.", 422);
+                if (room.Json.Value<int?>("max_attempts") is int max)
                 {
+                    using var c = db.Open();
                     long attempts = c.Scalar<long>("SELECT COUNT(*) FROM score_tokens WHERE user_id = $u AND playlist_item_id = $p", ("$u", u), ("$p", item));
                     if (attempts >= max) return Json.Error("You've run out of attempts.", 422);
                 }
 
-                long token = c.Insert("INSERT INTO score_tokens (user_id, beatmap_id, ruleset_id, playlist_item_id, created_at) VALUES ($u, $b, $r, $p, $t)",
-                    ("$u", u), ("$b", beatmapId), ("$r", int.TryParse(p("ruleset_id"), out int r) ? r : 0), ("$p", item), ("$t", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
-                return Json.Ok(new { id = token });
+                try
+                {
+                    long token = scores.CreateToken(u, beatmapId, int.TryParse(p("ruleset_id"), out int r) ? r : 0, p("beatmap_hash"), item, id);
+                    return Json.Ok(new { id = token, created_at = DateTimeOffset.UtcNow });
+                }
+                catch (Scores.SubmitException e)
+                {
+                    return Json.Error(e.Message, e.Status);
+                }
             });
 
             api.MapPut("/rooms/{id:long}/playlist/{item:long}/scores/{token:long}", async (long id, long item, long token, HttpContext ctx, Db db, Scores scores, RoomStore store, CancellationToken ct) =>
@@ -181,7 +225,16 @@ namespace XcOsu.Server.Api
                 int beatmapId;
                 using (var c = db.Open())
                     beatmapId = (int)(c.Scalar<long?>("SELECT beatmap_id FROM score_tokens WHERE id = $t", ("$t", token)) ?? 0);
-                var stored = await scores.Submit(u, beatmapId, token, item, score, ct);
+                SoloScoreInfo? stored;
+                try
+                {
+                    stored = await scores.Submit(u, beatmapId, token, item, score, ct);
+                }
+                catch (Scores.SubmitException e)
+                {
+                    return Json.Error(e.Message, e.Status);
+                }
+
                 if (stored == null) return Json.Error("invalid score token", 404);
 
                 var j = JObject.FromObject(stored, JsonSerializer.Create(Json.SETTINGS));

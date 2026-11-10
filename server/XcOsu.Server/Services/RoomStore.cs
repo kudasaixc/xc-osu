@@ -20,6 +20,7 @@ namespace XcOsu.Server.Services
         public bool Realtime => Live != null;
         public readonly HashSet<int> Participants = new HashSet<int>();
         public CancellationTokenSource? Countdown;
+        public int ChannelId;
     }
 
     public sealed class RoomStore
@@ -41,7 +42,7 @@ namespace XcOsu.Server.Services
             {
                 var jo = JObject.Parse(json);
                 if (jo.Value<DateTimeOffset?>("ends_at") is DateTimeOffset end && end < DateTimeOffset.UtcNow) continue;
-                Rooms[id] = new ServerRoom { Id = id, Json = jo };
+                Rooms[id] = new ServerRoom { Id = id, Json = jo, ChannelId = jo.Value<int?>("channel_id") ?? 0 };
             }
         }
 
@@ -65,8 +66,16 @@ namespace XcOsu.Server.Services
             using var c = db.Open();
             c.Exec("UPDATE rooms SET json = $j, active = $a, ends_at = $e WHERE id = $i",
                 ("$j", room.Json.ToString(Formatting.None)), ("$a", room.Json.Value<string>("status") == "ended" ? 0 : 1),
-                ("$e", room.Json.Value<string>("ends_at")), ("$i", room.Id));
+                ("$e", endsAt(room.Json)), ("$i", room.Id));
         }
+
+        private static string? endsAt(JObject json) => json["ends_at"] switch
+        {
+            JValue { Value: DateTimeOffset d } => d.ToString("O"),
+            JValue { Value: DateTime d } => new DateTimeOffset(d.ToUniversalTime()).ToString("O"),
+            JValue { Value: string s } => s,
+            _ => null,
+        };
 
         public void Close(ServerRoom room)
         {
@@ -125,7 +134,7 @@ namespace XcOsu.Server.Services
                 j["name"] = live.Settings.Name;
                 j["has_password"] = !string.IsNullOrEmpty(live.Settings.Password);
                 j["password"] = null;
-                j["type"] = JToken.FromObject(live.Settings.MatchType switch { MatchType.TeamVersus => "team_versus", MatchType.Matchmaking => "matchmaking", _ => "head_to_head" });
+                j["type"] = JToken.FromObject(live.Settings.MatchType switch { MatchType.TeamVersus => "team_versus", MatchType.Matchmaking => "matchmaking", MatchType.RankedPlay => "ranked_play", _ => "head_to_head" });
                 j["queue_mode"] = live.Settings.QueueMode switch { QueueMode.AllPlayers => "all_players", QueueMode.AllPlayersRoundRobin => "all_players_round_robin", _ => "host_only" };
                 j["auto_skip"] = live.Settings.AutoSkip;
                 j["auto_start_duration"] = (ushort)live.Settings.AutoStartDuration.TotalSeconds;

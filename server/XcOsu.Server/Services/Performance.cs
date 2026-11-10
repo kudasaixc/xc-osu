@@ -9,6 +9,7 @@ using osu.Game.Rulesets;
 using osu.Game.Rulesets.Mods;
 using osu.Game.Rulesets.Osu;
 using osu.Game.Scoring;
+using osu.Game.Rulesets.Objects;
 
 namespace XcOsu.Server.Services
 {
@@ -38,7 +39,10 @@ namespace XcOsu.Server.Services
             return new FlatWorkingBeatmap(beatmap);
         }
 
-        public async Task<double?> CalculatePp(int beatmapId, SoloScoreInfo score, CancellationToken ct)
+        public sealed record ScoreCalculation(double? Pp, double StarRating, int MaxCombo, double Length);
+
+        /// <summary>pp + difficulty of a submitted score, using osu!'s own calculators. Null when the beatmap can't be loaded.</summary>
+        public async Task<ScoreCalculation?> Calculate(int beatmapId, SoloScoreInfo score, CancellationToken ct)
         {
             try
             {
@@ -53,7 +57,11 @@ namespace XcOsu.Server.Services
                 var scoreInfo = score.ToScoreInfo(mods, working.BeatmapInfo);
                 scoreInfo.Ruleset = ruleset.RulesetInfo;
                 var perf = ruleset.CreatePerformanceCalculator()?.Calculate(scoreInfo, attributes);
-                return perf?.Total;
+
+                var hitObjects = working.Beatmap.HitObjects;
+                double length = hitObjects.Count == 0 ? 0 : hitObjects[^1].GetEndTime() - hitObjects[0].StartTime;
+                double rate = osu.Game.Utils.ModUtils.CalculateRateWithMods(mods);
+                return new ScoreCalculation(perf?.Total, attributes.StarRating, attributes.MaxCombo, length / 1000 / rate);
             }
             catch (Exception e)
             {
@@ -61,6 +69,8 @@ namespace XcOsu.Server.Services
                 return null;
             }
         }
+
+        public async Task<double?> CalculatePp(int beatmapId, SoloScoreInfo score, CancellationToken ct) => (await Calculate(beatmapId, score, ct))?.Pp;
 
         public async Task<(double starRating, int maxCombo)?> CalculateDifficulty(int beatmapId, int rulesetId, IEnumerable<APIMod> apiMods, CancellationToken ct)
         {

@@ -1,0 +1,65 @@
+{
+ "updated": "2026-11-10",
+ "posts": [
+  {
+   "date": "2026-11-10", "tag": "launcher",
+   "title": { "fr": "Nouveau launcher", "en": "New launcher" },
+   "body": { "fr": "Le moteur se télécharge en arrière-plan dès l’ouverture de la page, pendant que tu règles ton lancement.", "en": "The engine now downloads in the background as soon as the page opens, while you set up your launch." },
+   "items": [
+    { "fr": "Limiteurs RAM (GC souple / strict), CPU (cœurs annoncés, threads, thread pool), plafonds FPS / update / arrière-plan", "en": "RAM limiters (soft / hard GC), CPU limiters (reported cores, workers, thread pool), FPS / update / background caps" },
+    { "fr": "Résolution de rendu, préférence GPU, canvas faible latence, MSAA, latence audio", "en": "Render resolution, GPU preference, low-latency canvas, MSAA, audio latency" },
+    { "fr": "Graphiques de performance en jeu (Ctrl+Alt+P) et console (Ctrl+Alt+L)", "en": "In-game performance graphs (Ctrl+Alt+P) and console (Ctrl+Alt+L)" },
+    { "fr": "Lancement verbeux : les vraies étapes et les vrais logs du moteur", "en": "Verbose launch: the engine’s real stages and real logs" }
+   ]
+  },
+  {
+   "date": "2026-11-09", "tag": "perf",
+   "title": { "fr": "Build AOT mixte (test)", "en": "Mixed AOT build (test)" },
+   "body": { "fr": "Une partie des assemblies compilée en WebAssembly natif au lieu de l’interpréteur. Disponible sur /aot/ pour les tests, pas encore par défaut.", "en": "Part of the assemblies compiled to native WebAssembly instead of the interpreter. Available at /aot/ for testing, not the default yet." }
+  },
+  {
+   "date": "2026-11-09", "tag": "online",
+   "title": { "fr": "Serveur xc-osu! en ligne", "en": "xc-osu! server online" },
+   "body": { "fr": "API compatible lazer hébergée ici : comptes, scores, pp calculés avec les calculateurs officiels, classements, chat, amis, spectateur et multijoueur via SignalR. Les beatmaps arrivent par des miroirs (catboy.best, osu.direct, nerinyan).", "en": "Lazer-compatible API hosted here: accounts, scores, pp from the official calculators, rankings, chat, friends, spectator and multiplayer over SignalR. Beatmaps come from mirrors (catboy.best, osu.direct, nerinyan)." }
+  },
+  {
+   "date": "2026-11-09", "tag": "database",
+   "title": { "fr": "Le vrai Realm, compilé en wasm", "en": "The real Realm, compiled to wasm" },
+   "body": { "fr": "realm-core d’origine compilé avec pthreads, avec une couche fichiers cohérente (xcvfs) pour read/write/mmap. Fini le shim en mémoire : ta base est un vrai fichier .realm sauvegardé dans IndexedDB.", "en": "The original realm-core built with pthreads, plus a coherent file layer (xcvfs) for read/write/mmap. No more in-memory shim: your database is a real .realm file saved in IndexedDB." }
+  },
+  {
+   "date": "2026-11-09", "tag": "audio",
+   "title": { "fr": "xcbass : l’audio sans BASS", "en": "xcbass: audio without BASS" },
+   "body": { "fr": "Réimplémentation de l’API BASS / BASS_FX / BASSmix en C (décodeurs dr_* et stb_vorbis, tempo signalsmith), mixée dans un tampon partagé lu par un AudioWorklet.", "en": "A C reimplementation of the BASS / BASS_FX / BASSmix API (dr_* and stb_vorbis decoders, signalsmith tempo), mixed into a shared ring read by an AudioWorklet." }
+  },
+  {
+   "date": "2026-11-09", "tag": "engine",
+   "title": { "fr": "Premier boot multithread", "en": "First multithreaded boot" },
+   "body": { "fr": "Rendu WebGL2 sur un worker dédié (OffscreenCanvas), threads update / audio / entrées en vrais threads .NET. Le GLRenderer d’osu-framework tourne sans modification de fond.", "en": "WebGL2 rendering on a dedicated worker (OffscreenCanvas), update / audio / input as real .NET threads. osu-framework’s GLRenderer runs essentially unmodified." }
+  }
+ ],
+ "progress": [
+  { "name": { "fr": "Rendu WebGL2", "en": "WebGL2 rendering" }, "weight": 3, "status": "done" },
+  { "name": { "fr": "Multithreading", "en": "Multithreading" }, "weight": 3, "status": "done" },
+  { "name": { "fr": "Audio (xcbass)", "en": "Audio (xcbass)" }, "weight": 3, "status": "done" },
+  { "name": { "fr": "Base de données Realm", "en": "Realm database" }, "weight": 3, "status": "done" },
+  { "name": { "fr": "Sauvegarde locale", "en": "Local saves" }, "weight": 2, "status": "done" },
+  { "name": { "fr": "Clavier, souris, tactile, manette", "en": "Keyboard, mouse, touch, gamepad" }, "weight": 2, "status": "done" },
+  { "name": { "fr": "Tablettes graphiques", "en": "Drawing tablets" }, "weight": 1, "status": "partial", "note": { "fr": "Stylet via Pointer Events ; WebHID pas encore", "en": "Pen via Pointer Events; WebHID not yet" } },
+  { "name": { "fr": "Import beatmaps / skins", "en": "Beatmap / skin import" }, "weight": 2, "status": "done" },
+  { "name": { "fr": "Comptes, scores, pp, classements", "en": "Accounts, scores, pp, rankings" }, "weight": 3, "status": "done" },
+  { "name": { "fr": "Téléchargement de beatmaps", "en": "Beatmap downloads" }, "weight": 2, "status": "done" },
+  { "name": { "fr": "Spectateur / multijoueur", "en": "Spectator / multiplayer" }, "weight": 2, "status": "partial" },
+  { "name": { "fr": "Modes taiko / catch / mania", "en": "taiko / catch / mania" }, "weight": 2, "status": "todo" },
+  { "name": { "fr": "Vidéos (storyboards, fonds)", "en": "Video (storyboards, backgrounds)" }, "weight": 1, "status": "todo", "note": { "fr": "FFmpeg n’est pas encore porté", "en": "FFmpeg is not ported yet" } },
+  { "name": { "fr": "Build AOT (performances)", "en": "AOT build (performance)" }, "weight": 2, "status": "partial" },
+  { "name": { "fr": "Launcher", "en": "Launcher" }, "weight": 1, "status": "done" }
+ ],
+ "issues": [
+  { "severity": "high", "title": { "fr": "Build AOT instable", "en": "AOT build unstable" }, "body": { "fr": "Les appels interpréteur → AOT de génériques partagés avec des structs 8 octets (Vector2) plantent (« function signature mismatch »). L’AOT reste en test sur /aot/.", "en": "Interpreter → AOT calls of shared generics with 8-byte structs (Vector2) crash (\"function signature mismatch\"). AOT stays in testing at /aot/." } },
+  { "severity": "medium", "title": { "fr": "osu! standard uniquement", "en": "osu! standard only" }, "body": { "fr": "Seul le ruleset osu! est embarqué pour l’instant.", "en": "Only the osu! ruleset ships for now." } },
+  { "severity": "medium", "title": { "fr": "Pas de vidéo", "en": "No video" }, "body": { "fr": "Les vidéos de storyboard et de fond ne sont pas lues (FFmpeg non porté).", "en": "Storyboard and background videos don’t play (FFmpeg not ported)." } },
+  { "severity": "low", "title": { "fr": "Premier lancement lourd", "en": "Heavy first launch" }, "body": { "fr": "Le premier téléchargement du moteur est gros ; les suivants viennent du cache du navigateur.", "en": "The first engine download is large; later launches come from the browser cache." } },
+  { "severity": "low", "title": { "fr": "Testé surtout sous Chromium", "en": "Mostly tested on Chromium" }, "body": { "fr": "Il faut SharedArrayBuffer, WebGL2 et l’isolation cross-origin. Firefox et Safari sont moins testés.", "en": "Needs SharedArrayBuffer, WebGL2 and cross-origin isolation. Firefox and Safari are less tested." } }
+ ]
+}

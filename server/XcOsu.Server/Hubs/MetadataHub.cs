@@ -16,11 +16,13 @@ namespace XcOsu.Server.Hubs
 
         private readonly Presence presence;
         private readonly Db db;
+        private readonly DailyChallenge daily;
 
-        public MetadataHub(Presence presence, Db db)
+        public MetadataHub(Presence presence, Db db, DailyChallenge daily)
         {
             this.presence = presence;
             this.db = db;
+            this.daily = daily;
         }
 
         private int me => Context.User!.UserId() ?? throw new HubException("unauthorised");
@@ -33,7 +35,7 @@ namespace XcOsu.Server.Hubs
             presence.Connect(u);
             await RefreshFriends();
             await broadcast(u);
-            await Clients.Caller.DailyChallengeUpdated(null);
+            await Clients.Caller.DailyChallengeUpdated(daily.Info);
             await base.OnConnectedAsync();
         }
 
@@ -82,9 +84,13 @@ namespace XcOsu.Server.Hubs
 
         public Task EndWatchingUserPresence() => Groups.RemoveFromGroupAsync(Context.ConnectionId, presence_watchers);
 
-        public Task<MultiplayerPlaylistItemStats[]> BeginWatchingMultiplayerRoom(long id) => Task.FromResult(Array.Empty<MultiplayerPlaylistItemStats>());
+        public async Task<MultiplayerPlaylistItemStats[]> BeginWatchingMultiplayerRoom(long id)
+        {
+            await Groups.AddToGroupAsync(Context.ConnectionId, DailyChallenge.RoomWatchGroup(id));
+            return daily.RoomStats(id);
+        }
 
-        public Task EndWatchingMultiplayerRoom(long id) => Task.CompletedTask;
+        public Task EndWatchingMultiplayerRoom(long id) => Groups.RemoveFromGroupAsync(Context.ConnectionId, DailyChallenge.RoomWatchGroup(id));
 
         public async Task RefreshFriends()
         {

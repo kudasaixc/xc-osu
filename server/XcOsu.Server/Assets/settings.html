@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>xc-osu! account</title>
+<style>
+  :root { --bg:#1c1719; --panel:#2a2226; --line:#3d3238; --text:#f0e6ea; --muted:#a8969e; --accent:#ff66aa; --bad:#ff6b6b; --good:#7ee0a4; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:22px; margin:0 0 4px; } h1 b { color:var(--accent); }
+  h2 { font-size:16px; margin:0 0 12px; }
+  .sub { color:var(--muted); margin:0 0 24px; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px; margin-bottom:16px; }
+  label { display:block; color:var(--muted); font-size:13px; margin:10px 0 4px; }
+  input, select, textarea { width:100%; padding:9px 10px; border-radius:6px; border:1px solid var(--line); background:var(--bg); color:var(--text); font:inherit; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:0 14px; }
+  @media (max-width:560px) { .row { grid-template-columns:1fr; } }
+  button { margin-top:14px; padding:9px 16px; border:0; border-radius:6px; background:var(--accent); color:#1c1719; font:inherit; font-weight:600; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--text); border:1px solid var(--line); }
+  .checks { display:flex; flex-wrap:wrap; gap:14px; margin-top:6px; } .checks label { display:flex; gap:6px; align-items:center; margin:0; color:var(--text); }
+  .checks input { width:auto; }
+  .images { display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  .avatar { width:96px; height:96px; border-radius:16px; object-fit:cover; background:var(--bg); }
+  .cover { width:100%; max-width:420px; aspect-ratio:3/1; border-radius:8px; object-fit:cover; background:var(--bg); }
+  .msg { min-height:20px; margin-top:8px; font-size:13px; } .msg.bad { color:var(--bad); } .msg.good { color:var(--good); }
+  .member { display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--line); }
+  .member button { margin:0; padding:4px 10px; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<main>
+  <h1><b>xc-osu!</b> account</h1>
+  <p class="sub">Profile, avatar, cover and team settings. xc softworks.</p>
+
+  <section id="login">
+    <h2>Sign in</h2>
+    <label for="u">Username</label><input id="u" autocomplete="username">
+    <label for="p">Password</label><input id="p" type="password" autocomplete="current-password">
+    <button id="loginBtn">Sign in</button>
+    <div class="msg" id="loginMsg"></div>
+  </section>
+
+  <div id="app" class="hidden">
+    <section>
+      <h2 id="who"></h2>
+      <div class="images">
+        <img class="avatar" id="avatarImg" alt="avatar">
+        <div>
+          <label for="avatarFile">Avatar (PNG / JPEG / GIF / WebP, max 5 MB)</label>
+          <input id="avatarFile" type="file" accept="image/*">
+        </div>
+      </div>
+      <label>Profile cover</label>
+      <img class="cover" id="coverImg" alt="cover">
+      <input id="coverFile" type="file" accept="image/*" style="margin-top:8px">
+      <button class="ghost" id="coverReset">Reset cover</button>
+      <div class="msg" id="imgMsg"></div>
+    </section>
+
+    <section>
+      <h2>Profile</h2>
+      <div class="row">
+        <div><label for="location">Location</label><input id="location"></div>
+        <div><label for="interests">Interests</label><input id="interests"></div>
+        <div><label for="occupation">Occupation</label><input id="occupation"></div>
+        <div><label for="website">Website</label><input id="website"></div>
+        <div><label for="twitter">Twitter</label><input id="twitter"></div>
+        <div><label for="discord">Discord</label><input id="discord"></div>
+        <div><label for="playmode">Default mode</label>
+          <select id="playmode"><option value="osu">osu!</option><option value="taiko">osu!taiko</option><option value="fruits">osu!catch</option><option value="mania">osu!mania</option></select></div>
+        <div><label for="country">Country code (2 letters)</label><input id="country" maxlength="2"></div>
+        <div><label for="hue">Profile hue (0–360, empty = default)</label><input id="hue" type="number" min="0" max="360"></div>
+      </div>
+      <label for="page">me! page (Markdown, shown on your profile)</label>
+      <textarea id="page" rows="10" maxlength="60000" placeholder="Tell people about yourself…"></textarea>
+      <label>Play style</label>
+      <div class="checks" id="styles">
+        <label><input type="checkbox" value="mouse"> Mouse</label><label><input type="checkbox" value="keyboard"> Keyboard</label>
+        <label><input type="checkbox" value="tablet"> Tablet</label><label><input type="checkbox" value="touch"> Touch</label>
+      </div>
+      <div class="checks" style="margin-top:12px"><label><input type="checkbox" id="pmFriends"> Only friends can send me private messages</label></div>
+      <button id="saveProfile">Save profile</button>
+      <div class="msg" id="profileMsg"></div>
+    </section>
+
+    <section>
+      <h2>Team</h2>
+      <div id="teamNone">
+        <p class="sub" style="margin:0">You're not in a team.</p>
+        <div class="row">
+          <div><label for="teamName">Team name</label><input id="teamName" maxlength="30"></div>
+          <div><label for="teamShort">Short name (2–4)</label><input id="teamShort" maxlength="4"></div>
+        </div>
+        <button id="teamCreate">Create team</button>
+        <label for="teamJoin">…or join an existing team</label>
+        <select id="teamJoin"></select>
+        <button class="ghost" id="teamJoinBtn">Join</button>
+      </div>
+      <div id="teamSome" class="hidden">
+        <p id="teamTitle" style="margin:0 0 8px"></p>
+        <div id="teamLeader" class="hidden">
+          <label for="flagFile">Team flag (max 2 MB)</label><input id="flagFile" type="file" accept="image/*">
+        </div>
+        <div id="members" style="margin-top:12px"></div>
+        <button class="ghost" id="teamLeave">Leave team</button>
+      </div>
+      <div class="msg" id="teamMsg"></div>
+    </section>
+
+    <section>
+      <h2>Password</h2>
+      <div class="row">
+        <div><label for="pwOld">Current password</label><input id="pwOld" type="password" autocomplete="current-password"></div>
+        <div><label for="pwNew">New password (8+ characters)</label><input id="pwNew" type="password" autocomplete="new-password"></div>
+      </div>
+      <button id="pwSave">Change password</button>
+      <div class="msg" id="pwMsg"></div>
+    </section>
+
+    <button class="ghost" id="logout">Sign out</button>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let token = null; try { token = sessionStorage.getItem("xc-token"); } catch (e) {}
+let me = null;
+
+function msg(id, text, ok) { const el = $(id); el.textContent = text || ""; el.className = "msg " + (ok ? "good" : "bad"); }
+
+async function api(method, path, body, isForm) {
+  const opts = { method, headers: { Authorization: "Bearer " + token } };
+  if (body !== undefined) {
+    if (isForm) opts.body = body; else { opts.body = JSON.stringify(body); opts.headers["Content-Type"] = "application/json"; }
+  }
+  const r = await fetch(path, opts);
+  const text = await r.text();
+  let data = null; try { data = text ? JSON.parse(text) : null; } catch (e) {}
+  if (r.status === 401) { signOut(); throw new Error("Signed out."); }
+  if (!r.ok) throw new Error((data && (data.error || data.message)) || ("Error " + r.status));
+  return data;
+}
+
+async function signIn() {
+  const form = new URLSearchParams({ grant_type: "password", username: $("u").value, password: $("p").value, client_id: "5", client_secret: "xc", scope: "*" });
+  const r = await fetch("/oauth/token", { method: "POST", body: form });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok || !data.access_token) return msg("loginMsg", data.message || "Incorrect sign in");
+  token = data.access_token; try { sessionStorage.setItem("xc-token", token); } catch (e) {}
+  await load();
+}
+
+function signOut() { token = null; try { sessionStorage.removeItem("xc-token"); } catch (e) {} $("app").classList.add("hidden"); $("login").classList.remove("hidden"); }
+
+async function load() {
+  try { me = await api("GET", "/api/xc/account"); } catch (e) { return signOut(); }
+  $("login").classList.add("hidden"); $("app").classList.remove("hidden");
+  $("who").textContent = me.username;
+  $("avatarImg").src = me.avatar_url; $("coverImg").src = me.cover_url;
+  const pr = me.profile || {};
+  for (const k of ["location", "interests", "occupation", "website", "twitter", "discord"]) $(k).value = pr[k] || "";
+  $("playmode").value = me.playmode || "osu"; $("country").value = me.country || "";
+  $("hue").value = pr.profile_hue ?? "";
+  $("page").value = pr.page || "";
+  $("pmFriends").checked = !!pr.pm_friends_only;
+  for (const cb of $("styles").querySelectorAll("input")) cb.checked = (pr.playstyle || []).includes(cb.value);
+  await loadTeam();
+}
+
+async function loadTeam() {
+  me = await api("GET", "/api/xc/account");
+  const mine = me.team_id ? await api("GET", "/api/xc/teams/" + me.team_id) : null;
+  const teams = mine ? [] : await api("GET", "/api/xc/teams");
+  $("teamNone").classList.toggle("hidden", !!mine); $("teamSome").classList.toggle("hidden", !mine);
+  if (!mine) {
+    $("teamJoin").innerHTML = "";
+    for (const t of teams) { const o = document.createElement("option"); o.value = t.id; o.textContent = `[${t.short_name}] ${t.name} (${t.members_count})`; $("teamJoin").appendChild(o); }
+    return;
+  }
+  const leader = mine.leader_id === me.id;
+  $("teamTitle").textContent = `[${mine.short_name}] ${mine.name}` + (leader ? " (you lead this team)" : "");
+  $("teamLeader").classList.toggle("hidden", !leader);
+  $("members").innerHTML = "";
+  for (const m of mine.members) {
+    const row = document.createElement("div"); row.className = "member";
+    const name = document.createElement("span"); name.textContent = m.username + (m.id === mine.leader_id ? " ★" : ""); row.appendChild(name);
+    if (leader && m.id !== me.id) {
+      const kick = document.createElement("button"); kick.className = "ghost"; kick.textContent = "Remove";
+      kick.onclick = async () => { try { await api("DELETE", `/api/xc/teams/${mine.id}/members/${m.id}`); await loadTeam(); } catch (e) { msg("teamMsg", e.message); } };
+      row.appendChild(kick);
+    }
+    $("members").appendChild(row);
+  }
+  $("flagFile").onchange = async () => {
+    const f = $("flagFile").files[0]; if (!f) return;
+    const fd = new FormData(); fd.append("file", f);
+    try { await api("POST", `/api/xc/teams/${mine.id}/flag`, fd, true); msg("teamMsg", "Flag updated.", true); } catch (e) { msg("teamMsg", e.message); }
+  };
+}
+
+async function uploadImage(kind, input) {
+  const f = input.files[0]; if (!f) return;
+  const fd = new FormData(); fd.append("file", f);
+  try { await api("POST", "/api/xc/account/" + kind, fd, true); msg("imgMsg", (kind === "avatar" ? "Avatar" : "Cover") + " updated.", true); await load(); }
+  catch (e) { msg("imgMsg", e.message); }
+}
+
+$("loginBtn").onclick = signIn;
+$("p").addEventListener("keydown", e => { if (e.key === "Enter") signIn(); });
+$("logout").onclick = signOut;
+$("avatarFile").onchange = () => uploadImage("avatar", $("avatarFile"));
+$("coverFile").onchange = () => uploadImage("cover", $("coverFile"));
+$("coverReset").onclick = async () => { try { await api("DELETE", "/api/xc/account/cover"); await load(); } catch (e) { msg("imgMsg", e.message); } };
+$("saveProfile").onclick = async () => {
+  const body = { playmode: $("playmode").value, country: $("country").value, pm_friends_only: $("pmFriends").checked,
+    profile_hue: $("hue").value === "" ? null : Number($("hue").value),
+    playstyle: [...$("styles").querySelectorAll("input:checked")].map(c => c.value) };
+  for (const k of ["location", "interests", "occupation", "website", "twitter", "discord"]) body[k] = $(k).value;
+  body.page = $("page").value;
+  try { await api("PUT", "/api/xc/account", body); msg("profileMsg", "Saved.", true); } catch (e) { msg("profileMsg", e.message); }
+};
+$("teamCreate").onclick = async () => {
+  try { await api("POST", "/api/xc/teams", { name: $("teamName").value, short_name: $("teamShort").value }); msg("teamMsg", "Team created.", true); await loadTeam(); }
+  catch (e) { msg("teamMsg", e.message); }
+};
+$("teamJoinBtn").onclick = async () => {
+  if (!$("teamJoin").value) return;
+  try { await api("POST", `/api/xc/teams/${$("teamJoin").value}/join`); msg("teamMsg", "Joined.", true); await loadTeam(); } catch (e) { msg("teamMsg", e.message); }
+};
+$("teamLeave").onclick = async () => { try { await api("POST", "/api/xc/teams/leave"); msg("teamMsg", "Left the team.", true); await loadTeam(); } catch (e) { msg("teamMsg", e.message); } };
+$("pwSave").onclick = async () => {
+  try { await api("POST", "/api/xc/account/password", { current_password: $("pwOld").value, new_password: $("pwNew").value }); msg("pwMsg", "Password changed.", true); $("pwOld").value = $("pwNew").value = ""; }
+  catch (e) { msg("pwMsg", e.message); }
+};
+
+if (token) load();
+</script>
+</body>
+</html>

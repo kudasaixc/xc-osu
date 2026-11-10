@@ -25,6 +25,14 @@ namespace osu.Web
             new osu.Framework.IO.Stores.NamespacedResourceStore<byte[]>(new osu.Framework.IO.Stores.DllResourceStore(typeof(XcOsuGame).Assembly), @"Resources"),
         };
 
+        // the intro waits for the player's click on the launch screen (fullscreen + audio need a user gesture)
+        protected override osu.Game.Screens.Loader CreateLoader() => new XcLoader();
+
+        private partial class XcLoader : osu.Game.Screens.Loader
+        {
+            protected override bool CanShowLoadedScreen => osu.Framework.Platform.Web.WebStartGate.IsOpen;
+        }
+
         public override EndpointConfiguration CreateEndpoints() => new XcEndpointConfiguration(Origin);
 
         public override void SetHost(GameHost host)

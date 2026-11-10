@@ -5,7 +5,7 @@ using Newtonsoft.Json.Linq;
 using osu.Game.Online.API;
 using osu.Game.Online.API.Requests.Responses;
 using osu.Game.Online.Chat;
-using osu.Game.Scoring;
+using osu.Game.Users;
 using XcOsu.Server.Data;
 using XcOsu.Server.Services;
 using UsersService = XcOsu.Server.Services.Users;
@@ -25,13 +25,20 @@ namespace XcOsu.Server.Api
             mapRankings(api);
             mapChat(api);
             mapSocial(api);
+            mapComments(api);
             mapMisc(api);
             Rooms.Map(api);
+            Media.Map(app);
+            Teams.Map(app);
         }
 
         private static int? uid(HttpContext ctx) => ctx.User.UserId();
 
         private static IResult unauthorized() => Json.Error("unauthorized", 401);
+
+        private static readonly JsonSerializer serializer = JsonSerializer.Create(Json.SETTINGS);
+
+        private static JObject jo(object o) => JObject.FromObject(o, serializer);
 
         // ------------------------------------------------------------------ auth
 
@@ -45,14 +52,15 @@ namespace XcOsu.Server.Api
                 switch (p("grant_type"))
                 {
                     case "password":
-                        userId = accounts.Verify(p("username") ?? "", p("password") ?? "")?.Id;
+                        var row = accounts.Verify(p("username") ?? "", p("password") ?? "");
+                        userId = row?.Id;
                         if (userId == null)
                             return Json.Ok(new { error = "invalid_grant", error_description = "Incorrect sign in", hint = "Incorrect sign in", message = "Incorrect sign in" }, 400);
                         break;
 
                     case "refresh_token":
                         userId = accounts.Refresh(p("refresh_token") ?? "");
-                        if (userId == null)
+                        if (userId == null || accounts.Get(userId.Value) is not { Restricted: false })
                             return Json.Ok(new { error = "invalid_grant", error_description = "The refresh token is invalid.", message = "The refresh token is invalid." }, 401);
                         break;
 
@@ -91,22 +99,55 @@ namespace XcOsu.Server.Api
 
         // ------------------------------------------------------------------ users
 
+        private static int rulesetFrom(string? mode, HttpRequest req) =>
+            !string.IsNullOrEmpty(mode) ? UsersService.RulesetId(mode)
+            : req.Query["mode"].ToString() is { Length: > 0 } m ? UsersService.RulesetId(m)
+            : int.TryParse(req.Query["ruleset_id"], out int r) ? r : 0;
+
+        /// <summary>APIUser exposes rank_history / playstyle as setter-only properties, so they must be written by hand.</summary>
+        private static JObject fullJson(APIUser user)
+        {
+            var obj = jo(user);
+            if (user.Statistics?.RankHistory is APIRankHistory h)
+                obj["rank_history"] = obj["rankHistory"] = new JObject { ["mode"] = h.Mode, ["data"] = new JArray(h.Data ?? Array.Empty<int>()) };
+            obj["playstyle"] = new JArray((user.PlayStyles ?? Array.Empty<APIPlayStyle>()).Select(p => p.ToString().ToLowerInvariant()));
+            return obj;
+        }
+
         private static void mapUsers(RouteGroupBuilder api)
         {
-            IResult me(HttpContext ctx, UsersService users, Accounts accounts)
+            IResult me(HttpContext ctx, UsersService users, Accounts accounts, string? mode)
             {
                 if (uid(ctx) is not int id) return unauthorized();
                 var row = accounts.Get(id);
-                if (row == null) return unauthorized();
-                var full = users.Full(row, 0);
-                var obj = JObject.FromObject(full, JsonSerializer.Create(Json.SETTINGS));
+                if (row == null || row.Restricted) return unauthorized();
+                int ruleset = string.IsNullOrEmpty(mode) ? UsersService.RulesetId(row.Playmode) : UsersService.RulesetId(mode);
+                var obj = fullJson(users.Full(row, ruleset));
                 obj["session_verified"] = true;
                 obj["session_verification_method"] = null;
+                obj["score_processing_notice_url"] = "";
+                obj["is_restricted"] = false;
+                obj["is_silenced"] = row.SilencedUntil > DateTimeOffset.UtcNow;
                 return Json.Ok(obj);
             }
 
-            api.MapGet("/me", me);
-            api.MapGet("/me/{mode}", (HttpContext ctx, UsersService users, Accounts accounts, string mode) => me(ctx, users, accounts));
+            api.MapGet("/me", (HttpContext ctx, UsersService users, Accounts accounts) => me(ctx, users, accounts, null));
+            api.MapGet("/me/{mode}", (HttpContext ctx, UsersService users, Accounts accounts, string mode) => mode == "beatmapset-favourites" ? Results.NotFound() : me(ctx, users, accounts, mode));
+
+            api.MapPut("/me/options", async (HttpContext ctx, Db db, Accounts accounts, UsersService users) =>
+            {
+                if (uid(ctx) is not int u) return unauthorized();
+                var body = await Json.Body<JObject>(ctx.Request);
+                if (body?["user"] is JObject settings && accounts.Get(u) is AccountRow row)
+                {
+                    var profile = JObject.Parse(row.ProfileJson);
+                    if (settings["pm_friends_only"] is JValue v) profile["pm_friends_only"] = v.Value<bool>();
+                    using var c = db.Open();
+                    c.Exec("UPDATE users SET profile_json = $p WHERE id = $u", ("$p", profile.ToString(Formatting.None)), ("$u", u));
+                }
+
+                return me(ctx, users, accounts, null);
+            });
 
             api.MapGet("/users/{lookup}/{mode?}", (string lookup, string? mode, HttpRequest req, UsersService users, Accounts accounts) =>
             {
@@ -114,68 +155,244 @@ namespace XcOsu.Server.Api
                 string key = req.Query["key"].ToString();
                 if (lookup.StartsWith('@')) { key = "username"; lookup = lookup[1..]; }
                 AccountRow? row = key != "username" && int.TryParse(lookup, out int id) ? accounts.Get(id) : accounts.GetByName(lookup);
-                return row == null ? Json.Error("User not found", 404) : Json.Ok(users.Full(row, 0));
+                if (row == null || row.Restricted) return Json.Error("User not found", 404);
+                return Json.Ok(fullJson(users.Full(row, string.IsNullOrEmpty(mode) ? UsersService.RulesetId(row.Playmode) : UsersService.RulesetId(mode))));
             });
 
             api.MapGet("/users", (HttpRequest req, UsersService users, Accounts accounts) => lookupMany(req, users, accounts));
 
             static IResult lookupMany(HttpRequest req, UsersService users, Accounts accounts)
             {
-                var ids = req.Query["ids[]"].Select(s => int.TryParse(s, out int i) ? i : -1).Where(i => i > 0);
-                return Json.Ok(new { users = accounts.GetMany(ids).Select(r => users.Full(r, 0)) });
+                var ids = req.Query["ids[]"].Select(s => int.TryParse(s, out int i) ? i : -1).Where(i => i > 0).Take(50);
+                int ruleset = int.TryParse(req.Query["ruleset_id"], out int r) ? r : 0;
+                return Json.Ok(new
+                {
+                    users = accounts.GetMany(ids).Where(a => !a.Restricted).Select(a =>
+                    {
+                        var u = users.Compact(a);
+                        u.Statistics = users.Statistics(a.Id, ruleset);
+                        return u;
+                    }),
+                });
             }
 
-            api.MapGet("/users/{id:int}/scores/{type}", (int id, string type, HttpRequest req, Db db, Accounts accounts, UsersService users, Mirrors mirrors) =>
+            api.MapGet("/users/{id:int}/scores/{type}", (int id, string type, HttpRequest req, Db db, Accounts accounts, UsersService users) =>
             {
                 int limit = Math.Clamp(int.TryParse(req.Query["limit"], out int l) ? l : 5, 1, 100);
-                int offset = int.TryParse(req.Query["offset"], out int o) ? o : 0;
+                int offset = Math.Max(0, int.TryParse(req.Query["offset"], out int o) ? o : 0);
+                int ruleset = rulesetFrom(null, req);
+                bool includeFails = req.Query["include_fails"] == "1";
                 using var c = db.Open();
                 List<long> ids = type switch
                 {
-                    "best" => users.Bests(c, id, 0).Skip(offset).Take(limit).Select(b => b.ScoreId).ToList(),
-                    "recent" => c.Query("SELECT id FROM scores WHERE user_id = $u AND ended_at > $t ORDER BY id DESC LIMIT $l OFFSET $o", r => r.GetInt64(0),
-                        ("$u", id), ("$t", DateTimeOffset.UtcNow.AddDays(-1).ToString("O")), ("$l", limit), ("$o", offset)),
-                    "firsts" => c.Query("""
-                        SELECT id FROM (SELECT id, beatmap_id, user_id, MAX(total_score) FROM scores WHERE passed = 1 GROUP BY beatmap_id)
-                        WHERE user_id = $u ORDER BY id DESC LIMIT $l OFFSET $o
-                        """, r => r.GetInt64(0), ("$u", id), ("$l", limit), ("$o", offset)),
+                    "best" => users.Bests(c, id, ruleset).Skip(offset).Take(limit).Select(b => b.ScoreId).ToList(),
+                    "recent" => c.Query($"""
+                        SELECT id FROM scores WHERE user_id = $u AND ruleset_id = $r AND ended_at > $t {(includeFails ? "" : "AND passed = 1")}
+                        ORDER BY id DESC LIMIT $l OFFSET $o
+                        """, r => r.GetInt64(0), ("$u", id), ("$r", ruleset), ("$t", DateTimeOffset.UtcNow.AddDays(-1).ToString("O")), ("$l", limit), ("$o", offset)),
+                    "firsts" => UsersService.FirstPlaceBeatmaps(c, id, ruleset).Skip(offset).Take(limit).ToList(),
+                    "pinned" => c.Query("""
+                        SELECT p.score_id FROM pinned_scores p JOIN scores s ON s.id = p.score_id WHERE p.user_id = $u AND s.ruleset_id = $r
+                        ORDER BY p.sort, p.score_id DESC LIMIT $l OFFSET $o
+                        """, r => r.GetInt64(0), ("$u", id), ("$r", ruleset), ("$l", limit), ("$o", offset)),
                     _ => new List<long>(),
                 };
-                return Json.Ok(Scores.Load(c, ids, accounts, users, withBeatmap: true));
+
+                var scores = Scores.Load(c, ids, accounts, users, withBeatmap: true);
+                if (type == "best")
+                {
+                    // weight shown on the profile: 95% decay per position
+                    var arr = new JArray();
+                    for (int i = 0; i < scores.Count; i++)
+                    {
+                        var j = jo(scores[i]);
+                        double w = Math.Pow(0.95, offset + i);
+                        j["weight"] = new JObject { ["percentage"] = w * 100, ["pp"] = (scores[i].PP ?? 0) * w };
+                        arr.Add(j);
+                    }
+
+                    return Json.Ok(arr);
+                }
+
+                return Json.Ok(scores);
             });
 
-            api.MapGet("/users/{id:int}/beatmapsets/{type}", () => Json.Ok(Array.Empty<object>()));
+            api.MapGet("/users/{id:int}/beatmapsets/{type}", async (int id, string type, HttpRequest req, Db db, Mirrors mirrors, CancellationToken ct) =>
+            {
+                int limit = Math.Clamp(int.TryParse(req.Query["limit"], out int l) ? l : 5, 1, 100);
+                int offset = Math.Max(0, int.TryParse(req.Query["offset"], out int o) ? o : 0);
+                using var c = db.Open();
+
+                switch (type)
+                {
+                    case "most_played":
+                    {
+                        var rows = c.Query("SELECT beatmap_id, count FROM beatmap_playcounts WHERE user_id = $u ORDER BY count DESC, beatmap_id LIMIT $l OFFSET $o",
+                            r => (beatmap: r.GetInt32(0), count: r.GetInt32(1)), ("$u", id), ("$l", limit), ("$o", offset));
+                        var list = new JArray();
+                        foreach (var (beatmap, count) in rows)
+                        {
+                            var map = await mirrors.GetBeatmap(beatmap, null, null, ct);
+                            if (map == null) continue;
+                            var set = map["beatmapset"] as JObject;
+                            var b = (JObject)map.DeepClone();
+                            b.Remove("beatmapset");
+                            list.Add(new JObject { ["beatmap_id"] = beatmap, ["count"] = count, ["beatmap"] = b, ["beatmapset"] = set });
+                        }
+
+                        return Json.Ok(list);
+                    }
+
+                    case "favourite":
+                    {
+                        var ids = c.Query("SELECT beatmapset_id FROM favourites WHERE user_id = $u ORDER BY rowid DESC LIMIT $l OFFSET $o",
+                            r => r.GetInt32(0), ("$u", id), ("$l", limit), ("$o", offset));
+                        var sets = await Task.WhenAll(ids.Select(s => mirrors.GetBeatmapset(s, ct)));
+                        return Json.Ok(sets.Where(s => s != null));
+                    }
+
+                    default:
+                        // ranked / loved / pending / graveyard / guest / nominated: xc-osu! has no beatmap submission (maps come from the mirrors).
+                        return Json.Ok(Array.Empty<object>());
+                }
+            });
+
             api.MapGet("/users/{id:int}/kudosu", () => Json.Ok(Array.Empty<object>()));
-            api.MapGet("/users/{id:int}/recent_activity", () => Json.Ok(Array.Empty<object>()));
+
+            api.MapGet("/users/{id:int}/recent_activity", (int id, HttpRequest req, Db db) =>
+            {
+                int limit = Math.Clamp(int.TryParse(req.Query["limit"], out int l) ? l : 5, 1, 100);
+                int offset = Math.Max(0, int.TryParse(req.Query["offset"], out int o) ? o : 0);
+                using var c = db.Open();
+                var events = c.Query("SELECT id, type, json, created_at FROM user_events WHERE user_id = $u ORDER BY id DESC LIMIT $l OFFSET $o", r =>
+                {
+                    var j = JObject.Parse(r.GetString(2));
+                    j["id"] = r.GetInt64(0);
+                    j["type"] = r.GetString(1);
+                    j["createdAt"] = r.GetString(3);
+                    return j;
+                }, ("$u", id), ("$l", limit), ("$o", offset));
+                return Json.Ok(events);
+            });
+
+            // score pins (profile "pinned scores")
+            api.MapPut("/score-pins/{scoreId:long}", (long scoreId, HttpContext ctx, Db db) => pin(ctx, db, scoreId, true));
+            api.MapPost("/score-pins/{scoreId:long}", (long scoreId, HttpContext ctx, Db db) => pin(ctx, db, scoreId, true));
+            api.MapDelete("/score-pins/{scoreId:long}", (long scoreId, HttpContext ctx, Db db) => pin(ctx, db, scoreId, false));
+
+            static IResult pin(HttpContext ctx, Db db, long scoreId, bool on)
+            {
+                if (uid(ctx) is not int u) return unauthorized();
+                using var c = db.Open();
+                if (c.Scalar<long>("SELECT COUNT(*) FROM scores WHERE id = $i AND user_id = $u AND passed = 1", ("$i", scoreId), ("$u", u)) == 0)
+                    return Json.Error("Score not found", 404);
+                if (on)
+                    c.Exec("INSERT OR IGNORE INTO pinned_scores (user_id, score_id, sort) VALUES ($u, $s, (SELECT COALESCE(MAX(sort), 0) + 1 FROM pinned_scores WHERE user_id = $u))",
+                        ("$u", u), ("$s", scoreId));
+                else
+                    c.Exec("DELETE FROM pinned_scores WHERE user_id = $u AND score_id = $s", ("$u", u), ("$s", scoreId));
+                return Results.NoContent();
+            }
         }
 
-        // ------------------------------------------------------------------ beatmaps (mirrors)
+        // ------------------------------------------------------------------ beatmaps (mirrors + xc-osu! data)
+
+        /// <summary>Replaces the mirrors' (official) community numbers with xc-osu!'s own: play/pass counts, favourites, user tags.</summary>
+        private static JObject decorateBeatmap(JObject map, Microsoft.Data.Sqlite.SqliteConnection c, int? viewer)
+        {
+            map = (JObject)map.DeepClone();
+            int id = map.Value<int>("id");
+            map["playcount"] = c.Scalar<long>("SELECT COUNT(*) FROM scores WHERE beatmap_id = $b", ("$b", id));
+            map["passcount"] = c.Scalar<long>("SELECT COUNT(*) FROM scores WHERE beatmap_id = $b AND passed = 1", ("$b", id));
+            map["top_tag_ids"] = new JArray(c.Query("SELECT tag_id, COUNT(*) FROM beatmap_tags WHERE beatmap_id = $b GROUP BY tag_id ORDER BY 2 DESC LIMIT 10",
+                r => new JObject { ["tag_id"] = r.GetInt64(0), ["count"] = r.GetInt32(1) }, ("$b", id)));
+            map["current_user_tag_ids"] = viewer == null
+                ? new JArray()
+                : new JArray(c.Query("SELECT tag_id FROM beatmap_tags WHERE beatmap_id = $b AND user_id = $u", r => r.GetInt64(0), ("$b", id), ("$u", viewer)));
+            if (map["beatmapset"] is JObject set) map["beatmapset"] = decorateSet(set, c, viewer, nested: true);
+            return map;
+        }
+
+        private static JObject decorateSet(JObject set, Microsoft.Data.Sqlite.SqliteConnection c, int? viewer, bool nested = false)
+        {
+            set = (JObject)set.DeepClone();
+            int id = set.Value<int>("id");
+            set["favourite_count"] = c.Scalar<long>("SELECT COUNT(*) FROM favourites WHERE beatmapset_id = $s", ("$s", id));
+            set["has_favourited"] = viewer != null && c.Scalar<long>("SELECT COUNT(*) FROM favourites WHERE beatmapset_id = $s AND user_id = $u", ("$s", id), ("$u", viewer)) > 0;
+            set["related_tags"] = JArray.FromObject(Tags.ALL, serializer);
+
+            if (!nested && set["beatmaps"] is JArray maps)
+            {
+                var ids = maps.Select(m => m.Value<int>("id")).ToList();
+                var plays = ids.Count == 0
+                    ? new Dictionary<int, (long, long)>()
+                    : c.Query($"SELECT beatmap_id, COUNT(*), SUM(passed) FROM scores WHERE beatmap_id IN ({string.Join(',', ids)}) GROUP BY beatmap_id",
+                        r => (r.GetInt32(0), r.GetInt64(1), r.IsDBNull(2) ? 0 : r.GetInt64(2))).ToDictionary(r => r.Item1, r => (r.Item2, r.Item3));
+                long total = 0;
+                foreach (var m in maps.OfType<JObject>())
+                {
+                    var (pc, ps) = plays.GetValueOrDefault(m.Value<int>("id"));
+                    m["playcount"] = pc;
+                    m["passcount"] = ps;
+                    total += pc;
+                    m["top_tag_ids"] = new JArray(c.Query("SELECT tag_id, COUNT(*) FROM beatmap_tags WHERE beatmap_id = $b GROUP BY tag_id ORDER BY 2 DESC LIMIT 10",
+                        r => new JObject { ["tag_id"] = r.GetInt64(0), ["count"] = r.GetInt32(1) }, ("$b", m.Value<int>("id"))));
+                    m["current_user_tag_ids"] = viewer == null
+                        ? new JArray()
+                        : new JArray(c.Query("SELECT tag_id FROM beatmap_tags WHERE beatmap_id = $b AND user_id = $u", r => r.GetInt64(0), ("$b", m.Value<int>("id")), ("$u", viewer)));
+                }
+
+                set["play_count"] = total;
+            }
+
+            return set;
+        }
 
         private static void mapBeatmaps(RouteGroupBuilder api)
         {
-            api.MapGet("/beatmapsets/search", async (HttpRequest req, Mirrors mirrors, CancellationToken ct) =>
+            api.MapGet("/beatmapsets/search", async (HttpContext ctx, Mirrors mirrors, Db db, CancellationToken ct) =>
             {
-                int page = int.TryParse(req.Query["cursor[page]"], out int p) ? p : 0;
+                var req = ctx.Request;
+                int page = int.TryParse(req.Query["cursor[page]"], out int p) ? p : int.TryParse(req.Query["cursor_string"], out p) ? p : 0;
                 var sets = await mirrors.Search(req.Query, page, ct);
+
+                // "played" / "favourites" filters are personal: xc-osu! answers them from its own data.
+                using var c = db.Open();
+                int? me = uid(ctx);
+                if (me != null && req.Query["played"] is { Count: > 0 } played && played.ToString() is "played" or "unplayed")
+                {
+                    var mine = c.Query("SELECT DISTINCT beatmap_id FROM beatmap_playcounts WHERE user_id = $u", r => r.GetInt32(0), ("$u", me)).ToHashSet();
+                    bool want = played.ToString() == "played";
+                    sets = new JArray(sets.OfType<JObject>().Where(s => (s["beatmaps"] as JArray)?.Any(b => mine.Contains(b.Value<int>("id"))) == want));
+                }
+
+                var decorated = new JArray(sets.OfType<JObject>().Select(s => decorateSet(s, c, me)));
                 return Json.Ok(new JObject
                 {
-                    ["beatmapsets"] = sets,
+                    ["beatmapsets"] = decorated,
                     ["total"] = sets.Count < 50 ? page * 50 + sets.Count : (page + 2) * 50,
                     ["cursor"] = sets.Count < 50 ? null : new JObject { ["page"] = page + 1 },
                     ["cursor_string"] = sets.Count < 50 ? null : (page + 1).ToString(),
+                    ["search"] = new JObject { ["sort"] = req.Query["sort"].ToString() is { Length: > 0 } sort ? sort : "ranked_desc" },
                 });
             });
 
-            api.MapGet("/beatmapsets/lookup", async (int beatmap_id, Mirrors mirrors, CancellationToken ct) =>
+            api.MapGet("/beatmapsets/lookup", async (int beatmap_id, HttpContext ctx, Mirrors mirrors, Db db, CancellationToken ct) =>
             {
                 var map = await mirrors.GetBeatmap(beatmap_id, null, null, ct);
                 int? setId = map?.Value<int?>("beatmapset_id");
                 var set = setId == null ? null : await mirrors.GetBeatmapset(setId.Value, ct);
-                return set == null ? Json.Error("Beatmap not found", 404) : Json.Ok(set);
+                if (set == null) return Json.Error("Beatmap not found", 404);
+                using var c = db.Open();
+                return Json.Ok(decorateSet(set, c, uid(ctx)));
             });
 
-            api.MapGet("/beatmapsets/{id:int}", async (int id, Mirrors mirrors, CancellationToken ct) =>
-                await mirrors.GetBeatmapset(id, ct) is JObject set ? Json.Ok(set) : Json.Error("Beatmapset not found", 404));
+            api.MapGet("/beatmapsets/{id:int}", async (int id, HttpContext ctx, Mirrors mirrors, Db db, CancellationToken ct) =>
+            {
+                if (await mirrors.GetBeatmapset(id, ct) is not JObject set) return Json.Error("Beatmapset not found", 404);
+                using var c = db.Open();
+                return Json.Ok(decorateSet(set, c, uid(ctx)));
+            });
 
             api.MapGet("/beatmapsets/{id:int}/download", async (int id, HttpContext ctx, Mirrors mirrors, CancellationToken ct) =>
             {
@@ -211,48 +428,89 @@ namespace XcOsu.Server.Api
                 return Json.Ok(new { beatmapset_ids = c.Query("SELECT beatmapset_id FROM favourites WHERE user_id = $u", r => r.GetInt32(0), ("$u", u)) });
             });
 
-            api.MapGet("/beatmaps/lookup", async (HttpRequest req, Mirrors mirrors, CancellationToken ct) =>
+            api.MapGet("/beatmaps/lookup", async (HttpContext ctx, Mirrors mirrors, Db db, CancellationToken ct) =>
             {
+                var req = ctx.Request;
                 int? id = int.TryParse(req.Query["id"], out int i) ? i : null;
                 string? checksum = req.Query["checksum"].ToString() is { Length: > 0 } cs ? cs : null;
-                var map = await mirrors.GetBeatmap(id, checksum, req.Query["filename"], ct);
-                return map == null ? Json.Error("Beatmap not found", 404) : Json.Ok(map);
+                string? filename = req.Query["filename"].ToString() is { Length: > 0 } fn ? fn : null;
+                if (id == null && checksum == null && filename == null) return Json.Error("Beatmap not found", 404);
+                var map = await mirrors.GetBeatmap(id, checksum, filename, ct);
+                if (map == null) return Json.Error("Beatmap not found", 404);
+                using var c = db.Open();
+                return Json.Ok(decorateBeatmap(map, c, uid(ctx)));
             });
 
-            api.MapGet("/beatmaps", async (HttpRequest req, Mirrors mirrors, CancellationToken ct) =>
+            api.MapGet("/beatmaps", async (HttpContext ctx, Mirrors mirrors, Db db, CancellationToken ct) =>
             {
-                var ids = req.Query["ids[]"].Select(s => int.TryParse(s, out int i) ? i : -1).Where(i => i > 0).Distinct().Take(50);
+                var ids = ctx.Request.Query["ids[]"].Select(s => int.TryParse(s, out int i) ? i : -1).Where(i => i > 0).Distinct().Take(50);
                 var maps = await Task.WhenAll(ids.Select(i => mirrors.GetBeatmap(i, null, null, ct)));
-                return Json.Ok(new { beatmaps = maps.Where(m => m != null) });
+                using var c = db.Open();
+                return Json.Ok(new { beatmaps = maps.OfType<JObject>().Select(m => decorateBeatmap(m, c, uid(ctx))) });
             });
 
-            api.MapGet("/beatmaps/{id:int}", async (int id, Mirrors mirrors, CancellationToken ct) =>
-                await mirrors.GetBeatmap(id, null, null, ct) is JObject m ? Json.Ok(m) : Json.Error("Beatmap not found", 404));
+            api.MapGet("/beatmaps/{id:int}", async (int id, HttpContext ctx, Mirrors mirrors, Db db, CancellationToken ct) =>
+            {
+                if (await mirrors.GetBeatmap(id, null, null, ct) is not JObject m) return Json.Error("Beatmap not found", 404);
+                using var c = db.Open();
+                return Json.Ok(decorateBeatmap(m, c, uid(ctx)));
+            });
 
             api.MapPost("/beatmaps/{id:int}/attributes", async (int id, HttpRequest req, Performance perf, CancellationToken ct) =>
             {
                 var p = await Json.Params(req);
-                int ruleset = int.TryParse(p("ruleset_id"), out int r) ? r : 0;
-                var d = await perf.CalculateDifficulty(id, ruleset, Array.Empty<APIMod>(), ct);
+                int ruleset = int.TryParse(p("ruleset_id"), out int r) ? r : UsersService.RulesetId(p("ruleset"));
+                var mods = new List<APIMod>();
+                var body = req.ContentType?.Contains("json") == true ? await Json.Body<JObject>(req) : null;
+                if (body?["mods"] is JArray arr)
+                    mods.AddRange(arr.Select(m => m.Type == JTokenType.String ? new APIMod { Acronym = m.Value<string>()! } : m.ToObject<APIMod>()!));
+                var d = await perf.CalculateDifficulty(id, ruleset, mods, ct);
                 return Json.Ok(new { attributes = new { star_rating = d?.starRating ?? 0, max_combo = d?.maxCombo ?? 0 } });
             });
 
-            api.MapGet("/beatmaps/{id:int}/tags", () => Json.Ok(Array.Empty<object>()));
-            api.MapGet("/tags", () => Json.Ok(new { tags = Array.Empty<object>() }));
+            // user tags
+            api.MapGet("/tags", () => Json.Ok(new { tags = Tags.ALL }));
+            api.MapGet("/beatmaps/{id:int}/tags", (int id, Db db) =>
+            {
+                using var c = db.Open();
+                return Json.Ok(c.Query("SELECT tag_id, COUNT(*) FROM beatmap_tags WHERE beatmap_id = $b GROUP BY tag_id", r => new { tag_id = r.GetInt64(0), count = r.GetInt32(1) }, ("$b", id)));
+            });
+            api.MapPut("/beatmaps/{id:int}/tags/{tag:long}", (int id, long tag, HttpContext ctx, Db db) =>
+            {
+                if (uid(ctx) is not int u) return unauthorized();
+                if (Tags.ALL.All(t => t.Id != tag)) return Json.Error("Unknown tag", 404);
+                using var c = db.Open();
+                if (c.Scalar<long>("SELECT COUNT(*) FROM scores WHERE user_id = $u AND beatmap_id = $b AND passed = 1", ("$u", u), ("$b", id)) == 0)
+                    return Json.Error("You must pass the beatmap before tagging it.", 403);
+                c.Exec("INSERT OR IGNORE INTO beatmap_tags (beatmap_id, tag_id, user_id) VALUES ($b, $t, $u)", ("$b", id), ("$t", tag), ("$u", u));
+                return Results.NoContent();
+            });
+            api.MapDelete("/beatmaps/{id:int}/tags/{tag:long}", (int id, long tag, HttpContext ctx, Db db) =>
+            {
+                if (uid(ctx) is not int u) return unauthorized();
+                using var c = db.Open();
+                c.Exec("DELETE FROM beatmap_tags WHERE beatmap_id = $b AND tag_id = $t AND user_id = $u", ("$b", id), ("$t", tag), ("$u", u));
+                return Results.NoContent();
+            });
         }
 
         // ------------------------------------------------------------------ solo scores
 
         private static void mapScores(RouteGroupBuilder api)
         {
-            api.MapPost("/beatmaps/{id:int}/solo/scores", async (int id, HttpContext ctx, Db db) =>
+            api.MapPost("/beatmaps/{id:int}/solo/scores", async (int id, HttpContext ctx, Scores scores) =>
             {
                 if (uid(ctx) is not int u) return unauthorized();
                 var p = await Json.Params(ctx.Request);
-                using var c = db.Open();
-                long token = c.Insert("INSERT INTO score_tokens (user_id, beatmap_id, ruleset_id, created_at) VALUES ($u, $b, $r, $t)",
-                    ("$u", u), ("$b", id), ("$r", int.TryParse(p("ruleset_id"), out int r) ? r : 0), ("$t", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
-                return Json.Ok(new { id = token, created_at = DateTimeOffset.UtcNow });
+                try
+                {
+                    long token = scores.CreateToken(u, id, int.TryParse(p("ruleset_id"), out int r) ? r : 0, p("beatmap_hash"), null, null);
+                    return Json.Ok(new { id = token, created_at = DateTimeOffset.UtcNow });
+                }
+                catch (Scores.SubmitException e)
+                {
+                    return Json.Error(e.Message, e.Status);
+                }
             });
 
             api.MapPut("/beatmaps/{id:int}/solo/scores/{token:long}", async (int id, long token, HttpContext ctx, Scores scores, CancellationToken ct) =>
@@ -260,45 +518,27 @@ namespace XcOsu.Server.Api
                 if (uid(ctx) is not int u) return unauthorized();
                 var score = await Json.Body<SoloScoreInfo>(ctx.Request);
                 if (score == null) return Json.Error("invalid score");
-                var result = await scores.Submit(u, id, token, null, score, ct);
-                return result == null ? Json.Error("invalid score token", 404) : Json.Ok(result);
+                try
+                {
+                    var result = await scores.Submit(u, id, token, null, score, ct);
+                    return result == null ? Json.Error("invalid score token", 404) : Json.Ok(result);
+                }
+                catch (Scores.SubmitException e)
+                {
+                    return Json.Error(e.Message, e.Status);
+                }
             });
 
             api.MapGet("/beatmaps/{id:int}/scores", (int id, HttpContext ctx, Db db, Accounts accounts, UsersService users) =>
             {
                 var q = ctx.Request.Query;
-                int ruleset = q["mode"].ToString() switch { "taiko" => 1, "fruits" => 2, "mania" => 3, _ => 0 };
+                int ruleset = UsersService.RulesetId(q["mode"].ToString());
                 int limit = Math.Clamp(int.TryParse(q["limit"], out int l) ? l : 50, 1, 100);
                 string type = q["type"].ToString();
                 var mods = q["mods[]"].Where(m => !string.IsNullOrEmpty(m)).Select(m => m!).ToHashSet();
                 int? me = uid(ctx);
 
-                using var c = db.Open();
-                string filter = type == "friend" && me != null
-                    ? $" AND (s.user_id = {me} OR s.user_id IN (SELECT target_id FROM friends WHERE user_id = {me}))"
-                    : "";
-
-                // best score per user
-                var rows = c.Query($"""
-                    SELECT s.id, s.user_id, s.mods FROM scores s
-                    WHERE s.beatmap_id = $b AND s.ruleset_id = $r AND s.passed = 1 {filter}
-                    ORDER BY s.total_score DESC, s.id ASC
-                    """, r => (id: r.GetInt64(0), user: r.GetInt32(1), mods: r.GetString(2)), ("$b", id), ("$r", ruleset));
-
-                var seen = new HashSet<int>();
-                var best = new List<long>();
-                foreach (var row in rows)
-                {
-                    if (mods.Count > 0)
-                    {
-                        var acronyms = JArray.Parse(row.mods).Select(m => m.Value<string>("acronym")).Where(a => a != null).ToHashSet();
-                        if (mods.Contains("NM") ? acronyms.Count > 0 : !mods.SetEquals(acronyms!)) continue;
-                    }
-
-                    if (seen.Add(row.user)) best.Add(row.id);
-                }
-
-                var all = Scores.Load(c, best, accounts, users, withBeatmap: false);
+                var all = beatmapLeaderboard(db, accounts, users, id, ruleset, type, mods, me);
                 APIScoreWithPosition? userScore = null;
                 int myIndex = me == null ? -1 : all.FindIndex(s => s.UserID == me);
                 if (myIndex >= 0)
@@ -307,36 +547,189 @@ namespace XcOsu.Server.Api
                 return Json.Ok(new APIScoresCollection { Scores = all.Take(limit).ToList(), UserScore = userScore, ScoresCount = all.Count });
             });
 
-            api.MapGet("/scores/{id:long}", (long id, Db db, Accounts accounts, UsersService users) =>
+            api.MapGet("/beatmaps/{id:int}/scores/users/{user:int}", (int id, int user, HttpContext ctx, Db db, Accounts accounts, UsersService users) =>
+            {
+                int ruleset = UsersService.RulesetId(ctx.Request.Query["mode"].ToString());
+                var mods = ctx.Request.Query["mods[]"].Where(m => !string.IsNullOrEmpty(m)).Select(m => m!).ToHashSet();
+                var all = beatmapLeaderboard(db, accounts, users, id, ruleset, "global", mods, uid(ctx));
+                int idx = all.FindIndex(s => s.UserID == user);
+                return idx < 0 ? Json.Error("Score not found", 404) : Json.Ok(new APIScoreWithPosition { Score = all[idx], Position = idx + 1 });
+            });
+
+            api.MapGet("/beatmaps/{id:int}/scores/users/{user:int}/all", (int id, int user, HttpContext ctx, Db db, Accounts accounts, UsersService users) =>
+            {
+                int ruleset = UsersService.RulesetId(ctx.Request.Query["mode"].ToString());
+                using var c = db.Open();
+                var ids = c.Query("SELECT id FROM scores WHERE beatmap_id = $b AND user_id = $u AND ruleset_id = $r AND passed = 1 AND playlist_item_id IS NULL ORDER BY total_score DESC",
+                    r => r.GetInt64(0), ("$b", id), ("$u", user), ("$r", ruleset));
+                return Json.Ok(new { scores = Scores.Load(c, ids, accounts, users, withBeatmap: false) });
+            });
+
+            IResult showScore(long id, Db db, Accounts accounts, UsersService users)
             {
                 using var c = db.Open();
                 return Scores.Load(c, new[] { id }, accounts, users, withBeatmap: true).FirstOrDefault() is SoloScoreInfo s ? Json.Ok(s) : Json.Error("Score not found", 404);
-            });
+            }
 
-            api.MapGet("/scores/{id:long}/download", (long id, Scores scores) =>
-                scores.ReplayPath(id) is string path ? Results.File(path, "application/x-osu-replay", $"xc-osu-replay-{id}.osr") : Json.Error("Replay not available", 404));
+            api.MapGet("/scores/{id:long}", (long id, Db db, Accounts accounts, UsersService users) => showScore(id, db, accounts, users));
+            api.MapGet("/scores/{mode}/{id:long}", (string mode, long id, Db db, Accounts accounts, UsersService users) => showScore(id, db, accounts, users));
+
+            IResult download(long id, HttpContext ctx, Scores scores)
+            {
+                if (scores.ReplayPath(id) is not string path) return Json.Error("Replay not available", 404);
+                scores.CountReplayWatch(id, uid(ctx));
+                return Results.File(path, "application/x-osu-replay", $"xc-osu-replay-{id}.osr");
+            }
+
+            api.MapGet("/scores/{id:long}/download", (long id, HttpContext ctx, Scores scores) => download(id, ctx, scores));
+            api.MapGet("/scores/{mode}/{id:long}/download", (string mode, long id, HttpContext ctx, Scores scores) => download(id, ctx, scores));
+        }
+
+        /// <summary>Best score per user on a beatmap (ranked/loved leaderboards only, like osu!), highest first.</summary>
+        private static List<SoloScoreInfo> beatmapLeaderboard(Db db, Accounts accounts, UsersService users, int beatmapId, int ruleset, string type, HashSet<string> mods, int? me)
+        {
+            using var c = db.Open();
+            string filter = "";
+            switch (type)
+            {
+                case "friend" when me != null:
+                    filter = $" AND (s.user_id = {me} OR s.user_id IN (SELECT target_id FROM friends WHERE user_id = {me}))";
+                    break;
+
+                case "country" when me != null:
+                    filter = $" AND u.country = (SELECT country FROM users WHERE id = {me})";
+                    break;
+
+                case "team" when me != null:
+                    filter = $" AND s.user_id IN (SELECT user_id FROM team_members WHERE team_id = (SELECT team_id FROM team_members WHERE user_id = {me}))";
+                    break;
+
+                case "friend" or "country" or "team":
+                    return new List<SoloScoreInfo>();
+            }
+
+            var rows = c.Query($"""
+                SELECT s.id, s.user_id, s.mods FROM scores s JOIN users u ON u.id = s.user_id
+                WHERE s.beatmap_id = $b AND s.ruleset_id = $r AND s.passed = 1 AND s.ranked = 1 AND s.playlist_item_id IS NULL AND u.restricted = 0 {filter}
+                ORDER BY s.total_score DESC, s.id ASC
+                """, r => (id: r.GetInt64(0), user: r.GetInt32(1), mods: r.GetString(2)), ("$b", beatmapId), ("$r", ruleset));
+
+            var seen = new HashSet<int>();
+            var best = new List<long>();
+            foreach (var row in rows)
+            {
+                if (mods.Count > 0)
+                {
+                    var acronyms = JArray.Parse(row.mods).Select(m => m.Value<string>("acronym")).Where(a => a != null && a != "CL").ToHashSet();
+                    if (mods.Contains("NM") ? acronyms.Count > 0 : !mods.SetEquals(acronyms!)) continue;
+                }
+
+                if (seen.Add(row.user)) best.Add(row.id);
+            }
+
+            return Scores.Load(c, best, accounts, users, withBeatmap: false);
         }
 
         // ------------------------------------------------------------------ rankings
 
         private static void mapRankings(RouteGroupBuilder api)
         {
-            api.MapGet("/rankings/{mode}/{type}", (string mode, string type, HttpRequest req, UsersService users, Accounts accounts) =>
-            {
-                int page = int.TryParse(req.Query["cursor[page]"], out int p) ? p : int.TryParse(req.Query["page"], out p) ? p : 1;
-                var board = users.Leaderboard(0).OrderByDescending(e => e.pp).ToList();
-                var slice = board.Skip((page - 1) * 50).Take(50).ToList();
-                var rows = accounts.GetMany(slice.Select(e => e.userId)).ToDictionary(r => r.Id);
-                var ranking = new List<osu.Game.Users.UserStatistics>();
-                foreach (var e in slice)
-                {
-                    if (!rows.TryGetValue(e.userId, out var row)) continue;
-                    var stats = users.Statistics(e.userId, 0);
-                    stats.User = users.Compact(row);
-                    ranking.Add(stats);
-                }
+            api.MapGet("/rankings/kudosu", () => Json.Ok(new { ranking = Array.Empty<object>() }));
 
-                return Json.Ok(new { ranking, total = board.Count, cursor = board.Count > page * 50 ? new { page = page + 1 } : null });
+            api.MapGet("/rankings/{mode}/{type}", (string mode, string type, HttpRequest req, UsersService users, Accounts accounts, Db db) =>
+            {
+                int ruleset = UsersService.RulesetId(mode);
+                int page = Math.Max(1, int.TryParse(req.Query["cursor[page]"], out int p) ? p : int.TryParse(req.Query["page"], out p) ? p : 1);
+                string? country = req.Query["country"].ToString() is { Length: 2 } cc && cc != "XX" && cc != "Unknown" ? cc.ToUpperInvariant() : null;
+
+                switch (type)
+                {
+                    case "performance":
+                    case "score":
+                    {
+                        var countryOf = accounts.GetMany(users.Leaderboard(ruleset).Select(e => e.userId)).ToDictionary(a => a.Id, a => a.Country);
+                        IEnumerable<int> ids;
+                        int total;
+                        if (type == "performance")
+                        {
+                            var board = users.Leaderboard(ruleset).Where(e => country == null || countryOf.GetValueOrDefault(e.userId) == country).OrderByDescending(e => e.pp).ToList();
+                            total = board.Count;
+                            ids = board.Skip((page - 1) * 50).Take(50).Select(e => e.userId);
+                        }
+                        else
+                        {
+                            using var c = db.Open();
+                            var board = c.Query($"""
+                                SELECT s.user_id, SUM(best) FROM (
+                                    SELECT user_id, MAX(total_score) AS best FROM scores WHERE ruleset_id = $r AND passed = 1 AND ranked = 1 AND playlist_item_id IS NULL GROUP BY user_id, beatmap_id) s
+                                JOIN users u ON u.id = s.user_id WHERE u.restricted = 0 {(country != null ? "AND u.country = $c" : "")}
+                                GROUP BY s.user_id ORDER BY 2 DESC
+                                """, r => r.GetInt32(0), ("$r", ruleset), ("$c", country));
+                            total = board.Count;
+                            ids = board.Skip((page - 1) * 50).Take(50);
+                        }
+
+                        var rows = accounts.GetMany(ids).ToDictionary(r => r.Id);
+                        var ranking = new List<UserStatistics>();
+                        foreach (int id in ids)
+                        {
+                            if (!rows.TryGetValue(id, out var row)) continue;
+                            var stats = users.Statistics(id, ruleset);
+                            stats.User = users.Compact(row);
+                            ranking.Add(stats);
+                        }
+
+                        return Json.Ok(new { ranking, total, cursor = total > page * 50 ? new { page = page + 1 } : null });
+                    }
+
+                    case "country":
+                    {
+                        var board = users.Leaderboard(ruleset);
+                        var byCountry = accounts.GetMany(board.Select(e => e.userId)).ToDictionary(a => a.Id, a => a.Country);
+                        using var c = db.Open();
+                        var playcounts = c.Query("SELECT u.country, COUNT(*), COALESCE(SUM(CASE WHEN s.ranked = 1 AND s.passed = 1 THEN s.total_score END), 0) FROM scores s JOIN users u ON u.id = s.user_id WHERE s.ruleset_id = $r GROUP BY u.country",
+                            r => (r.GetString(0), r.GetInt64(1), r.GetInt64(2)), ("$r", ruleset)).ToDictionary(r => r.Item1, r => (plays: r.Item2, score: r.Item3));
+                        var countries = board.GroupBy(e => byCountry.GetValueOrDefault(e.userId, "XX"))
+                                             .Select(g => new CountryStatistics
+                                             {
+                                                 Code = Enum.TryParse(g.Key, out CountryCode code) ? code : CountryCode.Unknown,
+                                                 ActiveUsers = g.Count(),
+                                                 PlayCount = playcounts.GetValueOrDefault(g.Key).plays,
+                                                 RankedScore = playcounts.GetValueOrDefault(g.Key).score,
+                                                 Performance = (long)g.Sum(e => e.pp),
+                                             })
+                                             .OrderByDescending(x => x.Performance).ToList();
+                        return Json.Ok(new { ranking = countries.Skip((page - 1) * 50).Take(50), total = countries.Count, cursor = countries.Count > page * 50 ? new { page = page + 1 } : null });
+                    }
+
+                    case "charts":
+                        return Json.Ok(new { ranking = Array.Empty<object>(), spotlight = (object?)null, beatmapsets = Array.Empty<object>() });
+
+                    case "team":
+                    {
+                        using var c = db.Open();
+                        var teams = c.Query("SELECT t.id, t.name, t.short_name, t.flag_url, COUNT(m.user_id) FROM teams t LEFT JOIN team_members m ON m.team_id = t.id GROUP BY t.id",
+                            r => (id: r.GetInt32(0), name: r.GetString(1), shortName: r.GetString(2), flag: r.IsDBNull(3) ? null : r.GetString(3), members: r.GetInt32(4)));
+                        var board = users.Leaderboard(ruleset).ToDictionary(e => e.userId, e => e.pp);
+                        var ranking = teams.Select(t =>
+                        {
+                            var members = c.Query("SELECT user_id FROM team_members WHERE team_id = $t", r => r.GetInt32(0), ("$t", t.id));
+                            return new
+                            {
+                                team = new { t.id, t.name, short_name = t.shortName, flag_url = t.flag },
+                                members_count = t.members,
+                                performance = (long)members.Sum(m => board.GetValueOrDefault(m)),
+                                play_count = c.Scalar<long>($"SELECT COUNT(*) FROM scores WHERE ruleset_id = {ruleset} AND user_id IN (SELECT user_id FROM team_members WHERE team_id = {t.id})"),
+                                ranked_score = 0L,
+                                ruleset_id = ruleset,
+                            };
+                        }).OrderByDescending(t => t.performance).ToList();
+                        return Json.Ok(new { ranking, total = ranking.Count, cursor = (object?)null });
+                    }
+
+                    default:
+                        return Json.Error("Unknown ranking type", 404);
+                }
             });
 
             api.MapGet("/spotlights", () => Json.Ok(new { spotlights = Array.Empty<object>() }));
@@ -346,17 +739,31 @@ namespace XcOsu.Server.Api
 
         private static void mapChat(RouteGroupBuilder api)
         {
-            api.MapGet("/chat/channels", (HttpContext ctx, Chat chat) => uid(ctx) is int u ? Json.Ok(chat.PublicChannels(u)) : unauthorized());
+            api.MapGet("/chat/channels", (HttpContext ctx, Chat chat) => uid(ctx) is int u ? Json.Ok(Chat.ToJson(chat.PublicChannels(u))) : unauthorized());
+
+            // CreateChannelRequest: opening a PM conversation with someone.
+            api.MapPost("/chat/channels", async (HttpContext ctx, Chat chat) =>
+            {
+                if (uid(ctx) is not int u) return unauthorized();
+                var p = await Json.Params(ctx.Request);
+                if (!string.Equals(p("type"), "PM", StringComparison.OrdinalIgnoreCase) || !int.TryParse(p("target_id"), out int target))
+                    return Json.Error("Only private message channels can be created.", 422);
+                if (chat.PmRestriction(u, target) is string error) return Json.Error(error, 403);
+                int channel = chat.OpenPm(u, target);
+                var ch = chat.Join(channel, u)!;
+                return Json.Ok(Chat.ToJson(ch));
+            });
 
             api.MapGet("/chat/channels/{id:int}", (int id, HttpContext ctx, Chat chat) =>
             {
                 if (uid(ctx) is not int u) return unauthorized();
+                if (!chat.CanRead(id, u)) return Json.Error("not found", 404);
                 var ch = chat.Get(id, u);
-                return ch == null ? Json.Error("not found", 404) : Json.Ok(new { channel = ch, users = ch.Users });
+                return ch == null ? Json.Error("not found", 404) : Json.Ok(new { channel = Chat.ToJson(ch), users = ch.Users });
             });
 
             api.MapPut("/chat/channels/{id:int}/users/{user:int}", (int id, int user, HttpContext ctx, Chat chat) =>
-                uid(ctx) is int u && u == user ? chat.Join(id, u) is Channel ch ? Json.Ok(ch) : Json.Error("not found", 404) : unauthorized());
+                uid(ctx) is int u && u == user ? chat.Join(id, u) is Channel ch ? Json.Ok(Chat.ToJson(ch)) : Json.Error("not found", 404) : unauthorized());
 
             api.MapDelete("/chat/channels/{id:int}/users/{user:int}", (int id, int user, HttpContext ctx, Chat chat) =>
             {
@@ -366,12 +773,19 @@ namespace XcOsu.Server.Api
             });
 
             api.MapGet("/chat/channels/{id:int}/messages", (int id, HttpContext ctx, Chat chat) =>
-                uid(ctx) is int u ? chat.CanRead(id, u) ? Json.Ok(chat.Messages(id)) : Json.Error("forbidden", 403) : unauthorized());
+            {
+                if (uid(ctx) is not int u) return unauthorized();
+                if (!chat.CanRead(id, u)) return Json.Error("forbidden", 403);
+                int limit = Math.Clamp(int.TryParse(ctx.Request.Query["limit"], out int l) ? l : 50, 1, 50);
+                long? since = long.TryParse(ctx.Request.Query["since"], out long s) ? s : null;
+                return Json.Ok(chat.Messages(id, since, limit));
+            });
 
             api.MapPost("/chat/channels/{id:int}/messages", async (int id, HttpContext ctx, Chat chat) =>
             {
                 if (uid(ctx) is not int u) return unauthorized();
                 if (!chat.CanRead(id, u)) return Json.Error("forbidden", 403);
+                if (chat.PostRestriction(id, u) is string error) return Json.Error(error, 403);
                 var p = await Json.Params(ctx.Request);
                 string content = p("message") ?? "";
                 if (string.IsNullOrWhiteSpace(content)) return Json.Error("empty message", 422);
@@ -385,17 +799,16 @@ namespace XcOsu.Server.Api
                 return Results.NoContent();
             });
 
-            api.MapPost("/chat/new", async (HttpContext ctx, Chat chat, Db db) =>
+            api.MapPost("/chat/new", async (HttpContext ctx, Chat chat) =>
             {
                 if (uid(ctx) is not int u) return unauthorized();
                 var p = await Json.Params(ctx.Request);
                 if (!int.TryParse(p("target_id"), out int target)) return Json.Error("invalid target", 422);
-                using (var c = db.Open())
-                    if (c.Scalar<long>("SELECT COUNT(*) FROM blocks WHERE user_id = $t AND target_id = $u", ("$t", target), ("$u", u)) > 0)
-                        return Json.Error("You cannot message this user.", 403);
+                if (chat.PmRestriction(u, target) is string error) return Json.Error(error, 403);
                 int channel = chat.OpenPm(u, target);
+                if (chat.PostRestriction(channel, u) is string error2) return Json.Error(error2, 403);
                 var msg = chat.Post(channel, u, p("message") ?? "", p("is_action") == "true", p("uuid"));
-                return Json.Ok(new { new_channel_id = channel, channel = chat.Get(channel, u), message = msg });
+                return Json.Ok(new { new_channel_id = channel, channel = Chat.ToJson(chat.Get(channel, u)!), message = msg });
             });
 
             api.MapPost("/chat/ack", (HttpContext ctx) => uid(ctx) != null ? Json.Ok(new { silences = Array.Empty<object>() }) : unauthorized());
@@ -406,15 +819,28 @@ namespace XcOsu.Server.Api
                 long since = long.TryParse(ctx.Request.Query["since"], out long s) ? s : 0;
                 var channels = chat.JoinedChannels(u);
                 var messages = channels.SelectMany(ch => chat.Messages((int)ch.Id, since)).OrderBy(m => m.Id).ToList();
-                return Json.Ok(new { presence = channels, messages, silences = Array.Empty<object>() });
+                return Json.Ok(new { presence = Chat.ToJson(channels), messages, silences = Array.Empty<object>() });
             });
 
-            api.MapGet("/notifications", (HttpContext ctx) =>
+            api.MapGet("/notifications", (HttpContext ctx, Notifications notifications) =>
             {
                 string scheme = ctx.Request.Headers["X-Forwarded-Proto"] == "https" || ctx.Request.IsHttps ? "wss" : "ws";
-                return Json.Ok(new { has_more = false, notifications = Array.Empty<object>(), notification_endpoint = $"{scheme}://{ctx.Request.Host}/notifications" });
+                string endpoint = $"{scheme}://{ctx.Request.Host}/notifications";
+                if (uid(ctx) is not int u)
+                    return Json.Ok(new { has_more = false, notifications = Array.Empty<object>(), notification_endpoint = endpoint });
+                return Json.Ok(notifications.List(u, endpoint));
             });
-            api.MapPost("/notifications/mark-read", () => Results.NoContent());
+
+            api.MapPost("/notifications/mark-read", async (HttpContext ctx, Notifications notifications) =>
+            {
+                if (uid(ctx) is not int u) return unauthorized();
+                var body = ctx.Request.ContentType?.Contains("json") == true ? await Json.Body<JObject>(ctx.Request) : null;
+                var ids = (body?["identities"] as JArray ?? body?["notifications"] as JArray)?.Select(t => t.Type == JTokenType.Object ? t.Value<long?>("id") : t.Value<long?>())
+                                                                                              .OfType<long>().ToList();
+                if (ids == null || ids.Count == 0) notifications.MarkAllRead(u);
+                else notifications.MarkRead(u, ids);
+                return Results.NoContent();
+            });
         }
 
         // ------------------------------------------------------------------ friends / blocks
@@ -429,20 +855,33 @@ namespace XcOsu.Server.Api
                     using var c = db.Open();
                     var targets = c.Query($"SELECT target_id FROM {table} WHERE user_id = $u", r => r.GetInt32(0), ("$u", u));
                     var mutual = c.Query($"SELECT user_id FROM {table} WHERE target_id = $u", r => r.GetInt32(0), ("$u", u)).ToHashSet();
-                    return Json.Ok(accounts.GetMany(targets).Select(r => new
+                    return Json.Ok(accounts.GetMany(targets).Select(r =>
                     {
-                        target_id = r.Id, relation_type = kind, mutual = mutual.Contains(r.Id), target = users.Full(r, 0),
+                        var t = users.Compact(r);
+                        t.Statistics = users.Statistics(r.Id, 0);
+                        return new { target_id = r.Id, relation_type = kind, mutual = mutual.Contains(r.Id), target = t };
                     }));
                 });
 
-                api.MapPost($"/{table}", (HttpContext ctx, Db db, Accounts accounts, UsersService users) =>
+                api.MapPost($"/{table}", async (HttpContext ctx, Db db, Accounts accounts, UsersService users, Notifications notifications) =>
                 {
                     if (uid(ctx) is not int u) return unauthorized();
-                    if (!int.TryParse(ctx.Request.Query["target"], out int t) || accounts.Get(t) is not AccountRow row) return Json.Error("user not found", 404);
-                    using var c = db.Open();
-                    c.Exec($"INSERT OR IGNORE INTO {table} (user_id, target_id) VALUES ($u, $t)", ("$u", u), ("$t", t));
-                    bool mutual = c.Scalar<long>($"SELECT COUNT(*) FROM {table} WHERE user_id = $t AND target_id = $u", ("$u", u), ("$t", t)) > 0;
-                    var rel = new { target_id = t, relation_type = kind, mutual, target = users.Full(row, 0) };
+                    var p = await Json.Params(ctx.Request);
+                    if (!int.TryParse(p("target"), out int t) || accounts.Get(t) is not AccountRow row || t == u) return Json.Error("user not found", 404);
+                    bool added;
+                    bool mutual;
+                    using (var c = db.Open())
+                    {
+                        added = c.Exec($"INSERT OR IGNORE INTO {table} (user_id, target_id) VALUES ($u, $t)", ("$u", u), ("$t", t)) > 0;
+                        // blocking someone removes the friendship both ways, like osu-web.
+                        if (table == "blocks") c.Exec("DELETE FROM friends WHERE (user_id = $u AND target_id = $t)", ("$u", u), ("$t", t));
+                        if (table == "friends") c.Exec("DELETE FROM blocks WHERE user_id = $u AND target_id = $t", ("$u", u), ("$t", t));
+                        mutual = c.Scalar<long>($"SELECT COUNT(*) FROM {table} WHERE user_id = $t AND target_id = $u", ("$u", u), ("$t", t)) > 0;
+                    }
+
+                    var target = users.Compact(row);
+                    target.Statistics = users.Statistics(t, 0);
+                    var rel = new { target_id = t, relation_type = kind, mutual, target };
                     return Json.Ok(new { user_relation = rel });
                 });
 
@@ -459,29 +898,164 @@ namespace XcOsu.Server.Api
             relations("blocks", "block");
         }
 
+        // ------------------------------------------------------------------ comments (news posts, beatmapsets, changelog)
+
+        private static void mapComments(RouteGroupBuilder api)
+        {
+            JObject bundle(Microsoft.Data.Sqlite.SqliteConnection c, List<long> ids, string? type, long? commentableId, int? viewer, Accounts accounts, UsersService users,
+                           bool hasMore = false, long? parentId = null)
+            {
+                var comments = ids.Count == 0
+                    ? new List<JObject>()
+                    : c.Query($"""
+                        SELECT id, parent_id, user_id, message, commentable_type, commentable_id, created_at, updated_at, deleted_at, edited_at, edited_by_id, pinned,
+                               (SELECT COUNT(*) FROM comments r WHERE r.parent_id = comments.id AND r.deleted_at IS NULL),
+                               (SELECT COUNT(*) FROM comment_votes v WHERE v.comment_id = comments.id)
+                        FROM comments WHERE id IN ({string.Join(',', ids)})
+                        """, r => new JObject
+                    {
+                        ["id"] = r.GetInt64(0),
+                        ["parent_id"] = r.IsDBNull(1) ? null : r.GetInt64(1),
+                        ["user_id"] = r.GetInt32(2),
+                        ["message"] = r.IsDBNull(8) ? r.GetString(3) : null,
+                        ["message_html"] = r.IsDBNull(8) ? $"<div class='osu-md-default'><p class=\"osu-md-default__paragraph\">{System.Net.WebUtility.HtmlEncode(r.GetString(3))}</p></div>" : null,
+                        ["commentable_type"] = r.GetString(4),
+                        ["commentable_id"] = r.GetInt64(5),
+                        ["created_at"] = r.GetString(6),
+                        ["updated_at"] = r.GetString(7),
+                        ["deleted_at"] = r.IsDBNull(8) ? null : r.GetString(8),
+                        ["edited_at"] = r.IsDBNull(9) ? null : r.GetString(9),
+                        ["edited_by_id"] = r.IsDBNull(10) ? null : r.GetInt32(10),
+                        ["pinned"] = r.GetInt32(11) != 0,
+                        ["replies_count"] = r.GetInt32(12),
+                        ["votes_count"] = r.GetInt32(13),
+                        ["legacy_name"] = null,
+                    });
+                var ordered = ids.Select(id => comments.FirstOrDefault(x => x.Value<long>("id") == id)).OfType<JObject>().ToList();
+
+                var userIds = ordered.Select(x => x.Value<int>("user_id")).Concat(ordered.Select(x => x.Value<int?>("edited_by_id")).OfType<int>()).Distinct();
+                var votes = viewer == null || ids.Count == 0
+                    ? new List<long>()
+                    : c.Query($"SELECT comment_id FROM comment_votes WHERE user_id = $u AND comment_id IN ({string.Join(',', ids)})", r => r.GetInt64(0), ("$u", viewer));
+
+                var meta = new JArray();
+                if (type != null && commentableId != null)
+                    meta.Add(new JObject
+                    {
+                        ["id"] = commentableId, ["type"] = type, ["title"] = $"{type} #{commentableId}", ["url"] = "", ["owner_id"] = null, ["owner_title"] = null,
+                        ["current_user_attributes"] = new JObject { ["can_new_comment_reason"] = viewer == null ? "Please sign in to proceed." : null },
+                    });
+
+                long total = type == null ? ordered.Count : c.Scalar<long>("SELECT COUNT(*) FROM comments WHERE commentable_type = $t AND commentable_id = $i AND deleted_at IS NULL", ("$t", type), ("$i", commentableId));
+                long topLevel = type == null ? ordered.Count : c.Scalar<long>("SELECT COUNT(*) FROM comments WHERE commentable_type = $t AND commentable_id = $i AND parent_id IS NULL", ("$t", type), ("$i", commentableId));
+
+                var top = ordered.Where(x => x["parent_id"]?.Type == JTokenType.Null || x.Value<long?>("parent_id") == parentId).ToList();
+                var included = ordered.Except(top).ToList();
+                return new JObject
+                {
+                    ["comments"] = new JArray(top),
+                    ["included_comments"] = new JArray(included),
+                    ["pinned_comments"] = new JArray(ordered.Where(x => x.Value<bool>("pinned"))),
+                    ["has_more"] = hasMore,
+                    ["has_more_id"] = parentId,
+                    ["user_votes"] = new JArray(votes),
+                    ["user_follow"] = false,
+                    ["users"] = JArray.FromObject(accounts.GetMany(userIds).Select(users.Compact), serializer),
+                    ["sort"] = "new",
+                    ["top_level_count"] = topLevel,
+                    ["total"] = total,
+                    ["commentable_meta"] = meta,
+                    ["cursor"] = null,
+                };
+            }
+
+            api.MapGet("/comments", (HttpContext ctx, Db db, Accounts accounts, UsersService users) =>
+            {
+                var q = ctx.Request.Query;
+                string? type = q["commentable_type"].ToString() is { Length: > 0 } t ? t : null;
+                long? commentable = long.TryParse(q["commentable_id"], out long ci) ? ci : null;
+                long? parent = long.TryParse(q["parent_id"], out long pi) && pi > 0 ? pi : null;
+                int page = Math.Max(1, int.TryParse(q["page"], out int pg) ? pg : 1);
+                string order = q["sort"].ToString() switch { "old" => "created_at ASC", "top" => "(SELECT COUNT(*) FROM comment_votes v WHERE v.comment_id = comments.id) DESC, created_at DESC", _ => "created_at DESC" };
+                using var c = db.Open();
+                var top = c.Query($"""
+                    SELECT id FROM comments WHERE ($t IS NULL OR commentable_type = $t) AND ($i IS NULL OR commentable_id = $i)
+                      AND {(parent == null ? "parent_id IS NULL" : "parent_id = $p")} ORDER BY pinned DESC, {order} LIMIT 51 OFFSET $o
+                    """, r => r.GetInt64(0), ("$t", type), ("$i", commentable), ("$p", parent), ("$o", (page - 1) * 50));
+                bool hasMore = top.Count > 50;
+                top = top.Take(50).ToList();
+                var replies = top.Count == 0 ? new List<long>() : c.Query($"SELECT id FROM comments WHERE parent_id IN ({string.Join(',', top)}) ORDER BY created_at", r => r.GetInt64(0));
+                return Json.Ok(bundle(c, top.Concat(replies).ToList(), type, commentable, uid(ctx), accounts, users, hasMore, parent));
+            });
+
+            api.MapPost("/comments", async (HttpContext ctx, Db db, Accounts accounts, UsersService users, Notifications notifications) =>
+            {
+                if (uid(ctx) is not int u) return unauthorized();
+                if (accounts.Get(u) is not { } me || me.SilencedUntil > DateTimeOffset.UtcNow) return Json.Error("You can't comment right now.", 403);
+                var p = await Json.Params(ctx.Request);
+                string message = (p("comment[message]") ?? "").Trim();
+                string type = p("comment[commentable_type]") ?? "";
+                if (message.Length == 0 || !long.TryParse(p("comment[commentable_id]"), out long commentable)) return Json.Error("invalid comment", 422);
+                long? parent = long.TryParse(p("comment[parent_id]"), out long pid) && pid > 0 ? pid : null;
+                string now = DateTimeOffset.UtcNow.ToString("O");
+                using var c = db.Open();
+                long id = c.Insert("INSERT INTO comments (commentable_type, commentable_id, parent_id, user_id, message, created_at, updated_at) VALUES ($t, $i, $p, $u, $m, $n, $n)",
+                    ("$t", type), ("$i", commentable), ("$p", parent), ("$u", u), ("$m", message.Length > 4000 ? message[..4000] : message), ("$n", now));
+
+                if (parent != null && (int?)c.Scalar<long?>("SELECT user_id FROM comments WHERE id = $p", ("$p", parent)) is int parentAuthor && parentAuthor != u)
+                    _ = notifications.Push(parentAuthor, "comment_new", type, commentable, "comment", u,
+                        new JObject { ["comment_id"] = id, ["title"] = $"{type} #{commentable}", ["content"] = message, ["username"] = me.Username, ["reply_to"] = parent });
+
+                return Json.Ok(bundle(c, new List<long> { id }, type, commentable, u, accounts, users));
+            });
+
+            api.MapPut("/comments/{id:long}", async (long id, HttpContext ctx, Db db, Accounts accounts, UsersService users) =>
+            {
+                if (uid(ctx) is not int u) return unauthorized();
+                var p = await Json.Params(ctx.Request);
+                using var c = db.Open();
+                c.Exec("UPDATE comments SET message = $m, edited_at = $n, edited_by_id = $u, updated_at = $n WHERE id = $i AND (user_id = $u OR $a = 1)",
+                    ("$m", p("comment[message]") ?? ""), ("$n", DateTimeOffset.UtcNow.ToString("O")), ("$u", u), ("$i", id), ("$a", accounts.Get(u)?.IsAdmin == true ? 1 : 0));
+                return Json.Ok(bundle(c, new List<long> { id }, null, null, u, accounts, users));
+            });
+
+            api.MapDelete("/comments/{id:long}", (long id, HttpContext ctx, Db db, Accounts accounts, UsersService users) =>
+            {
+                if (uid(ctx) is not int u) return unauthorized();
+                using var c = db.Open();
+                c.Exec("UPDATE comments SET deleted_at = $n WHERE id = $i AND (user_id = $u OR $a = 1)",
+                    ("$n", DateTimeOffset.UtcNow.ToString("O")), ("$i", id), ("$u", u), ("$a", accounts.Get(u)?.IsAdmin == true ? 1 : 0));
+                return Json.Ok(bundle(c, new List<long> { id }, null, null, u, accounts, users));
+            });
+
+            api.MapPost("/comments/{id:long}/vote", (long id, HttpContext ctx, Db db, Accounts accounts, UsersService users) =>
+            {
+                if (uid(ctx) is not int u) return unauthorized();
+                using var c = db.Open();
+                if (c.Scalar<long>("SELECT user_id FROM comments WHERE id = $i", ("$i", id)) == u) return Json.Error("Can't vote on your own comment.", 422);
+                c.Exec("INSERT OR IGNORE INTO comment_votes (comment_id, user_id) VALUES ($i, $u)", ("$i", id), ("$u", u));
+                return Json.Ok(bundle(c, new List<long> { id }, null, null, u, accounts, users));
+            });
+
+            api.MapDelete("/comments/{id:long}/vote", (long id, HttpContext ctx, Db db, Accounts accounts, UsersService users) =>
+            {
+                if (uid(ctx) is not int u) return unauthorized();
+                using var c = db.Open();
+                c.Exec("DELETE FROM comment_votes WHERE comment_id = $i AND user_id = $u", ("$i", id), ("$u", u));
+                return Json.Ok(bundle(c, new List<long> { id }, null, null, u, accounts, users));
+            });
+        }
+
         // ------------------------------------------------------------------ misc content
 
         private static void mapMisc(RouteGroupBuilder api)
         {
-            api.MapGet("/news", () => Json.Ok(new
-            {
-                news_posts = new[]
-                {
-                    new
-                    {
-                        id = 1, author = "kudasaixc", slug = "welcome-to-xc-osu", title = "Welcome to xc-osu!",
-                        preview = "xc-osu! runs the full lazer client in your browser. Brought to you by xc softworks.",
-                        published_at = new DateTimeOffset(2026, 11, 9, 0, 0, 0, TimeSpan.Zero), updated_at = new DateTimeOffset(2026, 11, 9, 0, 0, 0, TimeSpan.Zero),
-                        first_image = (string?)null, edit_url = (string?)null,
-                    },
-                },
-                news_sidebar = new { current_year = 2026, years = new[] { 2026 }, news_posts = Array.Empty<object>() },
-                cursor = (object?)null,
-                search = new { limit = 12, sort = "published_desc" },
-            }));
+            api.MapGet("/news", (IConfiguration config) => Json.Ok(News.Index(config)));
+            api.MapGet("/news/{slug}", (string slug, IConfiguration config) => News.Show(config, slug) is JObject post ? Json.Ok(post) : Json.Error("Post not found", 404));
 
-            api.MapGet("/changelog", () => Json.Ok(new { builds = Array.Empty<object>(), streams = Array.Empty<object>() }));
+            api.MapGet("/changelog", () => Json.Ok(new { builds = Array.Empty<object>(), streams = Array.Empty<object>(), search = new { limit = 21 } }));
             api.MapGet("/changelog/{stream}/{version}", () => Json.Error("Build not found", 404));
+
             // default menu backgrounds for everyone: every image dropped into the site's backgrounds/ folder (no rebuild needed).
             api.MapGet("/seasonal-backgrounds", (IConfiguration config) =>
             {
@@ -496,17 +1070,58 @@ namespace XcOsu.Server.Api
                     backgrounds = files.Select(f => new { url = $"{publicBase}/backgrounds/{Uri.EscapeDataString(Path.GetFileName(f))}", user = (object?)null }).ToArray(),
                 });
             });
-            api.MapGet("/comments", () => Json.Ok(new
+
+            api.MapGet("/wiki/{**path}", (string? path) => Json.Error("The xc-osu! wiki lives at osu.xcsoftworks.com.", 404));
+
+            api.MapGet("/search", (HttpRequest req, Accounts accounts, UsersService users, Db db) =>
             {
-                comments = Array.Empty<object>(), has_more = false, has_more_id = (int?)null, included_comments = Array.Empty<object>(),
-                pinned_comments = Array.Empty<object>(), user_votes = Array.Empty<long>(), user_follow = false, users = Array.Empty<object>(),
-                sort = "new", top_level_count = 0, total = 0, commentable_meta = Array.Empty<object>(), cursor = (object?)null,
-            }));
-            api.MapGet("/wiki/{**path}", () => Json.Error("The xc-osu! wiki lives at osu.xcsoftworks.com.", 404));
-            api.MapGet("/search", () => Json.Ok(new { user = new { data = Array.Empty<object>(), total = 0 }, wiki_page = new { data = Array.Empty<object>(), total = 0 } }));
-            api.MapPost("/reports", () => Results.NoContent());
-            api.MapPut("/me/options", () => Results.NoContent());
-            api.MapPost("/screenshots", () => Json.Ok(new { url = (string?)null }));
+                string query = req.Query["query"].ToString().Trim();
+                string mode = req.Query["mode"].ToString();
+                int page = Math.Max(1, int.TryParse(req.Query["page"], out int p) ? p : 1);
+                var found = new List<APIUser>();
+                long total = 0;
+                if (query.Length > 0 && mode is "" or "all" or "user")
+                {
+                    using var c = db.Open();
+                    string like = "%" + query.Replace("%", "").Replace("_", "\\_") + "%";
+                    total = c.Scalar<long>("SELECT COUNT(*) FROM users WHERE username LIKE $q ESCAPE '\\' AND restricted = 0", ("$q", like));
+                    var ids = c.Query("""
+                        SELECT id FROM users WHERE username LIKE $q ESCAPE '\' AND restricted = 0
+                        ORDER BY CASE WHEN username = $exact THEN 0 ELSE 1 END, length(username), username LIMIT 20 OFFSET $o
+                        """, r => r.GetInt32(0), ("$q", like), ("$exact", query), ("$o", (page - 1) * 20));
+                    found = accounts.GetMany(ids).Select(users.Compact).ToList();
+                }
+
+                return Json.Ok(new { user = new { data = found, total }, wiki_page = new { data = Array.Empty<object>(), total = 0 } });
+            });
+
+            api.MapPost("/reports", async (HttpContext ctx, Db db) =>
+            {
+                if (uid(ctx) is not int u) return unauthorized();
+                var p = await Json.Params(ctx.Request);
+                using var c = db.Open();
+                c.Exec("INSERT INTO reports (reporter_id, reportable_type, reportable_id, reason, comments, created_at) VALUES ($u, $t, $i, $r, $c, $n)",
+                    ("$u", u), ("$t", p("reportable_type") ?? "user"), ("$i", long.TryParse(p("reportable_id"), out long rid) ? rid : 0), ("$r", p("reason")),
+                    ("$c", p("comments")), ("$n", DateTimeOffset.UtcNow.ToString("O")));
+                return Results.NoContent();
+            });
+
+            api.MapPost("/screenshots", async (HttpContext ctx, Db db, UsersService users) =>
+            {
+                if (uid(ctx) is not int u) return unauthorized();
+                if (!ctx.Request.HasFormContentType) return Json.Error("no screenshot", 422);
+                var form = await ctx.Request.ReadFormAsync();
+                var file = form.Files["screenshot"];
+                if (file == null || file.Length == 0 || file.Length > 16 << 20) return Json.Error("invalid screenshot", 422);
+                string hash = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(12)).ToLowerInvariant();
+                string dir = Path.Combine(db.DataDirectory, "screenshots");
+                Directory.CreateDirectory(dir);
+                await using (var fs = File.Create(Path.Combine(dir, hash + ".jpg")))
+                    await file.CopyToAsync(fs);
+                using var c = db.Open();
+                c.Exec("INSERT INTO screenshots (user_id, hash, created_at) VALUES ($u, $h, $n)", ("$u", u), ("$h", hash), ("$n", DateTimeOffset.UtcNow.ToString("O")));
+                return Json.Ok(new { url = $"{users.PublicBase}/api/xc/ss/{hash}" });
+            });
         }
     }
 }

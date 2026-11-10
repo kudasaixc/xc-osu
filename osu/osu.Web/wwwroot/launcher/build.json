@@ -1,0 +1,56 @@
+{
+ "generated": "2026-11-10T10:42:31+00:00",
+ "lazer": {
+  "release": "2026.1026.0",
+  "ahead": 37,
+  "commit": "bb37f05418",
+  "date": "2026-11-09"
+ },
+ "framework": "2026.1030.0",
+ "realm": "20.1.0",
+ "trees": [
+  {
+   "name": "osu!lazer",
+   "files": 2991,
+   "upstream": 355625,
+   "changed": 87,
+   "added": 227,
+   "touched": 43,
+   "created": 1
+  },
+  {
+   "name": "osu-framework",
+   "files": 1008,
+   "upstream": 131492,
+   "changed": 30,
+   "added": 2270,
+   "touched": 29,
+   "created": 11
+  },
+  {
+   "name": "realm-core",
+   "files": 402,
+   "upstream": 152114,
+   "changed": 37,
+   "added": 688,
+   "touched": 6,
+   "created": 2
+  },
+  {
+   "name": "realm-dotnet",
+   "files": 178,
+   "upstream": 31549,
+   "changed": 0,
+   "added": 0,
+   "touched": 0,
+   "created": 0
+  }
+ ],
+ "upstreamLines": 670780,
+ "upstreamKept": 670626,
+ "keptPct": 99.98,
+ "portLines": 15397,
+ "portInUpstreamTrees": 3185,
+ "portStandalone": 12212,
+ "upstreamShareOfBuild": 97.76
+}

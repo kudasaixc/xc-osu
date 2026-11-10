@@ -23,6 +23,38 @@ namespace osu.Web
             hostThread.Start();
         }
 
+        private static int perfInterval = 2000;
+
+        private static string env(string name) => Environment.GetEnvironmentVariable(name) ?? string.Empty;
+
+        /// <summary>
+        /// Echo the options the launcher passed in, and apply the ones that live in the runtime itself.
+        /// </summary>
+        private static void applyLaunchOptions()
+        {
+            Console.WriteLine($"[launch] runtime {Environment.Version}, {Environment.ProcessorCount} logical cores, server GC={System.Runtime.GCSettings.IsServerGC}, latency={System.Runtime.GCSettings.LatencyMode}");
+
+            string gc = env("MONO_GC_PARAMS");
+            Console.WriteLine("[launch] MONO_GC_PARAMS=" + (gc.Length > 0 ? gc : "(defaults)"));
+
+            foreach (string key in new[] { "XC_FRAMESYNC", "XC_MAX_DRAW_HZ", "XC_MAX_UPDATE_HZ", "XC_INACTIVE_HZ", "XC_LOG", "XC_THREADPOOL_MAX", "DOTNET_PROCESSOR_COUNT" })
+            {
+                if (env(key).Length > 0)
+                    Console.WriteLine($"[launch] {key}={env(key)}");
+            }
+
+            if (int.TryParse(env("XC_THREADPOOL_MAX"), out int maxThreads) && maxThreads > 0)
+            {
+                ThreadPool.GetMaxThreads(out _, out int io);
+                bool ok = ThreadPool.SetMaxThreads(maxThreads, io);
+                ThreadPool.GetMaxThreads(out int worker, out _);
+                Console.WriteLine($"[launch] thread pool max workers -> {worker}" + (ok ? string.Empty : $" (request for {maxThreads} rejected: must be >= {Environment.ProcessorCount})"));
+            }
+
+            if (int.TryParse(env("XC_PERF_MS"), out int ms) && ms >= 250)
+                perfInterval = ms;
+        }
+
         private static void startPerfProbe(GameHost host)
         {
             new Thread(() =>
@@ -32,7 +64,7 @@ namespace osu.Web
 
                 while (true)
                 {
-                    Thread.Sleep(2000);
+                    Thread.Sleep(perfInterval);
 
                     var sb = new System.Text.StringBuilder("[perf]");
 
@@ -56,7 +88,9 @@ namespace osu.Web
             {
                 // Not disposed: a browser tab never "exits" the host (CanExit is false), and disposing a running host
                 // would throw and mask the real startup exception.
-                if (Environment.GetEnvironmentVariable("XC_VERBOSE_LOG") == "1")
+                applyLaunchOptions();
+
+                if (Environment.GetEnvironmentVariable("XC_REALM_TRACE") == "1")
                 {
                     Realms.Logging.RealmLogger.Default = Realms.Logging.RealmLogger.Function(m => Console.WriteLine("[realm] " + m));
                     Realms.Logging.RealmLogger.SetLogLevel(Realms.Logging.LogLevel.Trace);

@@ -34,7 +34,19 @@ Test harness: /var/www/osu/tools/shot.mjs (playwright + chromium-1248 swiftshade
 - ASP.NET Core net10 référençant osu.Game + osu.Game.Rulesets.Osu (modèles Newtonsoft/MessagePack d'origine, pp via les calculateurs d'osu!).
 - SQLite /var/lib/xc-osu/xc-osu.db, cache .osu dans /var/lib/xc-osu/osu-files, replays .osr (enregistrés via spectator) dans /var/lib/xc-osu/replays.
 - Endpoints: /oauth/token, POST /users, /api/v2/* (me, users, beatmaps, beatmapsets/search via miroirs, download proxy, solo scores + pp, leaderboards, rankings, chat, friends/blocks, favourites, rooms/playlists, news...), /notifications (ws chat), /signalr/{spectator,multiplayer,metadata}.
-- Miroirs: catboy.best (User-Agent obligatoire) -> osu.direct -> nerinyan.
+- Online complet (2026-11-10) : medals (Services/Medals.cs) + notifications live, commentaires/votes, tags de beatmap (Services/Tags.cs), scores épinglés, recent_activity, rank history (snapshot quotidien), daily challenge (Services/DailyChallenge.cs : salle playlists quotidienne, streaks, top 10%/50%), quick play + ranked play (Services/Matchmaking.cs : file, invitations, stages, cartes, Elo dans matchmaking_ratings), salons de chat par room, teams (/api/xc/teams*), avatars/covers/flags servis par le serveur (/api/xc/avatar|cover|team-flag), page de compte /api/xc/settings (Assets/settings.html).
+- Pièges : les propriétés setter-only d'APIUser (rank_history, playstyle) ne sont jamais sérialisées -> injectées à la main (Endpoints.fullJson). SoloScoreInfo.BeatmapSet ne doit jamais être assigné quand Beatmap est null (exception).
+- Miroirs: catboy.best (User-Agent obligatoire) -> osu.direct -> nerinyan. catboy veut `mode`/`status` numérique (pas `m`/`s`) — traduit dans Mirrors.Search ; il ignore `sort`.
+- Test E2E isolé : instance sur 127.0.0.1:5081 avec DataDirectory dans un dossier temporaire, scripts HTTP python + client SignalR C# (MessagePack + SignalRUnionWorkaroundResolver) qui joue quick/ranked play.
 - Le JSON serveur ignore les ShouldSerialize* de SoloScoreInfo (id, user, pp...) via Api/Json.cs ServerContractResolver.
 - Déploiement: `dotnet publish -c Release -o /var/www/osu/server/publish` puis `sudo systemctl restart xc-osu-server` (port 127.0.0.1:5080).
 - Apache: /etc/apache2/sites-available/osu-le-ssl.conf — DocumentRoot /var/www/osu/site (le jeu publié), COOP/COEP, fichiers .br/.gz pré-compressés, proxy /api /oauth /users /notifications /signalr (upgrade=websocket).
+
+## Launcher (wwwroot/main.js + js/xc-*.js, 2026-11-10)
+- main.js : `dotnet.download()` dès l'ouverture (assets seulement), launcher pendant ce temps, puis `withConfig/withEnvironmentVariable` + `create()` au clic sur Lancer (vérifié : aucun asset retéléchargé, pthreadPoolInitialSize pris après download).
+- Options -> mécanismes réels : XC_FRAMESYNC / XC_MAX_DRAW_HZ / XC_MAX_UPDATE_HZ / XC_INACTIVE_HZ (WebGameHost.SetupConfig + GameHost.AdjustFrameLimits), DOTNET_PROCESSOR_COUNT, XC_THREADPOOL_MAX (Program.applyLaunchOptions), MONO_GC_PARAMS soft-heap-limit / max-heap-size / nursery-size, pthreadPoolInitialSize, globalThis.xcGlAttributes (xcweb.c, envoyé au worker avec l'OffscreenCanvas), globalThis.xcRenderScale (xc-ui.js), latencyHint AudioContext.
+- Logs : XC_LOG=boot|verbose|quiet (boot = verbeux jusqu'à « entered Intro/MainMenu », ligne toujours émise, + « [launch] boot complete »). XC_REALM_TRACE séparé. ?log = ancien comportement (tout).
+- Écran de boot (xc-boot.js) : étapes pilotées par les vrais logs (regex dans STAGES) ; console en jeu Ctrl+Alt+L, graphiques perf Ctrl+Alt+P (xc-perf.js, parse les lignes [perf] de Program.cs, XC_PERF_MS).
+- Contenu : wwwroot/launcher/news.json (posts, progress, issues — à éditer à la main) ; launcher/build.json généré par tools/portstats.py (appelé par devpub/aotpub : version lazer via git describe, % de code upstream gardé via git diff --numstat, third_party exclu).
+- ?launcher force le launcher (si « passer le launcher » est coché), ?launch / ?play le saute.
+- stamp.py est générique : stampe aussi les imports entre js/*.js (xc-boot -> xc-log) ; même ?v= partout = même instance de module.

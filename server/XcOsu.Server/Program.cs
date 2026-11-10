@@ -28,6 +28,12 @@ builder.Services.AddSingleton<Performance>();
 builder.Services.AddSingleton<Scores>();
 builder.Services.AddSingleton<Chat>();
 builder.Services.AddSingleton<RoomStore>();
+builder.Services.AddSingleton<Notifications>();
+builder.Services.AddSingleton<Medals>();
+builder.Services.AddSingleton<MapPool>();
+builder.Services.AddSingleton<Matchmaking>();
+builder.Services.AddSingleton<DailyChallenge>();
+builder.Services.AddHostedService<Maintenance>();
 
 builder.Services.AddAuthentication(XcTokenAuthHandler.SCHEME)
        .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, XcTokenAuthHandler>(XcTokenAuthHandler.SCHEME, null);
@@ -51,6 +57,22 @@ builder.Services.Configure<ForwardedHeadersOptions>(o =>
 });
 
 var app = builder.Build();
+
+// score pipeline: medals, daily challenge streaks, live room feeds.
+{
+    var scores = app.Services.GetRequiredService<Scores>();
+    var medals = app.Services.GetRequiredService<Medals>();
+    var daily = app.Services.GetRequiredService<DailyChallenge>();
+    var rooms = app.Services.GetRequiredService<RoomStore>();
+    _ = app.Services.GetRequiredService<Matchmaking>();
+    scores.Submitted += async s =>
+    {
+        bool isDaily = daily.IsDailyRoom(s.RoomId);
+        bool isMultiplayer = s.RoomId is long r && rooms.Rooms.TryGetValue(r, out var room) && room.Realtime;
+        await medals.Check(s.Score, s.StarRating, s.BeatmapMaxCombo, isDaily, isMultiplayer);
+        await daily.OnScore(s);
+    };
+}
 
 app.UseForwardedHeaders();
 app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20) });

@@ -14,7 +14,7 @@
 EM_JS(void, xc_worker_install, (), {
   self.xcRaf = () => new Promise(r => requestAnimationFrame(r));
   self.addEventListener('message', function (e) {
-    if (e.data && e.data.xcCanvas) self.__xcCanvas = e.data.xcCanvas;
+    if (e.data && e.data.xcCanvas) { self.__xcCanvas = e.data.xcCanvas; self.__xcGl = e.data.xcGl || null; }
   });
 });
 
@@ -22,7 +22,8 @@ void xc_request_canvas(void) {
   xc_worker_install();
   MAIN_THREAD_ASYNC_EM_ASM({
     var off = globalThis.xcTakeOffscreenCanvas();
-    PThread.pthreads[$0].postMessage({ xcCanvas: off }, [off]);
+    // launch-screen choices (GPU preference, low-latency canvas, MSAA) travel with the canvas
+    PThread.pthreads[$0].postMessage({ xcCanvas: off, xcGl: globalThis.xcGlAttributes || null }, [off]);
   }, pthread_self());
 }
 
@@ -32,7 +33,15 @@ EM_JS(int, xc_gl_attach, (), {
   var attrs = { alpha: false, depth: true, stencil: true, antialias: false, premultipliedAlpha: false,
                 preserveDrawingBuffer: false, powerPreference: 'high-performance', desynchronized: true,
                 failIfMajorPerformanceCaveat: false };
+  var o = self.__xcGl;
+  if (o) {
+    if (o.powerPreference) attrs.powerPreference = o.powerPreference;
+    if (typeof o.desynchronized === 'boolean') attrs.desynchronized = o.desynchronized;
+    if (typeof o.antialias === 'boolean') attrs.antialias = o.antialias;
+  }
   var ctx = c.getContext('webgl2', attrs);
+  if (ctx) console.log('[launch] WebGL2 context: powerPreference=' + attrs.powerPreference + ' desynchronized=' + attrs.desynchronized + ' antialias=' + attrs.antialias
+                      + (ctx.getContextAttributes && ctx.getContextAttributes().desynchronized === false && attrs.desynchronized ? ' (low-latency canvas refused by the browser)' : ''));
   if (!ctx) return -1;
   attrs.majorVersion = 2; attrs.minorVersion = 0; attrs.enableExtensionsByDefault = 1;
   var h = GL.registerContext(ctx, attrs);

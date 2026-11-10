@@ -11,31 +11,46 @@ using osu.Game.Online.Multiplayer.Countdown;
 using osu.Game.Online.Multiplayer.MatchTypes.TeamVersus;
 using osu.Game.Online.Rooms;
 using osu.Game.Online.Multiplayer.MatchTypes.RankedPlay;
+using osu.Game.Online.Matchmaking.Events;
+using osu.Game.Online.Matchmaking.Requests;
+using osu.Game.Online.Matchmaking.Responses;
+using osu.Game.Online.RankedPlay;
 using MatchType = osu.Game.Online.Rooms.MatchType;
 using XcOsu.Server.Services;
 
 namespace XcOsu.Server.Hubs
 {
+    /// <summary>Everything the lazer client listens to on the multiplayer hub (rooms, quick play, ranked play).</summary>
+    public interface IXcMultiplayerClient : IMultiplayerClient, IMatchmakingClient, IRankedPlayClient
+    {
+    }
+
     [Authorize(AuthenticationSchemes = XcTokenAuthHandler.SCHEME)]
-    public sealed class MultiplayerHub : Hub<IMultiplayerClient>
+    public sealed class MultiplayerHub : Hub<IXcMultiplayerClient>
     {
         /// <summary>user id → room id</summary>
         private static readonly ConcurrentDictionary<int, long> user_rooms = new ConcurrentDictionary<int, long>();
 
         /// <summary>user id → connection id</summary>
-        private static readonly ConcurrentDictionary<int, string> user_connections = new ConcurrentDictionary<int, string>();
+        internal static readonly ConcurrentDictionary<int, string> user_connections = new ConcurrentDictionary<int, string>();
+
+        internal static long? RoomOf(int userId) => user_rooms.TryGetValue(userId, out long r) ? r : null;
 
         private readonly RoomStore store;
         private readonly Accounts accounts;
         private readonly Users users;
         private readonly Chat chat;
         private readonly Mirrors mirrors;
-        private readonly IHubContext<MultiplayerHub, IMultiplayerClient> hubContext;
+        private readonly IHubContext<MultiplayerHub, IXcMultiplayerClient> hubContext;
         private readonly ILogger<MultiplayerHub> log;
+        private readonly IServiceProvider services;
 
-        public MultiplayerHub(RoomStore store, Accounts accounts, Users users, Chat chat, Mirrors mirrors, IHubContext<MultiplayerHub, IMultiplayerClient> hubContext,
-                              ILogger<MultiplayerHub> log)
+        private Matchmaking matchmaking => services.GetRequiredService<Matchmaking>();
+
+        public MultiplayerHub(RoomStore store, Accounts accounts, Users users, Chat chat, Mirrors mirrors, IHubContext<MultiplayerHub, IXcMultiplayerClient> hubContext,
+                              ILogger<MultiplayerHub> log, IServiceProvider services)
         {
+            this.services = services;
             this.store = store;
             this.accounts = accounts;
             this.users = users;
@@ -64,6 +79,7 @@ namespace XcOsu.Server.Hubs
             if (user_connections.TryGetValue(u, out string? c) && c == Context.ConnectionId)
             {
                 user_connections.TryRemove(u, out _);
+                await matchmaking.Disconnected(u);
                 await leave(u, kicked: false);
             }
 
@@ -77,12 +93,14 @@ namespace XcOsu.Server.Hubs
             int u = me;
             await leave(u, false);
 
+            if (room.Settings.MatchType.IsMatchmakingType()) throw new HubException("Quick play and ranked play rooms are created by the matchmaker.");
             long id = store.AllocateRoomId(u, "realtime", room.Settings.MatchType.ToString());
+            int channelId = chat.CreateRoomChannel(id, room.Settings.Name);
             var live = new MultiplayerRoom(id)
             {
                 Settings = room.Settings,
                 State = MultiplayerRoomState.Open,
-                ChannelID = 0,
+                ChannelID = channelId,
             };
 
             ushort order = 0;
@@ -105,13 +123,14 @@ namespace XcOsu.Server.Hubs
             {
                 Id = id,
                 Live = live,
+                ChannelId = channelId,
                 Json = new JObject
                 {
                     ["id"] = id,
                     ["category"] = "realtime",
                     ["starts_at"] = DateTimeOffset.UtcNow,
                     ["ends_at"] = null,
-                    ["channel_id"] = 0,
+                    ["channel_id"] = channelId,
                 },
             };
 
@@ -131,6 +150,17 @@ namespace XcOsu.Server.Hubs
         }
 
         private async Task<MultiplayerRoom> join(ServerRoom room, int u, string? password, bool isCreator)
+        {
+            if (room.Live!.Settings.MatchType.IsMatchmakingType() && !matchmaking.IsInvited(room.Id, u))
+                throw new HubException("This match is only open to the players the matchmaker picked.");
+
+            var live = await joinCore(room, u, password, isCreator);
+            if (room.ChannelId > 0) await chat.JoinAndNotify(room.ChannelId, u);
+            if (live.Settings.MatchType.IsMatchmakingType()) await matchmaking.UserJoined(room, u);
+            return live;
+        }
+
+        private async Task<MultiplayerRoom> joinCore(ServerRoom room, int u, string? password, bool isCreator)
         {
             var account = accounts.Get(u) ?? throw new HubException("unknown user");
             MultiplayerRoomUser user;
@@ -218,10 +248,15 @@ namespace XcOsu.Server.Hubs
             else
                 await clients.Group(group(id)).UserLeft(user);
 
+            if (room.ChannelId > 0) await chat.PartAndNotify(room.ChannelId, u);
+            if (room.Live.Settings.MatchType.IsMatchmakingType()) await matchmaking.UserLeft(room, u);
+
             if (empty)
             {
                 room.Countdown?.Cancel();
                 store.Close(room);
+                if (room.ChannelId > 0) await chat.CloseRoomChannel(room.ChannelId);
+                matchmaking.RoomClosed(room);
                 log.LogInformation("multiplayer room {Room} closed", id);
                 return;
             }
@@ -236,6 +271,7 @@ namespace XcOsu.Server.Hubs
         public async Task TransferHost(int userId)
         {
             var (room, live, _) = currentAsHost();
+            if (live.Settings.MatchType.IsMatchmakingType()) throw new InvalidStateException("Not available in this room.");
             lock (room.Lock)
                 live.Host = live.Users.FirstOrDefault(x => x.UserID == userId) ?? throw new HubException("User not in room.");
             await Clients.Group(group(room.Id)).HostChanged(userId);
@@ -244,7 +280,8 @@ namespace XcOsu.Server.Hubs
 
         public async Task KickUser(int userId)
         {
-            var (_, _, user) = currentAsHost();
+            var (_, live, user) = currentAsHost();
+            if (live.Settings.MatchType.IsMatchmakingType()) throw new InvalidStateException("Not available in this room.");
             if (userId == user.UserID) throw new HubException("Can't kick yourself.");
             await leave(userId, kicked: true);
         }
@@ -253,6 +290,8 @@ namespace XcOsu.Server.Hubs
         {
             var (room, live, _) = currentAsHost();
             if (live.State != MultiplayerRoomState.Open) throw new InvalidStateException("Can't change settings while a match is in progress.");
+            if (live.Settings.MatchType.IsMatchmakingType() || settings.MatchType.IsMatchmakingType()) throw new InvalidStateException("Not available in this room.");
+            bool renamed = live.Settings.Name != settings.Name;
 
             bool matchTypeChanged;
             lock (room.Lock)
@@ -269,6 +308,7 @@ namespace XcOsu.Server.Hubs
             }
 
             await Clients.Group(group(room.Id)).SettingsChanged(settings);
+            if (renamed && room.ChannelId > 0) chat.RenameRoomChannel(room.ChannelId, settings.Name);
             if (matchTypeChanged)
             {
                 await Clients.Group(group(room.Id)).MatchRoomStateChanged(live.MatchState!);
@@ -325,55 +365,70 @@ namespace XcOsu.Server.Hubs
             await maybeAutoStart(room);
         }
 
-        private async Task setState(ServerRoom room, MultiplayerRoomUser user, MultiplayerUserState state)
+        internal async Task setState(ServerRoom room, MultiplayerRoomUser user, MultiplayerUserState state)
         {
             lock (room.Lock) user.State = state;
             await hubContext.Clients.Group(group(room.Id)).UserStateChanged(user.UserID, state);
         }
 
-        private async Task setRoomState(ServerRoom room, MultiplayerRoomState state)
+        internal async Task setRoomState(ServerRoom room, MultiplayerRoomState state)
         {
             lock (room.Lock) room.Live!.State = state;
             await hubContext.Clients.Group(group(room.Id)).RoomStateChanged(state);
         }
 
         /// <summary>Advances WaitingForLoad → Playing → Results as users progress.</summary>
-        private async Task updateGameplayProgress(ServerRoom room)
+        /// <remarks>
+        /// The decision and the state change happen atomically under the room lock: several users change state at the same moment,
+        /// and each of those calls lands here — only one of them may start (or finish) the gameplay.
+        /// </remarks>
+        internal async Task updateGameplayProgress(ServerRoom room)
         {
             var live = room.Live!;
             var clients = hubContext.Clients.Group(group(room.Id));
+            List<MultiplayerRoomUser> changed;
+            MultiplayerUserState userState;
+            bool started = false, finished = false;
 
-            if (live.State == MultiplayerRoomState.WaitingForLoad)
+            lock (room.Lock)
             {
-                bool anyLoading = live.Users.Any(u => u.State is MultiplayerUserState.WaitingForLoad or MultiplayerUserState.Loaded);
-                var ready = live.Users.Where(u => u.State == MultiplayerUserState.ReadyForGameplay).ToList();
-                if (anyLoading) return;
-
-                if (ready.Count == 0)
+                if (live.State == MultiplayerRoomState.WaitingForLoad)
                 {
-                    await setRoomState(room, MultiplayerRoomState.Open);
-                    return;
-                }
+                    if (live.Users.Any(u => u.State is MultiplayerUserState.WaitingForLoad or MultiplayerUserState.Loaded)) return;
 
-                foreach (var u in ready)
-                    await setState(room, u, MultiplayerUserState.Playing);
-                await setRoomState(room, MultiplayerRoomState.Playing);
-                await clients.GameplayStarted();
-                return;
+                    changed = live.Users.Where(u => u.State == MultiplayerUserState.ReadyForGameplay).ToList();
+                    userState = MultiplayerUserState.Playing;
+                    foreach (var u in changed) u.State = userState;
+                    started = changed.Count > 0;
+                    live.State = started ? MultiplayerRoomState.Playing : MultiplayerRoomState.Open;
+                }
+                else if (live.State == MultiplayerRoomState.Playing && !live.Users.Any(u => u.State == MultiplayerUserState.Playing))
+                {
+                    changed = live.Users.Where(u => u.State == MultiplayerUserState.FinishedPlay).ToList();
+                    userState = MultiplayerUserState.Results;
+                    foreach (var u in changed) u.State = userState;
+                    live.State = MultiplayerRoomState.Open;
+                    finished = true;
+                }
+                else
+                    return;
             }
 
-            if (live.State == MultiplayerRoomState.Playing && !live.Users.Any(u => u.State == MultiplayerUserState.Playing))
-            {
-                foreach (var u in live.Users.Where(u => u.State == MultiplayerUserState.FinishedPlay).ToList())
-                    await setState(room, u, MultiplayerUserState.Results);
+            foreach (var u in changed) await clients.UserStateChanged(u.UserID, userState);
+            await clients.RoomStateChanged(live.State);
 
-                await setRoomState(room, MultiplayerRoomState.Open);
+            if (started)
+                await clients.GameplayStarted();
+
+            if (finished)
+            {
                 await clients.ResultsReady();
                 await finishCurrentItem(room);
+                if (live.Settings.MatchType.IsMatchmakingType()) await services.GetRequiredService<Matchmaking>().GameplayFinished(room);
             }
         }
 
-        private async Task finishCurrentItem(ServerRoom room)
+        internal async Task finishCurrentItem(ServerRoom room)
         {
             var live = room.Live!;
             MultiplayerPlaylistItem? next;
@@ -388,7 +443,7 @@ namespace XcOsu.Server.Hubs
                     current.PlayedAt = DateTimeOffset.UtcNow;
                 }
 
-                if (live.Settings.QueueMode == QueueMode.HostOnly && current != null && live.Playlist.All(p => p.Expired))
+                if (live.Settings.QueueMode == QueueMode.HostOnly && !live.Settings.MatchType.IsMatchmakingType() && current != null && live.Playlist.All(p => p.Expired))
                 {
                     duplicate = new MultiplayerPlaylistItem
                     {
@@ -406,7 +461,7 @@ namespace XcOsu.Server.Hubs
                     live.Playlist.Add(duplicate);
                 }
 
-                next = nextItem(live);
+                next = live.Settings.MatchType.IsMatchmakingType() ? null : nextItem(live);
                 if (next != null) live.Settings.PlaylistItemId = next.ID;
                 foreach (var u in live.Users) u.VotedToSkipIntro = false;
             }
@@ -484,6 +539,14 @@ namespace XcOsu.Server.Hubs
                     await stopCountdown(room, stop.ID);
                     break;
 
+                case MatchmakingAvatarActionRequest avatar when live.Settings.MatchType == MatchType.Matchmaking:
+                    await Clients.Group(group(room.Id)).MatchEvent(new MatchmakingAvatarActionEvent { UserId = user.UserID, Action = avatar.Action });
+                    break;
+
+                case RankedPlayCardHandReplayRequest replay when live.Settings.MatchType == MatchType.RankedPlay:
+                    await Clients.OthersInGroup(group(room.Id)).MatchEvent(new RankedPlayCardHandReplayEvent { UserId = user.UserID, Frames = replay.Frames });
+                    break;
+
                 case RollRequest roll:
                     uint max = Math.Clamp(roll.Max ?? 100, 1u, 100_000_000u);
                     await Clients.Group(group(room.Id)).MatchEvent(new RollEvent { UserID = user.UserID, Max = max, Result = (uint)Random.Shared.NextInt64(1, max + 1L) });
@@ -543,6 +606,7 @@ namespace XcOsu.Server.Hubs
         public async Task StartMatch()
         {
             var (room, live, _) = currentAsHost();
+            if (live.Settings.MatchType.IsMatchmakingType()) throw new InvalidStateException("The matchmaker starts this match.");
             if (live.State != MultiplayerRoomState.Open) throw new InvalidStateException("Can't start match when already in a running state.");
             if (live.Host!.State != MultiplayerUserState.Ready && live.Host.State != MultiplayerUserState.Spectating)
                 throw new InvalidStateException("Can't start match when the host is not ready.");
@@ -551,7 +615,7 @@ namespace XcOsu.Server.Hubs
             await startMatch(room, force: false);
         }
 
-        private async Task startMatch(ServerRoom room, bool force)
+        internal async Task startMatch(ServerRoom room, bool force)
         {
             var live = room.Live!;
             var clients = hubContext.Clients;
@@ -562,12 +626,17 @@ namespace XcOsu.Server.Hubs
                 if (live.State != MultiplayerRoomState.Open) return;
                 players = live.Users.Where(u => u.State == MultiplayerUserState.Ready).ToList();
                 if (players.Count == 0) return;
+
+                // claim the start atomically so concurrent callers (countdown, matchmaker, host) can't start twice.
+                foreach (var u in players) u.State = MultiplayerUserState.WaitingForLoad;
+                live.State = MultiplayerRoomState.WaitingForLoad;
             }
 
             room.Countdown?.Cancel();
+            var roomClients = hubContext.Clients.Group(group(room.Id));
             foreach (var u in players)
-                await setState(room, u, MultiplayerUserState.WaitingForLoad);
-            await setRoomState(room, MultiplayerRoomState.WaitingForLoad);
+                await roomClients.UserStateChanged(u.UserID, MultiplayerUserState.WaitingForLoad);
+            await roomClients.RoomStateChanged(MultiplayerRoomState.WaitingForLoad);
 
             foreach (var u in live.Users.Where(u => u.State is MultiplayerUserState.WaitingForLoad or MultiplayerUserState.Spectating))
                 if (user_connections.TryGetValue(u.UserID, out string? conn))
@@ -594,6 +663,7 @@ namespace XcOsu.Server.Hubs
         public async Task AbortMatch()
         {
             var (room, live, _) = currentAsHost();
+            if (live.Settings.MatchType.IsMatchmakingType()) throw new InvalidStateException("Not available in this room.");
             if (live.State is not (MultiplayerRoomState.WaitingForLoad or MultiplayerRoomState.Playing))
                 throw new InvalidStateException("Can't abort a match that hasn't started.");
 
@@ -644,6 +714,7 @@ namespace XcOsu.Server.Hubs
         public async Task AddPlaylistItem(MultiplayerPlaylistItem item)
         {
             var (room, live, user) = current();
+            if (live.Settings.MatchType.IsMatchmakingType()) throw new InvalidStateException("Not available in this room.");
             if (live.Settings.QueueMode == QueueMode.HostOnly)
             {
                 if (live.Host?.UserID != user.UserID) throw new NotHostException();
@@ -678,6 +749,7 @@ namespace XcOsu.Server.Hubs
         public async Task EditPlaylistItem(MultiplayerPlaylistItem item)
         {
             var (room, live, user) = current();
+            if (live.Settings.MatchType.IsMatchmakingType()) throw new InvalidStateException("Not available in this room.");
             var existing = live.Playlist.FirstOrDefault(p => p.ID == item.ID) ?? throw new InvalidStateException("Item not found.");
             if (existing.Expired) throw new InvalidStateException("Can't edit an already played item.");
             if (existing.OwnerID != user.UserID && live.Host?.UserID != user.UserID) throw new NotHostException();
@@ -707,6 +779,7 @@ namespace XcOsu.Server.Hubs
         public async Task RemovePlaylistItem(long playlistItemId)
         {
             var (room, live, user) = current();
+            if (live.Settings.MatchType.IsMatchmakingType()) throw new InvalidStateException("Not available in this room.");
             var existing = live.Playlist.FirstOrDefault(p => p.ID == playlistItemId) ?? throw new InvalidStateException("Item not found.");
             if (existing.OwnerID != user.UserID && live.Host?.UserID != user.UserID) throw new NotHostException();
             if (existing.Expired) throw new InvalidStateException("Can't remove an already played item.");
@@ -734,18 +807,76 @@ namespace XcOsu.Server.Hubs
             await Clients.Client(conn).Invited(user.UserID, room.Id, live.Settings.Password);
         }
 
-        // ------------------------------------------------------------------ quick play / ranked play are not offered on xc-osu!
+        // ------------------------------------------------------------------ quick play / ranked play (see Services/Matchmaking.cs)
 
-        public Task<MatchmakingPool[]> GetMatchmakingPoolsOfType(MatchmakingPoolType type) => Task.FromResult(Array.Empty<MatchmakingPool>());
-        public Task MatchmakingJoinQueue(int poolId) => throw new HubException("Quick play isn't available on xc-osu! yet.");
-        public Task MatchmakingLeaveQueue() => Task.CompletedTask;
-        public Task MatchmakingLeaveLobby() => Task.CompletedTask;
-        public Task MatchmakingAcceptInvitation() => Task.CompletedTask;
-        public Task MatchmakingDeclineInvitation() => Task.CompletedTask;
-        public Task MatchmakingToggleSelection(long playlistItemId) => Task.CompletedTask;
-        public Task MatchmakingSkipToNextStage() => Task.CompletedTask;
-        public Task DiscardCards(RankedPlayCardItem[] cards) => Task.CompletedTask;
-        public Task PlayCard(RankedPlayCardItem card) => Task.CompletedTask;
+        public Task<MatchmakingPool[]> GetMatchmakingPoolsOfType(MatchmakingPoolType type) => Task.FromResult(Matchmaking.POOLS.Where(p => p.Type == type).ToArray());
+
+        public async Task<MatchmakingJoinLobbyResponse> MatchmakingJoinLobbyWithParams(MatchmakingJoinLobbyRequest request)
+        {
+            await Groups.AddToGroupAsync(Context.ConnectionId, Matchmaking.LobbyGroup(request.PoolId));
+            await matchmaking.JoinLobby(me, request.PoolId);
+            return new MatchmakingJoinLobbyResponse();
+        }
+
+        public async Task MatchmakingJoinLobby()
+        {
+            foreach (var pool in Matchmaking.POOLS)
+                await Groups.AddToGroupAsync(Context.ConnectionId, Matchmaking.LobbyGroup(pool.Id));
+            await matchmaking.JoinLobby(me, Matchmaking.POOLS[0].Id);
+        }
+
+        public async Task MatchmakingLeaveLobby()
+        {
+            foreach (var pool in Matchmaking.POOLS)
+                await Groups.RemoveFromGroupAsync(Context.ConnectionId, Matchmaking.LobbyGroup(pool.Id));
+        }
+
+        public async Task MatchmakingJoinQueue(int poolId)
+        {
+            int u = me;
+            if (user_rooms.ContainsKey(u)) await leave(u, false);
+            await matchmaking.JoinQueue(u, poolId);
+        }
+
+        public Task MatchmakingLeaveQueue() => matchmaking.LeaveQueue(me);
+        public Task MatchmakingAcceptInvitation() => matchmaking.RespondToInvitation(me, true);
+        public Task MatchmakingDeclineInvitation() => matchmaking.RespondToInvitation(me, false);
+
+        public async Task<MatchmakingIssueDuelResponse> MatchmakingIssueDuel(MatchmakingIssueDuelRequest request)
+        {
+            await matchmaking.IssueDuel(me, request.UserId, request.PoolId);
+            return new MatchmakingIssueDuelResponse();
+        }
+
+        public async Task<MatchmakingAcceptDuelResponse> MatchmakingAcceptDuel(MatchmakingAcceptDuelRequest request)
+        {
+            await matchmaking.AcceptDuel(me, request.Id);
+            return new MatchmakingAcceptDuelResponse();
+        }
+
+        public Task MatchmakingToggleSelection(long playlistItemId)
+        {
+            var (room, _, user) = current();
+            return matchmaking.ToggleSelection(room, user.UserID, playlistItemId);
+        }
+
+        public Task MatchmakingSkipToNextStage()
+        {
+            var (room, _, user) = current();
+            return accounts.Get(user.UserID)?.IsAdmin == true ? matchmaking.SkipStage(room) : Task.CompletedTask;
+        }
+
+        public Task DiscardCards(RankedPlayCardItem[] cards)
+        {
+            var (room, _, user) = current();
+            return matchmaking.DiscardCards(room, user.UserID, cards);
+        }
+
+        public Task PlayCard(RankedPlayCardItem card)
+        {
+            var (room, _, user) = current();
+            return matchmaking.PlayCard(room, user.UserID, card);
+        }
 
         private static MatchRoomState createMatchState(MatchType type, byte? maxParticipants) => type == MatchType.TeamVersus
             ? TeamVersusRoomState.CreateDefault(maxParticipants)

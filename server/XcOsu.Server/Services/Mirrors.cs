@@ -51,7 +51,19 @@ namespace XcOsu.Server.Services
             foreach (var (k, v) in query)
             {
                 if (k is "cursor_string" or "access_token" || k.StartsWith("cursor")) continue;
-                qs.Add($"{Uri.EscapeDataString(k)}={Uri.EscapeDataString(v.ToString())}");
+                string key = k, value = v.ToString();
+
+                // the mirrors take "mode" / numeric "status" where osu-web takes "m" / "s".
+                if (k == "m") key = "mode";
+                else if (k == "s")
+                {
+                    int? status = value switch { "ranked" => 1, "qualified" => 3, "loved" => 4, "pending" => 0, "wip" => -1, "graveyard" => -2, _ => null };
+                    if (status == null) continue; // "any", "leaderboard", "mine", "favourites": no mirror equivalent
+                    key = "status";
+                    value = status.Value.ToString();
+                }
+
+                qs.Add($"{Uri.EscapeDataString(key)}={Uri.EscapeDataString(value)}");
             }
 
             qs.Add("amount=50");
@@ -68,6 +80,11 @@ namespace XcOsu.Server.Services
 
             foreach (var s in sets.OfType<JObject>())
                 cacheSet(s);
+
+            // osu-web's default ("leaderboard") only lists maps that have a leaderboard.
+            string sFilter = query["s"].ToString();
+            if (sFilter is "" or "leaderboard")
+                sets = new JArray(sets.OfType<JObject>().Where(set => Scores.BeatmapStatus(set) > 0));
             return sets;
         }
 

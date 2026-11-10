@@ -5,6 +5,7 @@ export DOTNET_ROOT=${DOTNET_ROOT:-$HOME/.dotnet} PATH=$HOME/.dotnet:$PATH DOTNET
 cd "$ROOT/osu/osu.Web"
 start=$(date +%s)
 log=$(mktemp)
+python3 "$ROOT/tools/portstats.py" "$ROOT/osu/osu.Web/wwwroot/launcher/build.json" || true
 dotnet publish -c Release -o "$ROOT/out/dev" -p:PublishTrimmed=false -p:CompressionEnabled=false -p:WasmEmitSymbolMap=true > "$log" 2>&1
 rc=$?
 grep -E " error |error :|Build succeeded|failed" "$log" | sed 's/\[\/.*//' | sort -u | head -40

@@ -64,6 +64,11 @@ namespace osu.Game.Screens
 
         protected virtual ShaderPrecompiler CreateShaderPrecompiler() => new ShaderPrecompiler();
 
+        /// <summary>
+        /// Lets a platform hold the intro once everything is loaded (xc-osu! web port: "click anywhere to start").
+        /// </summary>
+        protected virtual bool CanShowLoadedScreen => true;
+
         public override void OnEntering(ScreenTransitionEvent e)
         {
             base.OnEntering(e);
@@ -88,7 +93,7 @@ namespace osu.Game.Screens
 
         private void checkIfLoaded()
         {
-            if (loadableScreen?.LoadState != LoadState.Ready || !precompiler.FinishedCompiling)
+            if (loadableScreen?.LoadState != LoadState.Ready || !precompiler.FinishedCompiling || !CanShowLoadedScreen)
             {
                 Schedule(checkIfLoaded);
                 return;

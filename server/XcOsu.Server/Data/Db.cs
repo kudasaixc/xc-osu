@@ -157,6 +157,174 @@ namespace XcOsu.Server.Data
                 INSERT INTO chat_channels (id, name, description, type)
                     SELECT 2, '#announce', 'xc softworks announcements', 'PUBLIC' WHERE NOT EXISTS (SELECT 1 FROM chat_channels WHERE id = 2);
                 """);
+
+            // ---- v2: full online feature set
+            exec(c, """
+                CREATE TABLE IF NOT EXISTS rank_history (
+                    user_id INTEGER NOT NULL,
+                    ruleset_id INTEGER NOT NULL,
+                    day TEXT NOT NULL,
+                    rank INTEGER NOT NULL,
+                    pp REAL NOT NULL DEFAULT 0,
+                    PRIMARY KEY (user_id, ruleset_id, day)
+                );
+                CREATE TABLE IF NOT EXISTS beatmap_playcounts (
+                    user_id INTEGER NOT NULL,
+                    beatmap_id INTEGER NOT NULL,
+                    count INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (user_id, beatmap_id)
+                );
+                CREATE TABLE IF NOT EXISTS replay_watches (
+                    user_id INTEGER NOT NULL,
+                    month TEXT NOT NULL,
+                    count INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (user_id, month)
+                );
+                CREATE TABLE IF NOT EXISTS user_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    type TEXT NOT NULL,
+                    json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS ix_user_events ON user_events(user_id, id DESC);
+                CREATE TABLE IF NOT EXISTS pinned_scores (
+                    user_id INTEGER NOT NULL,
+                    score_id INTEGER NOT NULL,
+                    sort INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (user_id, score_id)
+                );
+                CREATE TABLE IF NOT EXISTS comments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    commentable_type TEXT NOT NULL,
+                    commentable_id INTEGER NOT NULL,
+                    parent_id INTEGER,
+                    user_id INTEGER NOT NULL,
+                    message TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    edited_at TEXT,
+                    edited_by_id INTEGER,
+                    deleted_at TEXT,
+                    pinned INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS ix_comments ON comments(commentable_type, commentable_id, parent_id);
+                CREATE TABLE IF NOT EXISTS comment_votes (
+                    comment_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    PRIMARY KEY (comment_id, user_id)
+                );
+                CREATE TABLE IF NOT EXISTS beatmap_tags (
+                    beatmap_id INTEGER NOT NULL,
+                    tag_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    PRIMARY KEY (beatmap_id, tag_id, user_id)
+                );
+                CREATE TABLE IF NOT EXISTS user_achievements (
+                    user_id INTEGER NOT NULL,
+                    achievement_id INTEGER NOT NULL,
+                    achieved_at TEXT NOT NULL,
+                    PRIMARY KEY (user_id, achievement_id)
+                );
+                CREATE TABLE IF NOT EXISTS notifications (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    object_type TEXT NOT NULL,
+                    object_id INTEGER NOT NULL,
+                    category TEXT NOT NULL,
+                    source_user_id INTEGER,
+                    details TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    is_read INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS ix_notifications ON notifications(user_id, id DESC);
+                CREATE TABLE IF NOT EXISTS daily_challenges (
+                    day TEXT PRIMARY KEY,
+                    room_id INTEGER NOT NULL,
+                    beatmap_id INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS daily_challenge_stats (
+                    user_id INTEGER PRIMARY KEY,
+                    playcount INTEGER NOT NULL DEFAULT 0,
+                    daily_streak_current INTEGER NOT NULL DEFAULT 0,
+                    daily_streak_best INTEGER NOT NULL DEFAULT 0,
+                    weekly_streak_current INTEGER NOT NULL DEFAULT 0,
+                    weekly_streak_best INTEGER NOT NULL DEFAULT 0,
+                    top_10p INTEGER NOT NULL DEFAULT 0,
+                    top_50p INTEGER NOT NULL DEFAULT 0,
+                    last_day TEXT,
+                    last_week TEXT
+                );
+                CREATE TABLE IF NOT EXISTS matchmaking_ratings (
+                    user_id INTEGER NOT NULL,
+                    pool_id INTEGER NOT NULL,
+                    rating REAL NOT NULL DEFAULT 1500,
+                    sigma REAL NOT NULL DEFAULT 350,
+                    plays INTEGER NOT NULL DEFAULT 0,
+                    first_placements INTEGER NOT NULL DEFAULT 0,
+                    total_points INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (user_id, pool_id)
+                );
+                CREATE TABLE IF NOT EXISTS teams (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                    short_name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                    flag_url TEXT,
+                    leader_id INTEGER NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS team_members (
+                    team_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL PRIMARY KEY
+                );
+                CREATE TABLE IF NOT EXISTS reports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    reporter_id INTEGER NOT NULL,
+                    reportable_type TEXT NOT NULL,
+                    reportable_id INTEGER NOT NULL,
+                    reason TEXT,
+                    comments TEXT,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS screenshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    hash TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS ix_scores_playlist ON scores(playlist_item_id, user_id);
+                """);
+
+            addColumn(c, "users", "avatar_version INTEGER NOT NULL DEFAULT 0");
+            addColumn(c, "users", "cover_version INTEGER NOT NULL DEFAULT 0");
+            addColumn(c, "users", "silenced_until TEXT");
+            addColumn(c, "users", "restricted INTEGER NOT NULL DEFAULT 0");
+            addColumn(c, "users", "previous_usernames TEXT NOT NULL DEFAULT '[]'");
+            addColumn(c, "users", "profile_json TEXT NOT NULL DEFAULT '{}'");
+            addColumn(c, "users", "rank_highest INTEGER");
+            addColumn(c, "users", "rank_highest_at TEXT");
+            addColumn(c, "scores", "started_at TEXT");
+            addColumn(c, "scores", "total_hits INTEGER NOT NULL DEFAULT 0");
+            addColumn(c, "scores", "play_seconds INTEGER NOT NULL DEFAULT 0");
+            addColumn(c, "scores", "legacy_total_score INTEGER NOT NULL DEFAULT 0");
+            addColumn(c, "score_tokens", "beatmap_hash TEXT");
+            addColumn(c, "score_tokens", "room_id INTEGER");
+            addColumn(c, "chat_channels", "room_id INTEGER");
+            addColumn(c, "chat_channels", "moderated INTEGER NOT NULL DEFAULT 0");
+            addColumn(c, "chat_messages", "uuid TEXT");
+        }
+
+        private static void addColumn(SqliteConnection c, string table, string definition)
+        {
+            string name = definition.Split(' ')[0];
+            using (var check = c.CreateCommand())
+            {
+                check.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = '{name}'";
+                if ((long)check.ExecuteScalar()! > 0) return;
+            }
+
+            exec(c, $"ALTER TABLE {table} ADD COLUMN {definition}");
         }
 
         private static void exec(SqliteConnection c, string sql)

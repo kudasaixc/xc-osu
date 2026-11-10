@@ -10,7 +10,9 @@ using XcOsu.Server.Data;
 
 namespace XcOsu.Server.Services
 {
-    public sealed record AccountRow(int Id, string Username, string Email, string PasswordHash, string Country, DateTimeOffset JoinDate, bool IsAdmin, string? Title, string Playmode);
+    public sealed record AccountRow(int Id, string Username, string Email, string PasswordHash, string Country, DateTimeOffset JoinDate, bool IsAdmin, string? Title, string Playmode,
+                                    int AvatarVersion, int CoverVersion, DateTimeOffset? SilencedUntil, bool Restricted, string PreviousUsernames, string ProfileJson,
+                                    int? RankHighest, DateTimeOffset? RankHighestAt, DateTimeOffset? LastVisit);
 
     public sealed partial class Accounts
     {
@@ -22,9 +24,12 @@ namespace XcOsu.Server.Services
 
         public static AccountRow Map(Microsoft.Data.Sqlite.SqliteDataReader r) => new AccountRow(
             r.GetInt32(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4),
-            DateTimeOffset.Parse(r.GetString(5)), r.GetInt32(6) != 0, r.IsDBNull(7) ? null : r.GetString(7), r.GetString(8));
+            DateTimeOffset.Parse(r.GetString(5)), r.GetInt32(6) != 0, r.IsDBNull(7) ? null : r.GetString(7), r.GetString(8),
+            r.GetInt32(9), r.GetInt32(10), r.IsDBNull(11) ? null : DateTimeOffset.Parse(r.GetString(11)), r.GetInt32(12) != 0, r.GetString(13), r.GetString(14),
+            r.IsDBNull(15) ? null : r.GetInt32(15), r.IsDBNull(16) ? null : DateTimeOffset.Parse(r.GetString(16)), r.IsDBNull(17) ? null : DateTimeOffset.Parse(r.GetString(17)));
 
-        public const string COLUMNS = "id, username, email, password_hash, country, join_date, is_admin, title, playmode";
+        public const string COLUMNS = "id, username, email, password_hash, country, join_date, is_admin, title, playmode, avatar_version, cover_version, silenced_until, restricted, "
+                                      + "previous_usernames, profile_json, rank_highest, rank_highest_at, last_visit";
 
         public AccountRow? Get(int id)
         {
@@ -84,7 +89,7 @@ namespace XcOsu.Server.Services
         {
             using var c = db.Open();
             var user = c.Query($"SELECT {COLUMNS} FROM users WHERE username = $n OR email = $n", Map, ("$n", username.Trim())).FirstOrDefault();
-            return user != null && VerifyPassword(password, user.PasswordHash) ? user : null;
+            return user != null && !user.Restricted && VerifyPassword(password, user.PasswordHash) ? user : null;
         }
 
         public (string access, string refresh) IssueToken(int userId)
