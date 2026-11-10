@@ -43,3 +43,6 @@ Only replace placeholders with an existing snapshot path. These backups are on t
 - [ ] Inspect digests and snapshot path.
 - [ ] Validate boot, gameplay, latency and telemetry manually in a browser.
 - [ ] Push reviewed sources to GitHub and record any known failures.
+
+## Read-only operator overview
+Run `/var/www/osu/tools/ops-status.sh` for disk, running build fingerprint, backup metadata, performance-history freshness, and canonical source state. It makes no network calls or changes.
