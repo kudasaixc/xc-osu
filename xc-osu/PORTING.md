@@ -188,3 +188,35 @@ All in `wwwroot/js/xc-ui.js` and `Platform/Web/WebWindow.cs`.
   -> `CycleMode`). Firefox / Safari have no Keyboard Lock: Escape still leaves fullscreen there.
 - **Wheel.** Notches are detected with `wheelDeltaY % 120` (the pixel delta is 100 only at 100 % scaling), everything
   else is a precise (touchpad) scroll; Firefox line deltas are 3 lines per notch.
+
+### Audio latency: direct worklet voices and the latency probe (2026-11-10)
+
+Measured on Chrome / Windows (RTX 3060 Ti PC, 48 kHz, `?audiolat`): a sample used to be heard 85-112 ms after the key
+press (up to ~165 ms after a few underruns), of which only ~50 ms is the browser's own output. Now ~63 ms.
+
+| stage | before | now |
+|---|---|---|
+| press -> play request (input thread, update frame, audio thread) | 6-7 ms | 6-7 ms |
+| request -> first mixed block | 14-26 ms | 3-10 ms |
+| mixer ring | 10-16 ms, up to 85 ms after underruns | 0 (bypassed) |
+| browser buffer + device (`baseLatency` + `outputLatency`) | 10 + 40 ms | 10 + 40 ms |
+
+- **Direct voices** (`native/xcbass/xcbass.c` "direct voices", `js/xc-audio-worklet.js`): a one-shot sample channel with
+  no effect anywhere up to the device is described in a 32-slot shared table (PCM address, length, pitch step, gains)
+  and the AudioWorklet mixes its PCM straight into the block it renders, with linear interpolation. The channel still
+  runs through the mixer for bookkeeping (position, end sync, levels) but its ring output is discarded. Looping
+  samples, channels behind an effect and paused mixers keep the ring path. Volume / pan / frequency changes update the
+  slot; seeking, pausing, removing or freeing the channel stops the voice; `BASS_SampleFree` waits until no voice
+  reads the PCM. The page re-sends the wasm memory to the worklet when it grows (a sample beyond what the worklet sees
+  falls back to the ring).
+- **Ring depth** no longer grows forever: +256 frames per underrun (max 2048), -128 every 3 clean seconds down to the
+  base (1024 frames = 21 ms; raised when a device underruns right after a reduction). It only affects dropouts, the
+  music position is reported as heard.
+- **Resampler read-ahead**: `kid_render` pulled up to 1024 source frames at once, so the 44.1 kHz osu! mixers were
+  rendered ~21 ms ahead of the 48 kHz device. It now reads what the block consumes.
+- **Probe**: the page stamps every key / button press (`xcAudioMarkInput`), xcbass timestamps each sample start and
+  the worklet (or the mixer thread) the block that first contains it. `?audiolat` (or the perf overlay) prints one
+  line per path every 5 s; `xcAudioDebug().lat` holds the last figures and telemetry windows carry them (`js.audio`).
+  `output` is what the browser reports; a page cannot lower it (every `latencyHint` and sample rate gives 10 + 40 ms
+  on that PC). True speaker latency needs a loopback measurement.
+- `native/xcbass/build.sh` now works from any directory (it resolved its paths from `$0` after a `cd`).

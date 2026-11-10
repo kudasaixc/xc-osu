@@ -195,6 +195,7 @@ export function installUi(rt, canvas, hooks) {
 
   canvas.addEventListener('pointerdown', (e) => {
     e.preventDefault();
+    globalThis.xcAudioMarkInput?.(e.timeStamp);
     onGesture();
     syncModifiers(e);
     if (e.pointerType === 'pen') { try { canvas.setPointerCapture(e.pointerId); } catch { } penSample(e, directPen ? PEN.Direct : 0); return; }
@@ -297,6 +298,7 @@ export function installUi(rt, canvas, hooks) {
     slot(S.CAPS_LOCK, e.getModifierState && e.getModifierState('CapsLock') ? 1 : 0);
     const k = keyIndex.get(e.code);
     syncModifiers(e);
+    if (!e.repeat) globalThis.xcAudioMarkInput?.(e.timeStamp);
     if (k !== undefined) { downKeys.add(k); push(6, k); }
     // let the hidden textarea receive printable keys/IME when text input is active; block everything else
     const printable = e.key.length === 1 && !e.ctrlKey && !e.metaKey;

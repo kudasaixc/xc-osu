@@ -188,6 +188,8 @@ typedef struct Chan {
 
   // device playback (non-decode channels)
   int playing; // 0 stop, 1 play, 2 pause
+  double reqMs; // latency probe: when this sample channel was asked to play (0 = already measured)
+  int voice; int32_t voiceGen; // direct worklet voice playing this channel (slot + 1, 0 = none) and its generation
   int64_t devEndG;
 
   Fx* fx;
@@ -261,7 +263,36 @@ static volatile int g_threadRun;
 static pthread_t g_thread;
 static uint32_t g_lastRead; static int64_t g_consumed;
 static int g_target = 1024;
+static int g_base = 1024;       // steady-state ring depth (frames); raised when a device proves it needs more
 static int g_lastUnderruns;
+static int g_cleanFrames;       // frames mixed since the last underrun / adaptation step
+static int g_sinceDecay = 1 << 30; // frames mixed since g_target was last lowered
+static int g_baseClean;         // frames mixed since g_base was last questioned
+
+// Absolute time shared by every thread (performance.now() alone has a per-worker origin).
+EM_JS(double, xc_abs_now, (), { return performance.timeOrigin + performance.now(); });
+
+// ---- latency probe. g_ctrl[8..15], read by the page (xcAudioDebug):
+// [8] time of the last key / button press (written by the page, microseconds modulo 1e9)  [9] 1 = that press is unmatched
+// [10] sample starts measured  [11] sum press -> play request (us)  [12] presses matched
+// [13] sum play request -> first mixed block (us)  [14] sum ring depth in front of that block (frames)  [15] ring target
+static void probe_request(struct Chan* k);
+static void probe_mixed(struct Chan* k);
+
+// ---- direct voices. The ring above is fine for music (its position is reported as heard, so the delay is compensated)
+// but a hit sound cannot be scheduled: everything between "play" and the speakers is heard as lag. One-shot samples
+// therefore skip the mixer thread and the ring entirely: the channel is described in a small shared table and the
+// AudioWorklet mixes the sample's PCM straight into the block it is rendering (js/xc-audio-worklet.js).
+// Table (int32 / float32 words, shared with the worklet):
+//   header [0] wasm pages visible to the worklet (written by it)  [1] voices started  [2] sum request -> first block (us)
+//   voice i at 8 + i * 8: [0] state (0 free, 1 playing, 2 stop requested, 3 being written)  [1] generation
+//                         [2] PCM address (stereo float32)  [3] frames  [4] source frames per output frame (float)
+//                         [5] left gain (float)  [6] right gain (float)  [7] request time (us modulo 1e9)
+#define NVOICE 32
+static int32_t* g_voices;
+static void voice_start(struct Chan* k);
+static void voice_stop(struct Chan* k);
+static void voice_update(struct Chan* k);
 
 static int64_t heard_g(void) {
   if (!g_ctrl) return g_mixG;
@@ -594,7 +625,7 @@ static int chan_seek(Chan* c, int64_t frame) {
   pthread_mutex_lock(&c->m);
   switch (c->type) {
     case T_DECODER: r = dec_seek(c, frame); break;
-    case T_SAMPCHAN: c->pos = frame < 0 ? 0 : frame; if (c->sample && c->pos > c->sample->frames) c->pos = c->sample->frames; c->ended = 0; break;
+    case T_SAMPCHAN: voice_stop(c); c->pos = frame < 0 ? 0 : frame; if (c->sample && c->pos > c->sample->frames) c->pos = c->sample->frames; c->ended = 0; break;
     case T_TEMPO:
       if (c->st) xs_reset(c->st);
       c->stActive = 0; c->inAcc = 0;
@@ -725,7 +756,13 @@ static int kid_render(Chan* m, Chan* k, float* out, int frames) {
       memmove(k->rb, k->rb + keep * 2, sizeof(float) * rem * 2);
       k->rbLen = rem; k->rpos -= keep; ip -= keep;
       if (!k->rbEof) {
+        // Read only what the rest of this block consumes. This used to pull up to 1024 source frames at once: a nested
+        // mixer running at another rate than the device (osu! mixes at 44.1 kHz, the browser plays 48 kHz) was rendered
+        // ~21 ms ahead, so every sample started inside it waited for the next chunk and then sat in this buffer.
         int want = MAX_KIDS_TMP - k->rbLen; if (want > 1024) want = 1024;
+        int need = (int)((frames - i) * ratio) + 4 - (k->rbLen - ip);
+        if (need < 4) need = 4;
+        if (want > need) want = need;
         int got = chan_read(k, k->rb + k->rbLen * 2, want);
         k->rbLen += got;
         if (got < want) {
@@ -765,6 +802,112 @@ static void apply_volpan(Chan* k, float* buf, int frames) {
   k->lastVolL = tl; k->lastVolR = tr;
 }
 
+static void probe_request(Chan* k) {
+  if (k->type != T_SAMPCHAN) return;
+  double req = xc_abs_now();
+  k->reqMs = req;
+  // the first sample asked for after a key / button press is taken as the answer to that press
+  if (g_ctrl && __atomic_exchange_n(&g_ctrl[9], 0, __ATOMIC_ACQ_REL) == 1) {
+    double in = fmod(req, 1e6) * 1000 - (double)__atomic_load_n(&g_ctrl[8], __ATOMIC_RELAXED);
+    if (in < 0) in += 1e9;
+    if (in < 300000) { __atomic_add_fetch(&g_ctrl[11], (int32_t)in, __ATOMIC_RELAXED); __atomic_add_fetch(&g_ctrl[12], 1, __ATOMIC_RELAXED); }
+  }
+  voice_start(k);
+}
+static void probe_mixed(Chan* k) {
+  double req = k->reqMs, now = xc_abs_now();
+  k->reqMs = 0;
+  if (!g_ctrl) return;
+  int64_t depth = g_blockG - g_consumed; if (depth < 0) depth = 0;
+  double wait = (now - req) * 1000; if (wait < 0) wait = 0; if (wait > 1e6) return; // paused for a long time: not a start
+  __atomic_add_fetch(&g_ctrl[10], 1, __ATOMIC_RELAXED);
+  __atomic_add_fetch(&g_ctrl[13], (int32_t)wait, __ATOMIC_RELAXED);
+  __atomic_add_fetch(&g_ctrl[14], (int32_t)depth, __ATOMIC_RELAXED);
+}
+
+static void voice_params(Chan* k, float* l, float* r, float* step) {
+  float vol = k->vol * g_masterVolume;
+  for (Chan* m = k->mixer; m; m = m->mixer) vol *= m->vol;
+  float pan = k->pan < -1 ? -1 : k->pan > 1 ? 1 : k->pan;
+  *l = vol * (pan > 0 ? 1 - pan : 1); *r = vol * (pan < 0 ? 1 + pan : 1);
+  *step = k->freqAttr / (float)g_rate;
+}
+static int32_t* voice_slot(Chan* k) {
+  if (!k->voice || !g_voices) return NULL;
+  int32_t* v = g_voices + 8 + (k->voice - 1) * 8;
+  return __atomic_load_n(&v[1], __ATOMIC_ACQUIRE) == k->voiceGen ? v : NULL; // the slot may have been reused since
+}
+// Only what the worklet reproduces exactly: a one-shot sample, no effect anywhere on its way to the device, every
+// mixer above it playing. Anything else keeps the regular (ring) path.
+static void voice_start(Chan* k) {
+  k->voice = 0;
+  if (!g_voices || !g_ctrl || k->type != T_SAMPCHAN || !k->sample || (k->flags & F_LOOP) || k->fx || !k->mixer) return;
+  if (!__atomic_load_n(&g_ctrl[6], __ATOMIC_RELAXED)) return; // output not running: nothing would consume the voice
+  Chan* m = k->mixer;
+  for (;; m = m->mixer) {
+    if (m->type != T_MIXER || m->fx) return;
+    if (!m->mixer) break;
+    if (m->mflags & MIX_CHAN_PAUSE) return;
+  }
+  if (m->playing != 1 || (m->flags & F_DECODE)) return;
+  Sample* s = k->sample;
+  int64_t pos = k->pos;
+  if (pos < 0 || pos >= s->frames || k->freqAttr <= 0) return;
+  uintptr_t end = (uintptr_t)(s->pcm + s->frames * 2);
+  if ((end >> 16) >= (uintptr_t)__atomic_load_n(&g_voices[0], __ATOMIC_RELAXED)) return; // memory grew past what the worklet sees
+  for (int i = 0; i < NVOICE; i++) {
+    int32_t* v = g_voices + 8 + i * 8;
+    int32_t expected = 0;
+    if (!__atomic_compare_exchange_n(&v[0], &expected, 3, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) continue;
+    float l, r, step; voice_params(k, &l, &r, &step);
+    v[2] = (int32_t)(uintptr_t)(s->pcm + pos * 2); v[3] = (int32_t)(s->frames - pos);
+    memcpy(&v[4], &step, 4); memcpy(&v[5], &l, 4); memcpy(&v[6], &r, 4);
+    v[7] = (int32_t)(fmod(k->reqMs, 1e6) * 1000);
+    k->voiceGen = __atomic_add_fetch(&v[1], 1, __ATOMIC_ACQ_REL);
+    __atomic_store_n(&v[0], 1, __ATOMIC_RELEASE);
+    k->voice = i + 1; k->reqMs = 0;
+    return;
+  }
+}
+static void voice_stop(Chan* k) {
+  int32_t* v = voice_slot(k);
+  k->voice = 0;
+  if (!v) return;
+  int32_t expected = 1;
+  __atomic_compare_exchange_n(&v[0], &expected, 2, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED);
+}
+static void voice_update(Chan* k) {
+  int32_t* v = voice_slot(k);
+  if (!v || __atomic_load_n(&v[0], __ATOMIC_ACQUIRE) != 1) return;
+  float l, r, step; voice_params(k, &l, &r, &step);
+  memcpy(&v[4], &step, 4); memcpy(&v[5], &l, 4); memcpy(&v[6], &r, 4);
+}
+// The worklet reads the PCM without any lock: wait until no voice still points into a block before freeing it.
+static void voice_release_pcm(const float* pcm, int64_t frames) {
+  if (!g_voices || !pcm) return;
+  uintptr_t a = (uintptr_t)pcm, b = (uintptr_t)(pcm + frames * 2);
+  for (int tries = 0; tries < 60; tries++) {
+    int busy = 0;
+    for (int i = 0; i < NVOICE; i++) {
+      int32_t* v = g_voices + 8 + i * 8;
+      int32_t st = __atomic_load_n(&v[0], __ATOMIC_ACQUIRE);
+      uintptr_t p = (uintptr_t)(uint32_t)v[2];
+      if (st == 0 || p < a || p >= b) continue;
+      if (st == 1) { int32_t expected = 1; __atomic_compare_exchange_n(&v[0], &expected, 2, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED); }
+      busy = 1;
+    }
+    if (!busy) return;
+    // no worklet running (context suspended): nobody reads, nobody will acknowledge
+    if (!__atomic_load_n(&g_ctrl[6], __ATOMIC_RELAXED) && tries >= 3) break;
+    emscripten_thread_sleep(1);
+  }
+  for (int i = 0; i < NVOICE; i++) {
+    int32_t* v = g_voices + 8 + i * 8;
+    uintptr_t p = (uintptr_t)(uint32_t)v[2];
+    if (p >= a && p < b) __atomic_store_n(&v[0], 0, __ATOMIC_RELEASE);
+  }
+}
+
 static _Thread_local float* t_kidbuf;
 static void mixer_mix(Chan* m, float* out, int frames) {
   memset(out, 0, sizeof(float) * frames * 2);
@@ -775,11 +918,12 @@ static void mixer_mix(Chan* m, float* out, int frames) {
     Chan* k = m->kids[i];
     if (k->mflags & MIX_CHAN_PAUSE) continue;
     if (k->ended && k->type != T_MIXER) continue;
+    if (k->reqMs != 0) probe_mixed(k);
     int got = kid_render(m, k, kb, frames);
     fx_apply(k, kb, frames, m->freq);
     apply_volpan(k, kb, frames);
     lvl_store(k, kb, frames, g_blockG);
-    for (int s = 0; s < frames * 2; s++) out[s] += kb[s];
+    if (!k->voice) for (int s = 0; s < frames * 2; s++) out[s] += kb[s];
     if (got < frames && k->type != T_MIXER) {
       k->ended = 1; k->endG = g_blockG + got;
       queue_syncs(k, SYNC_END, 0, k->endG);
@@ -838,10 +982,24 @@ static void* mix_thread(void* arg) {
     uint32_t w = (uint32_t)__atomic_load_n(&g_ctrl[1], __ATOMIC_RELAXED);
     int fill = (int)(w - r);
     int under = __atomic_load_n(&g_ctrl[5], __ATOMIC_RELAXED);
-    if (under != g_lastUnderruns) { // adapt buffering after underruns
+    // Ring depth = latency of everything on this path that cannot be scheduled ahead (looping samples, sounds behind an
+    // effect; one-shot samples bypass the ring, see "direct voices"). It used to grow by 256 frames on every underrun,
+    // up to 85 ms, and never came back: a few stalls while loading left the whole session late.
+    // Now: an underrun adds headroom, clean playback gives it back, and a device that underruns again right after a
+    // reduction has its steady-state depth (g_base) raised instead of being probed forever. The floor is a comfortable
+    // 21 ms: music is reported as heard whatever the depth, so a deeper ring only buys fewer dropouts.
+    if (under != g_lastUnderruns) {
       g_lastUnderruns = under;
-      if (g_target < 4096) g_target += 256;
+      if (g_sinceDecay < 10 * g_rate && g_base < 2048) { g_base = g_target + 128 > 2048 ? 2048 : g_target + 128; g_baseClean = 0; }
+      if (g_target < 2048) g_target += 256;
+      if (g_target < g_base) g_target = g_base;
+      g_cleanFrames = 0; g_sinceDecay = 1 << 30;
+    } else if (g_cleanFrames >= 3 * g_rate) {
+      g_cleanFrames = 0;
+      if (g_target > g_base) { g_target -= 128; if (g_target < g_base) g_target = g_base; g_sinceDecay = 0; }
+      else if (g_baseClean >= 300 * g_rate && g_base > 1024) { g_baseClean = 0; g_base -= 64; g_target = g_base; g_sinceDecay = 0; }
     }
+    __atomic_store_n(&g_ctrl[15], g_target, __ATOMIC_RELAXED);
     if (fill <= g_target - BLOCK) {
       g_blockG = g_mixG;
       device_block(block, BLOCK);
@@ -851,6 +1009,7 @@ static void* mix_thread(void* arg) {
       }
       __atomic_store_n(&g_ctrl[1], (int32_t)(w + BLOCK), __ATOMIC_RELEASE);
       g_mixG += BLOCK;
+      g_cleanFrames += BLOCK; if (g_sinceDecay < (1 << 30)) g_sinceDecay += BLOCK; if (g_baseClean < (1 << 30)) g_baseClean += BLOCK;
       unlock();
       continue;
     }
@@ -865,9 +1024,12 @@ static void start_output(void) {
   g_ring = (float*)calloc(RING_FRAMES * 2, sizeof(float));
   g_ctrl = (int32_t*)calloc(16, sizeof(int32_t));
   g_ctrl[2] = RING_FRAMES;
+  g_voices = (int32_t*)calloc(8 + NVOICE * 8, sizeof(int32_t));
+  g_ctrl[7] = (int32_t)(uintptr_t)g_voices;
   int ms = (int)g_config[0x1B];
-  g_target = ms > 0 ? ms * g_rate / 1000 + BLOCK : 1024;
-  if (g_target < 512) g_target = 512;
+  g_base = ms > 0 ? ms * g_rate / 1000 + BLOCK : 1024;
+  if (g_base < 1024) g_base = 1024; // a 10 ms device callback pulls four to five 128-frame quanta at once
+  g_target = g_base + 256;        // headroom while the game loads; given back after a few clean seconds
   emscripten_sync_run_in_main_runtime_thread(EM_FUNC_SIG_V, js_init_main);
   g_threadRun = 1;
   pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setstacksize(&a, 1 << 20);
@@ -882,6 +1044,7 @@ static void detach_from_mixer(Chan* k) {
   for (int i = 0; i < m->nkids; i++) if (m->kids[i] == k) { memmove(m->kids + i, m->kids + i + 1, sizeof(Chan*) * (m->nkids - i - 1)); m->nkids--; break; }
   pthread_mutex_unlock(&m->m);
   k->mixer = NULL; k->mflags = 0;
+  voice_stop(k);
   kid_reset(k);
 }
 
@@ -918,7 +1081,7 @@ EXPORT int BASS_ErrorGetCode(void) { return t_err; }
 EXPORT BOOL BASS_SetConfig(DWORD option, DWORD value) {
   lock();
   if (option < 0x80) g_config[option] = value;
-  if (option == 0x1B && value > 0 && g_ring) { g_target = (int)value * g_rate / 1000 + BLOCK; if (g_target < 512) g_target = 512; }
+  if (option == 0x1B && value > 0 && g_ring) { int b = (int)value * g_rate / 1000 + BLOCK; if (b < 1024) b = 1024; if (b > g_base) { g_base = b; if (g_target < b) g_target = b; } }
   unlock(); ok(); return TRUE;
 }
 EXPORT DWORD BASS_GetConfig(DWORD option) { ok(); return option < 0x80 ? g_config[option] : 0; }
@@ -1127,7 +1290,7 @@ EXPORT BOOL BASS_SampleFree(DWORD h) {
   if (!s || t != T_SAMPLE) { unlock(); return fail(E_HANDLE); }
   // free channels of this sample
   for (int i = 1; i < MAXH; i++) if (g_slots[i].type == T_SAMPCHAN && ((Chan*)g_slots[i].p)->sample == s) free_chan((Chan*)g_slots[i].p);
-  free_handle(h); free(s->pcm); free(s);
+  free_handle(h); voice_release_pcm(s->pcm, s->frames); free(s->pcm); free(s);
   unlock(); ok(); return TRUE;
 }
 
@@ -1202,6 +1365,7 @@ EXPORT BOOL BASS_ChannelSetAttribute(DWORD h, DWORD attrib, float value) {
     case A_REVERSE_DIR: if (c->type == T_REVERSE) c->dir = value < 0 ? -1 : 1; else r = FALSE; break;
     default: break; // tempo algorithm options, buffer, noramp etc. are accepted and ignored
   }
+  if (c->voice) voice_update(c);
   pthread_mutex_unlock(&c->m);
   unlock();
   if (!r) return fail(E_ILLTYPE);
@@ -1708,6 +1872,7 @@ EXPORT BOOL BASS_Mixer_StreamAddChannelEx(DWORD mixer, DWORD chan, DWORD flags, 
   m->kids[m->nkids++] = k;
   pthread_mutex_unlock(&m->m);
   k->mixer = m; k->mflags = flags; k->volInit = 0;
+  if (!(flags & MIX_CHAN_PAUSE)) probe_request(k);
   kid_reset(k);
   if (!k->lvl) { k->lvl = (float*)calloc(LVL_FRAMES * 2, sizeof(float)); k->lvlEnd = g_mixG; }
   unlock(); ok(); return TRUE;
@@ -1739,7 +1904,8 @@ EXPORT DWORD BASS_Mixer_ChannelFlags(DWORD h, DWORD flags, DWORD mask) {
   // regular channel flags (loop etc.) can also be changed via this function
   DWORD chanMask = mask & (F_LOOP);
   if (chanMask) { k->flags = (k->flags & ~chanMask) | (flags & chanMask); Chan* r = root_of(k); if (r != k) r->flags = (r->flags & ~F_LOOP) | (flags & F_LOOP); }
-  (void)before;
+  if ((before & MIX_CHAN_PAUSE) && !(k->mflags & MIX_CHAN_PAUSE)) probe_request(k);
+  else if (!(before & MIX_CHAN_PAUSE) && (k->mflags & MIX_CHAN_PAUSE)) voice_stop(k);
   DWORD f = k->mflags | (k->flags & F_LOOP);
   unlock(); ok(); return f;
 }

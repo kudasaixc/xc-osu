@@ -211,8 +211,16 @@ globalThis.xcAudioInit = async (memory, ring, ctrl, cap, rate) => {
   await audioCtx.audioWorklet.addModule(new URL('./js/xc-audio-worklet.js', import.meta.url));
   const node = new AudioWorkletNode(audioCtx, 'xc-output', {
     numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2],
-    processorOptions: { buffer, ring, ctrl, cap },
+    processorOptions: { buffer, ring, ctrl, cap, voices: ctrlView[7] >>> 0 },
   });
+  // direct voices read sample PCM anywhere in the wasm memory: when it grows, hand the larger view to the worklet
+  const currentBuffer = () => (memory ? memory.buffer : (rt.Module.wasmMemory?.buffer ?? rt.Module.HEAPU8.buffer));
+  let sentLength = buffer.byteLength;
+  setInterval(() => {
+    const b = currentBuffer();
+    if (b.byteLength > sentLength) { sentLength = b.byteLength; node.port.postMessage({ buffer: b }); }
+  }, 250);
+  const voicesView = ctrlView[7] ? new Int32Array(buffer, ctrlView[7] >>> 0, 8) : null;
   // ?mute: silent output for test runs (the audio clock keeps running)
   if (query.has('mute')) { const silent = audioCtx.createGain(); silent.gain.value = 0; node.connect(silent).connect(audioCtx.destination); }
   else node.connect(audioCtx.destination);
@@ -224,7 +232,39 @@ globalThis.xcAudioInit = async (memory, ring, ctrl, cap, rate) => {
   };
   updateLatency();
   setInterval(updateLatency, 500);
-  globalThis.xcAudioDebug = () => ({ state: audioCtx.state, rate: audioCtx.sampleRate, read: ctrlView[0], write: ctrlView[1], cap: ctrlView[2], latency: ctrlView[3], running: ctrlView[6], underruns: ctrlView[5] });
+  globalThis.xcAudioDebug = () => ({ state: audioCtx.state, rate: audioCtx.sampleRate, read: ctrlView[0], write: ctrlView[1], cap: ctrlView[2], latency: ctrlView[3], running: ctrlView[6], underruns: ctrlView[5],
+    target: ctrlView[15], lat: latencyReport });
+  // ---- hit sound latency probe (see xcbass.c): the page stamps every key / button press, the mixer measures each
+  // sample start. Reported per stage; "output" is what the browser reports for its own buffer + the device.
+  globalThis.xcAudioMarkInput = (timeStamp) => {
+    Atomics.store(ctrlView, 8, Math.round(((performance.timeOrigin + timeStamp) % 1e6) * 1000));
+    Atomics.store(ctrlView, 9, 1);
+  };
+  let latencyReport = null;
+  const prev = [0, 0, 0, 0, 0, 0, 0];
+  const logLatency = query.has('perf') || query.has('audiolat') || L.perfOverlay;
+  setInterval(() => {
+    const cur = [10, 11, 12, 13, 14].map((i) => Atomics.load(ctrlView, i)).concat(voicesView ? [Atomics.load(voicesView, 1), Atomics.load(voicesView, 2)] : [0, 0]);
+    const d = cur.map((v, i) => (v - prev[i]) | 0);
+    if (d[0] <= 0 && d[5] <= 0) return;
+    cur.forEach((v, i) => { prev[i] = v; });
+    const rate = audioCtx.sampleRate, r1 = (x) => Math.round(x * 10) / 10;
+    // the output figure includes one 128-frame quantum that only applies to the ring
+    const outFrames = Atomics.load(ctrlView, 3), out = outFrames / rate * 1000, outDirect = (outFrames - 128) / rate * 1000;
+    const input = d[2] > 0 ? r1(d[1] / d[2] / 1000) : null;
+    const direct = d[5] > 0 ? { n: d[5], wait: r1(d[6] / d[5] / 1000) } : null;
+    const ringed = d[0] > 0 ? { n: d[0], wait: r1(d[3] / d[0] / 1000), ring: r1(d[4] / d[0] / rate * 1000) } : null;
+    latencyReport = { input, direct, ringed, out: r1(out), outDirect: r1(outDirect),
+      directTotal: direct ? r1((input || 0) + direct.wait + outDirect) : null,
+      ringTotal: ringed ? r1((input || 0) + ringed.wait + ringed.ring + out) : null,
+      base: r1((audioCtx.baseLatency || 0) * 1000), device: r1((audioCtx.outputLatency || 0) * 1000), target: Atomics.load(ctrlView, 15) };
+    if (logLatency) {
+      const press = `press->request ${input == null ? '?' : input} ms (${d[2]} presses)`;
+      const dev = `(browser buffer ${latencyReport.base} + device ${latencyReport.device})`;
+      if (direct) console.log(`[audio] direct voices x${direct.n}: ${press} + request->block ${direct.wait} ms + output ${r1(outDirect)} ms ${dev} = ${latencyReport.directTotal} ms`);
+      if (ringed) console.log(`[audio] ring path x${ringed.n}: ${press} + request->mixed ${ringed.wait} ms + ring ${ringed.ring} ms (target ${latencyReport.target} frames) + output ${r1(out)} ms ${dev} = ${latencyReport.ringTotal} ms`);
+    }
+  }, 5000);
   audioCtx.onstatechange = updateLatency;
   if (audioCtx.state !== 'running') xcAudioResume();
   console.log(`[xc-osu!] audio: ${audioCtx.sampleRate} Hz, latencyHint ${L.audioLatency}, base latency ${(audioCtx.baseLatency * 1000).toFixed(1)} ms, state ${audioCtx.state}`);
