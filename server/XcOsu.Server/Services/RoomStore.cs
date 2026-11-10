@@ -31,6 +31,16 @@ namespace XcOsu.Server.Services
 
         public readonly ConcurrentDictionary<long, ServerRoom> Rooms = new ConcurrentDictionary<long, ServerRoom>();
 
+        /// <summary>Room end time. JObject.Parse turns ISO strings into DateTime tokens (Value&lt;DateTimeOffset?&gt; throws on those), in-memory rooms hold DateTimeOffset.</summary>
+        public static DateTimeOffset? EndsAt(JObject room) => room["ends_at"] switch
+        {
+            null => null,
+            JValue { Value: DateTimeOffset d } => d,
+            JValue { Value: DateTime d } => new DateTimeOffset(d.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(d, DateTimeKind.Utc) : d.ToUniversalTime()),
+            JValue { Value: string s } when DateTimeOffset.TryParse(s, null, System.Globalization.DateTimeStyles.AssumeUniversal, out var d) => d,
+            _ => null,
+        };
+
         public RoomStore(Db db, Mirrors mirrors)
         {
             this.db = db;
@@ -41,7 +51,7 @@ namespace XcOsu.Server.Services
             foreach (var (id, json) in c.Query("SELECT id, json FROM rooms WHERE active = 1", r => (r.GetInt64(0), r.GetString(1))))
             {
                 var jo = JObject.Parse(json);
-                if (jo.Value<DateTimeOffset?>("ends_at") is DateTimeOffset end && end < DateTimeOffset.UtcNow) continue;
+                if (EndsAt(jo) is DateTimeOffset end && end < DateTimeOffset.UtcNow) continue;
                 Rooms[id] = new ServerRoom { Id = id, Json = jo, ChannelId = jo.Value<int?>("channel_id") ?? 0 };
             }
         }

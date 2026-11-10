@@ -191,7 +191,7 @@ export class Launcher {
         <section class="pane" id="pane-options" role="tabpanel" aria-labelledby="tab-options">
           <header class="pane-head row">
             <h1 class="title">${t('nav.options')}</h1>
-            <button type="button" class="btn" id="ln-reset">${t('opt.reset')}</button>
+            <span class="head-actions"><button type="button" class="btn danger" id="ln-wipe" title="${esc(t('wipe.hint'))}">${t('wipe.btn')}</button><button type="button" class="btn" id="ln-reset">${t('opt.reset')}</button></span>
           </header>
           <div class="presets"><span class="muted">${t('presets')}</span><div id="ln-presets" class="chips" role="group"></div></div>
           <div id="ln-opts" class="opt-grid"></div>
@@ -220,9 +220,32 @@ export class Launcher {
     };
     this.root.querySelector('#ln-play').onclick = () => this.launch();
     this.root.querySelector('#ln-reset').onclick = () => { const keep = { lang: this.o.lang }; this.o = { ...defaults(), ...keep }; this.changed(true); };
+    this.root.querySelector('#ln-wipe').onclick = () => this.wipeStorage();
     this.show(this.tab);
     this.startBackground();
     this.loadArt();
+  }
+
+  // Erases the game's persistent storage (the IDBFS mount = IndexedDB, holding realm, beatmaps, skins, settings,
+  // login). Runs before the runtime mounts it, so nothing in this tab holds the database open. Launcher options are kept.
+  async wipeStorage() {
+    const btn = this.root.querySelector('#ln-wipe');
+    if (!confirm(t('wipe.confirm'))) return;
+    btn.disabled = true; btn.textContent = t('wipe.busy');
+    let names = ['/xc'];
+    try { if (indexedDB.databases) names = [...new Set([...names, ...(await indexedDB.databases()).map((d) => d.name).filter(Boolean)])]; } catch { }
+    let blocked = false;
+    await Promise.all(names.map((n) => new Promise((done) => {
+      try {
+        const r = indexedDB.deleteDatabase(n);
+        r.onsuccess = r.onerror = () => done();
+        r.onblocked = () => { blocked = true; done(); };
+      } catch { done(); }
+    })));
+    try { localStorage.removeItem('xc.lastBoot'); } catch { }
+    try { sessionStorage.clear(); } catch { }
+    if (blocked) { alert(t('wipe.blocked')); btn.disabled = false; btn.textContent = t('wipe.btn'); return; }
+    location.reload();
   }
 
   hello() {

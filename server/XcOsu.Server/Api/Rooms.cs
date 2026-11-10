@@ -61,7 +61,7 @@ namespace XcOsu.Server.Api
                     string roomCategory = j.Value<string>("category") ?? "normal";
                     if (category == "daily_challenge" ? roomCategory != "daily_challenge" : roomCategory == "daily_challenge") continue;
                     if (roomCategory == "matchmaking" || j.Value<string>("type") is "matchmaking" or "ranked_play") continue;
-                    if (j.Value<DateTimeOffset?>("ends_at") is DateTimeOffset end && end < DateTimeOffset.UtcNow && !realtime) continue;
+                    if (RoomStore.EndsAt(j) is DateTimeOffset end && end < DateTimeOffset.UtcNow && !realtime) continue;
 
                     j.Remove("password");
                     list.Add(j);
@@ -198,7 +198,7 @@ namespace XcOsu.Server.Api
 
                 if (beatmapId == 0) return Json.Error("Playlist item not found", 404);
                 if (!store.Rooms.TryGetValue(id, out var room)) return Json.Error("This room has ended.", 422);
-                if (room.Json.Value<DateTimeOffset?>("ends_at") is DateTimeOffset end && end < DateTimeOffset.UtcNow && !room.Realtime) return Json.Error("This room has ended.", 422);
+                if (RoomStore.EndsAt(room.Json) is DateTimeOffset end && end < DateTimeOffset.UtcNow && !room.Realtime) return Json.Error("This room has ended.", 422);
                 if (room.Json.Value<int?>("max_attempts") is int max)
                 {
                     using var c = db.Open();

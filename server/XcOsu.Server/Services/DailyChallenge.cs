@@ -119,7 +119,10 @@ namespace XcOsu.Server.Services
 
         private async Task<long> create(DateTime date, MapPool.Map map, CancellationToken ct)
         {
-            var host = accounts.GetMany(new[] { 1 }).FirstOrDefault();
+            int? hostId;
+            using (var hc = db.Open())
+                hostId = (int?)hc.Scalar<long?>("SELECT MIN(id) FROM users WHERE is_admin = 1 AND restricted = 0");
+            var host = hostId is int h ? accounts.GetMany(new[] { h }).FirstOrDefault() : null;
             long id = store.AllocateRoomId(host?.Id ?? 0, "daily_challenge", "playlists");
             string name = $"Daily Challenge: {date:MMMM d, yyyy}";
 
@@ -311,7 +314,7 @@ namespace XcOsu.Server.Services
 
                     foreach (var room in store.Rooms.Values.Where(r => !r.Realtime).ToList())
                     {
-                        if (room.Json.Value<DateTimeOffset?>("ends_at") is DateTimeOffset end && end < DateTimeOffset.UtcNow
+                        if (RoomStore.EndsAt(room.Json) is DateTimeOffset end && end < DateTimeOffset.UtcNow
                             && room.Json.Value<string>("category") != "daily_challenge")
                         {
                             store.Close(room);

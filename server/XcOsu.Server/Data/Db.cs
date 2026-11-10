@@ -313,6 +313,11 @@ namespace XcOsu.Server.Data
             addColumn(c, "chat_channels", "room_id INTEGER");
             addColumn(c, "chat_channels", "moderated INTEGER NOT NULL DEFAULT 0");
             addColumn(c, "chat_messages", "uuid TEXT");
+
+            // osu!lazer treats user ids <= 1 as "no user" (guest / system): no stats, no avatar, profile lookups by name.
+            // like osu-web, real accounts start at 2.
+            exec(c, "INSERT INTO sqlite_sequence (name, seq) SELECT 'users', 1 WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'users')");
+            exec(c, "UPDATE sqlite_sequence SET seq = 1 WHERE name = 'users' AND seq < 1");
         }
 
         private static void addColumn(SqliteConnection c, string table, string definition)
