@@ -220,3 +220,13 @@ press (up to ~165 ms after a few underruns), of which only ~50 ms is the browser
   `output` is what the browser reports; a page cannot lower it (every `latencyHint` and sample rate gives 10 + 40 ms
   on that PC). True speaker latency needs a loopback measurement.
 - `native/xcbass/build.sh` now works from any directory (it resolved its paths from `$0` after a `cd`).
+
+- **Exact figures and music compensation** (same day). The worklet logs the audio frame at which each direct voice
+  starts and the page converts it with `AudioContext.getOutputTimestamp()` (the browser's output clock; not a
+  microphone, the last word on real speaker latency is a loopback recording). On that PC: request -> heard median
+  ~50 ms, P99 ~53 ms; the worklet is called in bursts (73 % of calls back to back, 27 % after 6-12 ms: about four
+  quanta every 10 ms), so a voice waits 0-10 ms for the next burst, not 0-2.7 ms.
+  The same clock showed that rendered audio is on average 44.7 ms ahead of what leaves the device (400 samples,
+  36-54 ms) while the music position was compensated with 52.7 ms (`baseLatency + outputLatency` + one quantum): the
+  game's music clock ran ~8 ms behind the music. `main.js` now feeds xcbass the measured average (smoothed, 1 ms
+  hysteresis); `?oldlatency` restores the previous figure for comparison.

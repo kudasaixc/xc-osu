@@ -285,6 +285,8 @@ static void probe_mixed(struct Chan* k);
 // AudioWorklet mixes the sample's PCM straight into the block it is rendering (js/xc-audio-worklet.js).
 // Table (int32 / float32 words, shared with the worklet):
 //   header [0] wasm pages visible to the worklet (written by it)  [1] voices started  [2] sum request -> first block (us)
+//          [3] start log write index  [4..7] time between two worklet calls: <=1 ms, 2-5 ms, 6-12 ms, more (counts)
+//   start log (64 entries of 2 words, after the voices): request time (us modulo 1e9), audio frame of the first sample
 //   voice i at 8 + i * 8: [0] state (0 free, 1 playing, 2 stop requested, 3 being written)  [1] generation
 //                         [2] PCM address (stereo float32)  [3] frames  [4] source frames per output frame (float)
 //                         [5] left gain (float)  [6] right gain (float)  [7] request time (us modulo 1e9)
@@ -1024,7 +1026,7 @@ static void start_output(void) {
   g_ring = (float*)calloc(RING_FRAMES * 2, sizeof(float));
   g_ctrl = (int32_t*)calloc(16, sizeof(int32_t));
   g_ctrl[2] = RING_FRAMES;
-  g_voices = (int32_t*)calloc(8 + NVOICE * 8, sizeof(int32_t));
+  g_voices = (int32_t*)calloc(8 + NVOICE * 8 + 128, sizeof(int32_t));
   g_ctrl[7] = (int32_t)(uintptr_t)g_voices;
   int ms = (int)g_config[0x1B];
   g_base = ms > 0 ? ms * g_rate / 1000 + BLOCK : 1024;

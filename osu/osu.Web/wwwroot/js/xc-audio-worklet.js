@@ -27,8 +27,8 @@ class XcOutput extends AudioWorkletProcessor {
     this.ctrl = new Int32Array(buffer, this.ctrlPtr, 16);
     this.heap = new Float32Array(buffer, 0, buffer.byteLength >> 2);
     if (this.voicesPtr) {
-      this.vi = new Int32Array(buffer, this.voicesPtr, 8 + NVOICE * 8);
-      this.vf = new Float32Array(buffer, this.voicesPtr, 8 + NVOICE * 8);
+      this.vi = new Int32Array(buffer, this.voicesPtr, 8 + NVOICE * 8 + 128);
+      this.vf = new Float32Array(buffer, this.voicesPtr, 8 + NVOICE * 8 + 128);
       Atomics.store(this.vi, 0, buffer.byteLength >>> 16);
     }
   }
@@ -50,6 +50,11 @@ class XcOutput extends AudioWorkletProcessor {
         let wait = ((Date.now() % 1e6) * 1000 - vi[b + 7]);
         if (wait < 0) wait += 1e9;
         if (wait < 1e6) { Atomics.add(vi, 1, 1); Atomics.add(vi, 2, wait | 0); }
+        // exact start: this voice's first sample is frame `currentFrame` of the context. The page turns that into the
+        // time it is heard with AudioContext.getOutputTimestamp().
+        const k = 8 + NVOICE * 8 + (vi[3] & 63) * 2;
+        vi[k] = vi[b + 7]; vi[k + 1] = currentFrame | 0;
+        Atomics.add(vi, 3, 1);
       } else pos = this.vpos[s];
       const frames = vi[b + 3], base = (vi[b + 2] >>> 0) >> 2;
       if (base + frames * 2 > limit) { Atomics.compareExchange(vi, b, 1, 0); continue; }
@@ -76,6 +81,12 @@ class XcOutput extends AudioWorkletProcessor {
     const L = out[0], R = out[1] || new Float32Array(L.length);
     const n = L.length;
     const ctrl = this.ctrl;
+    // call cadence: the browser asks for several quanta back to back each time the device wants a buffer
+    if (this.vi) {
+      const now = Date.now();
+      if (this.lastCall) { const d = now - this.lastCall; Atomics.add(this.vi, d <= 1 ? 4 : d <= 5 ? 5 : d <= 12 ? 6 : 7, 1); }
+      this.lastCall = now;
+    }
     let r = Atomics.load(ctrl, 0);
     const w = Atomics.load(ctrl, 1);
     const avail = (w - r) | 0;

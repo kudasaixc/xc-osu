@@ -220,14 +220,23 @@ globalThis.xcAudioInit = async (memory, ring, ctrl, cap, rate) => {
     const b = currentBuffer();
     if (b.byteLength > sentLength) { sentLength = b.byteLength; node.port.postMessage({ buffer: b }); }
   }, 250);
-  const voicesView = ctrlView[7] ? new Int32Array(buffer, ctrlView[7] >>> 0, 8) : null;
+  const voicesView = ctrlView[7] ? new Int32Array(buffer, ctrlView[7] >>> 0, 8 + 32 * 8 + 128) : null;
   // ?mute: silent output for test runs (the audio clock keeps running)
   if (query.has('mute')) { const silent = audioCtx.createGain(); silent.gain.value = 0; node.connect(silent).connect(audioCtx.destination); }
   else node.connect(audioCtx.destination);
+  // Output latency = how far what the worklet has rendered is ahead of what is leaving the device. xcbass subtracts it
+  // from the ring position, so the music position the game sees is the one being heard.
+  // It used to be baseLatency + outputLatency + one quantum (10 + 40 + 2.7 = 52.7 ms on Chrome / Windows). Those are
+  // round figures: measured against the browser's own output clock (getOutputTimestamp) the real distance averages
+  // ~45 ms there, so the game's music clock ran ~8 ms behind the music. The measured value is used when the browser
+  // provides a plausible one (see the 200 ms sampler below); the sum stays as the fallback.
+  let measuredLatency = null, latencySamples = 0, storedLatency = -1;
   const updateLatency = () => {
-    const secs = (audioCtx.outputLatency || 0) + (audioCtx.baseLatency || 0);
-    // frames consumed by the worklet one render quantum before they reach the output stage
-    Atomics.store(ctrlView, 3, Math.round(secs * audioCtx.sampleRate) + 128);
+    const rate = audioCtx.sampleRate;
+    let frames = Math.round(((audioCtx.outputLatency || 0) + (audioCtx.baseLatency || 0)) * rate) + 128;
+    if (measuredLatency != null && latencySamples >= 25 && !query.has('oldlatency')) frames = Math.round(measuredLatency * rate / 1000);
+    // 1 ms of hysteresis: the music position must not jitter with the estimate
+    if (storedLatency < 0 || Math.abs(frames - storedLatency) >= rate / 1000) { storedLatency = frames; Atomics.store(ctrlView, 3, frames); }
     Atomics.store(ctrlView, 6, audioCtx.state === 'running' ? 1 : 0);
   };
   updateLatency();
@@ -241,6 +250,37 @@ globalThis.xcAudioInit = async (memory, ring, ctrl, cap, rate) => {
     Atomics.store(ctrlView, 9, 1);
   };
   let latencyReport = null;
+  // Exact figures. The worklet logs the audio frame at which each direct voice starts; getOutputTimestamp() gives the
+  // context time currently leaving the device and when, so "frame F is heard at ..." needs no latency estimate of ours.
+  const heard = []; let logRead = 0;
+  const session = []; // every start of the session (capped), for the median / P99
+  const pct = (sorted, q) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))];
+  const outLat = { sum: 0, n: 0 };
+  const cadencePrev = [0, 0, 0, 0];
+  setInterval(() => {
+    if (!voicesView || audioCtx.state !== 'running') return;
+    const ts = audioCtx.getOutputTimestamp();
+    if (!ts || !ts.performanceTime) return;
+    // output latency as the browser's clock sees it: what is being rendered now minus what is leaving the device now
+    const leaving = ts.contextTime + (performance.now() - ts.performanceTime) / 1000;
+    const ahead = (audioCtx.currentTime - leaving) * 1000;
+    outLat.sum += ahead; outLat.n++;
+    // single samples swing by one device buffer (the browser renders in bursts): only the average means something
+    if (ahead > 3 && ahead < 400) {
+      latencySamples++;
+      measuredLatency = measuredLatency == null ? ahead : measuredLatency + (ahead - measuredLatency) * (latencySamples < 50 ? 1 / latencySamples : 0.02);
+    }
+    const written = Atomics.load(voicesView, 3);
+    if (written - logRead > 64) logRead = written - 64;
+    for (; logRead < written; logRead++) {
+      const k = 8 + 32 * 8 + (logRead & 63) * 2;
+      const reqUs = voicesView[k], frame = voicesView[k + 1] >>> 0;
+      const heardAt = performance.timeOrigin + ts.performanceTime + (frame / audioCtx.sampleRate - ts.contextTime) * 1000;
+      let d = (heardAt % 1e6) * 1000 - reqUs;
+      if (d < -5e8) d += 1e9; else if (d > 5e8) d -= 1e9;
+      if (d > -50000 && d < 500000) heard.push(d / 1000);
+    }
+  }, 200);
   const prev = [0, 0, 0, 0, 0, 0, 0];
   const logLatency = query.has('perf') || query.has('audiolat') || L.perfOverlay;
   setInterval(() => {
@@ -249,8 +289,7 @@ globalThis.xcAudioInit = async (memory, ring, ctrl, cap, rate) => {
     if (d[0] <= 0 && d[5] <= 0) return;
     cur.forEach((v, i) => { prev[i] = v; });
     const rate = audioCtx.sampleRate, r1 = (x) => Math.round(x * 10) / 10;
-    // the output figure includes one 128-frame quantum that only applies to the ring
-    const outFrames = Atomics.load(ctrlView, 3), out = outFrames / rate * 1000, outDirect = (outFrames - 128) / rate * 1000;
+    const outFrames = Atomics.load(ctrlView, 3), out = outFrames / rate * 1000, outDirect = out;
     const input = d[2] > 0 ? r1(d[1] / d[2] / 1000) : null;
     const direct = d[5] > 0 ? { n: d[5], wait: r1(d[6] / d[5] / 1000) } : null;
     const ringed = d[0] > 0 ? { n: d[0], wait: r1(d[3] / d[0] / 1000), ring: r1(d[4] / d[0] / rate * 1000) } : null;
@@ -262,6 +301,26 @@ globalThis.xcAudioInit = async (memory, ring, ctrl, cap, rate) => {
       const press = `press->request ${input == null ? '?' : input} ms (${d[2]} presses)`;
       const dev = `(browser buffer ${latencyReport.base} + device ${latencyReport.device})`;
       if (direct) console.log(`[audio] direct voices x${direct.n}: ${press} + request->block ${direct.wait} ms + output ${r1(outDirect)} ms ${dev} = ${latencyReport.directTotal} ms`);
+      if (heard.length) {
+        const h = heard.splice(0), avg = h.reduce((a, b) => a + b, 0) / h.length;
+        session.push(...h); if (session.length > 20000) session.splice(0, session.length - 20000);
+        const sorted = session.slice().sort((a, b) => a - b);
+        const cad = [4, 5, 6, 7].map((i, j) => { const v = Atomics.load(voicesView, i), dd = v - cadencePrev[j]; cadencePrev[j] = v; return dd; });
+        const calls = cad.reduce((a, b) => a + b, 0) || 1, pc = (x) => Math.round(x / calls * 100);
+        const ol = outLat.n ? r1(outLat.sum / outLat.n) : null; outLat.sum = 0; outLat.n = 0;
+        latencyReport.heard = { n: h.length, min: r1(Math.min(...h)), avg: r1(avg), max: r1(Math.max(...h)) };
+        latencyReport.cadence = cad; latencyReport.outputByTimestamp = ol;
+        // session figures. request->block = request->heard minus the output latency of the browser clock (a constant).
+        const o = ol == null ? 0 : ol;
+        latencyReport.session = { n: sorted.length, heardMedian: r1(pct(sorted, 0.5)), heardP99: r1(pct(sorted, 0.99)), heardMin: r1(sorted[0]), heardMax: r1(sorted[sorted.length - 1]),
+          blockMedian: r1(pct(sorted, 0.5) - o), blockP99: r1(pct(sorted, 0.99) - o), musicCompensationError: r1(o - out) };
+        console.log(`[audio] session x${sorted.length}: request->heard median ${latencyReport.session.heardMedian} ms, P99 ${latencyReport.session.heardP99} ms (min ${latencyReport.session.heardMin}, max ${latencyReport.session.heardMax})`
+          + ` · request->block median ${latencyReport.session.blockMedian} ms, P99 ${latencyReport.session.blockP99} ms`
+          + ` · music compensation error ${latencyReport.session.musicCompensationError} ms (browser clock ${ol} vs used ${r1(out)})`);
+        console.log(`[audio] exact (output timestamp) x${h.length}: request->heard min ${latencyReport.heard.min} / avg ${latencyReport.heard.avg} / max ${latencyReport.heard.max} ms`
+          + ` · worklet calls: ${pc(cad[0])}% back-to-back, ${pc(cad[1])}% after 2-5 ms, ${pc(cad[2])}% after 6-12 ms, ${pc(cad[3])}% later`
+          + ` · output latency by the browser clock ${ol} ms (music is compensated with ${r1(out)} ms)`);
+      }
       if (ringed) console.log(`[audio] ring path x${ringed.n}: ${press} + request->mixed ${ringed.wait} ms + ring ${ringed.ring} ms (target ${latencyReport.target} frames) + output ${r1(out)} ms ${dev} = ${latencyReport.ringTotal} ms`);
     }
   }, 5000);
