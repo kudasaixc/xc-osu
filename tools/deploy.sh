@@ -5,6 +5,10 @@
 #   on the VPS: copies locally. Elsewhere (e.g. a dev PC): set XC_DEPLOY_SSH=user@host to rsync over SSH.
 set -e
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+# Local live releases go through the guarded, recoverable deployment path.
+if [ -z "${XC_DEPLOY_SSH:-}" ] && [ "${2:-}" != "test" ]; then
+  exec /bin/bash "$ROOT/tools/deploy-guarded.sh" "${1:-dev}"
+fi
 src="$ROOT/out/${1:-dev}/wwwroot"
 [ -f "$src/index.html" ] || { echo "no build at $src"; exit 1; }
 python3 "$ROOT/tools/stamp.py" "$src"
