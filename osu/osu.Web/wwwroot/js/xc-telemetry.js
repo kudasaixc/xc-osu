@@ -213,7 +213,7 @@ export function startTelemetry(options, build, log) {
           for (let i = 0; i < events.length; i += 50)
             add({ k: 'e', n: 'flight-context', at: item.at, part: i / 50, parts: Math.ceil(events.length / 50), dropped: contextDropped, events: events.slice(i, i + 50) });
         }
-        if (item.k === 'w') item.js = { hidden: +document.hidden, audio: globalThis.xcAudioDebug?.(), heap: performance.memory?.usedJSHeapSize };
+        if (item.k === 'w') item.js = { hidden: +document.hidden, audio: globalThis.xcAudioDebug?.(), heap: performance.memory?.usedJSHeapSize, wasm: globalThis.xcWasmBytes?.() };
         add(item);
       } catch { }
     } else if (line.level === 'error' || line.level === 'warn') {

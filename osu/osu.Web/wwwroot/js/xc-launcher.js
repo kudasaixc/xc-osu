@@ -204,6 +204,9 @@ export class Launcher {
       <nav class="rail" role="tablist" aria-orientation="vertical">
         <div class="rail-logo" title="xc-osu!">xc</div>
         ${nav}
+        <a class="rail-btn rail-site" id="ln-site" href="https://osu.xcsoftworks.com/web/" target="_blank" rel="noopener" title="osu.xcsoftworks.com/web">
+          <svg viewBox="0 0 24 24" aria-hidden="true" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"><circle cx="12" cy="12" r="8"/><path d="M4 12h16 M12 4c2.6 2.4 2.6 13.6 0 16 M12 4c-2.6 2.4-2.6 13.6 0 16"/></svg>
+          <span>${t('nav.site')}</span></a>
       </nav>
       <main class="stage">
         <section class="pane" id="pane-play" role="tabpanel" aria-labelledby="tab-play">
@@ -244,8 +247,9 @@ export class Launcher {
         <section class="pane" id="pane-options" role="tabpanel" aria-labelledby="tab-options">
           <header class="pane-head row">
             <h1 class="title">${t('nav.options')}</h1>
-            <span class="head-actions"><button type="button" class="btn danger" id="ln-wipe" title="${esc(t('wipe.hint'))}">${t('wipe.btn')}</button><button type="button" class="btn" id="ln-reset">${t('opt.reset')}</button></span>
+            <span class="head-actions"><button type="button" class="btn" id="ln-export" title="${esc(t('backup.export.hint'))}">${t('backup.export')}</button><button type="button" class="btn" id="ln-import" title="${esc(t('backup.import.hint'))}">${t('backup.import')}</button><input type="file" id="ln-import-file" accept=".xcbak" hidden><button type="button" class="btn danger" id="ln-wipe" title="${esc(t('wipe.hint'))}">${t('wipe.btn')}</button><button type="button" class="btn" id="ln-reset">${t('opt.reset')}</button></span>
           </header>
+          <p class="backup-status" id="ln-backup-status" role="status" hidden></p>
           <div class="presets"><span class="muted">${t('presets')}</span><div id="ln-presets" class="chips" role="group"></div></div>
           <div id="ln-opts" class="opt-grid"></div>
           <div class="panel cmd"><h2>${t('cmd')}</h2><code id="ln-cmd"></code></div>
@@ -274,6 +278,9 @@ export class Launcher {
     this.root.querySelector('#ln-play').onclick = () => this.launch();
     this.root.querySelector('#ln-reset').onclick = () => { const keep = { lang: this.o.lang }; this.o = { ...defaults(), ...keep }; this.changed(true); };
     this.root.querySelector('#ln-wipe').onclick = () => this.wipeStorage();
+    this.root.querySelector('#ln-export').onclick = () => this.exportData();
+    this.root.querySelector('#ln-import').onclick = () => this.root.querySelector('#ln-import-file').click();
+    this.root.querySelector('#ln-import-file').onchange = (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) this.importData(f); };
     this.show(this.tab);
     this.startBackground();
     this.loadArt();
@@ -299,6 +306,46 @@ export class Launcher {
     try { sessionStorage.clear(); } catch { }
     if (blocked) { alert(t('wipe.blocked')); btn.disabled = false; btn.textContent = t('wipe.btn'); return; }
     location.reload();
+  }
+
+  // ----------------------------------------------------------------- backup (js/xc-backup.js, the .xcbak format)
+  backupBusy(busy, text, error) {
+    for (const id of ['#ln-export', '#ln-import', '#ln-wipe', '#ln-play']) { const b = this.root.querySelector(id); if (b && !(id === '#ln-play' && this.blocked)) b.disabled = busy; }
+    this.busy = busy;
+    const s = this.root.querySelector('#ln-backup-status');
+    if (s) { s.hidden = !text; s.textContent = text || ''; s.classList.toggle('err', !!error); }
+  }
+
+  backupError(e) {
+    const t = this.t, known = ['empty', 'format', 'version', 'truncated', 'blocked', 'unsupported'];
+    if (e?.code === 'aborted') return this.backupBusy(false, '');
+    console.warn('[backup]', e);
+    this.backupBusy(false, known.includes(e?.code) ? t('backup.err.' + e.code) : t('backup.err.other', e?.name === 'QuotaExceededError' ? t('backup.err.quota') : e?.message || String(e)), true);
+  }
+
+  async exportData() {
+    if (this.busy || this.launched) return;
+    const t = this.t;
+    try {
+      const picker = import('./xc-backup.js'); // the save dialog needs the click, so nothing slow before it
+      this.backupBusy(true, t('backup.export.start'));
+      const { exportBackup } = await picker;
+      const r = await exportBackup({ build: this.build, onProgress: (n, total, bytes) => this.backupBusy(true, t('backup.export.busy', Math.floor(100 * n / total), fmtBytes(bytes))) });
+      this.backupBusy(false, t('backup.export.done', r.name, fmtBytes(r.bytes), r.entries));
+    } catch (e) { this.backupError(e); }
+  }
+
+  async importData(file) {
+    if (this.busy || this.launched) return;
+    const t = this.t;
+    if (!confirm(t('backup.import.confirm', file.name))) return;
+    try {
+      this.backupBusy(true, t('backup.import.check', 0));
+      const { importBackup } = await import('./xc-backup.js');
+      await importBackup(file, { onProgress: (phase, n, total) => this.backupBusy(true, t('backup.import.' + phase, total ? Math.min(100, Math.floor(100 * n / total)) : 0)) });
+      this.backupBusy(true, t('backup.import.done'));
+      setTimeout(() => location.reload(), 900);
+    } catch (e) { this.backupError(e); }
   }
 
   hello() {
@@ -505,7 +552,7 @@ export class Launcher {
   }
 
   launch() {
-    if (this.blocked || this.launched) return;
+    if (this.blocked || this.launched || this.busy) return;
     this.launched = true;
     saveOptions(this.o);
     // still inside the click: the only moment a page may enter fullscreen

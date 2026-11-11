@@ -110,6 +110,8 @@ namespace osu.Game.Overlays.Dashboard.CurrentlyOnline
 
         private readonly HashSet<int> pendingUsers = new HashSet<int>();
 
+        private double lastUserFlush = double.MinValue;
+
         protected override void Update()
         {
             base.Update();
@@ -117,12 +119,18 @@ namespace osu.Game.Overlays.Dashboard.CurrentlyOnline
             // ReSharper disable once InconsistentlySynchronizedField
             if (pendingUsers.Count > 100)
                 updateUsers();
+            // xc-osu!: the stock list only looks at newly online users every two seconds, so opening it showed nothing for
+            // 2-3 s. That batching is sized for tens of thousands of users; here they are flushed after a short debounce.
+            else if (pendingUsers.Count > 0 && Time.Current - lastUserFlush >= 120)
+                updateUsers();
         }
 
         private void updateUsers()
         {
             if (pendingUsers.Count == 0)
                 return;
+
+            lastUserFlush = Time.Current;
 
             // partitioning here is just to break up the requests.
             // without this, the intitial request will take seconds to minutes.

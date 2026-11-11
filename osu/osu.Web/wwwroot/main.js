@@ -157,6 +157,9 @@ try {
   const c0 = performance.now();
   rt = rtRef = await builder.create();
   say(`.NET runtime created in ${(performance.now() - c0).toFixed(0)} ms · wasm memory ${fmtBytes(rt.Module.HEAP8.buffer.byteLength)}`);
+  // the engine's whole address space (capped by EmccMaximumHeapSize): telemetry samples it to tell memory exhaustion
+  // apart from other crashes. wasmMemory.buffer is re-read each time, the HEAP views can be stale after a worker grew it.
+  globalThis.xcWasmBytes = () => { try { return (rt.Module.wasmMemory?.buffer ?? rt.Module.HEAPU8.buffer).byteLength; } catch { return undefined; } };
   boot.stage('runtime', 'done', `.NET ${rt.runtimeBuildInfo?.productVersion || ''}`.trim());
   globalThis.xcTelemetryCheckpoint?.('runtime-created');
 } catch (e) {

@@ -109,9 +109,16 @@ namespace osu.Framework.Graphics.Video
 
         internal bool Looping;
 
+        /// <summary>
+        /// xc-osu!: there is no FFmpeg in the browser. Touching the FFmpeg bindings there does not throw, it trips a Mono
+        /// interpreter assertion that takes the whole runtime down (a beatmap with a video killed the game on the loading
+        /// screen). The decoder stays inert instead: it reports <see cref="DecoderState.Faulted"/> and never produces a frame.
+        /// </summary>
+        private static readonly bool unavailable = RuntimeInfo.IsBrowser;
+
         static VideoDecoder()
         {
-            if (RuntimeInfo.OS == RuntimeInfo.Platform.Linux)
+            if (!unavailable && RuntimeInfo.OS == RuntimeInfo.Platform.Linux)
             {
                 void loadVersionedLibraryGlobally(string name)
                 {
@@ -145,7 +152,7 @@ namespace osu.Framework.Graphics.Video
         /// <param name="videoStream">The stream that should be decoded.</param>
         public VideoDecoder(IRenderer renderer, Stream videoStream)
         {
-            ffmpeg = CreateFuncs();
+            ffmpeg = unavailable ? null : CreateFuncs();
 
             this.renderer = renderer;
             this.videoStream = videoStream;
@@ -206,6 +213,13 @@ namespace osu.Framework.Graphics.Video
         {
             if (decodingTask != null)
                 throw new InvalidOperationException($"Cannot start decoding once already started. Call {nameof(StopDecodingAsync)} first.");
+
+            if (unavailable)
+            {
+                Logger.Log("VideoDecoder: video playback is not available in the browser, the video is skipped.");
+                State = DecoderState.Faulted;
+                return;
+            }
 
             // only prepare for decoding if this is our first time starting the decoding process
             if (formatContext == null)

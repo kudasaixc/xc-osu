@@ -202,6 +202,13 @@ namespace osu.Framework.Input.Handlers.Mouse
 
         protected virtual void HandleMouseMove(Vector2 position)
         {
+            // xc-osu!: relative mode waits for a first absolute position, but nothing re-evaluated it once that position
+            // arrived. In the browser the window never reports "cursor entered" (it starts inside), so a game that went
+            // fullscreen before the first mouse move stayed in absolute mode, without sensitivity, until the window mode
+            // changed again.
+            if (!absolutePositionReceived)
+                pendingUpdateRelativeMode = true;
+
             absolutePositionReceived = true;
             enqueueInput(new MousePositionAbsoluteInput { Position = position });
         }

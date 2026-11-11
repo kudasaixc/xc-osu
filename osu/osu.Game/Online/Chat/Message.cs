@@ -35,7 +35,13 @@ namespace osu.Game.Online.Chat
         public int SenderId
         {
             get => Sender?.Id ?? 0;
-            set => Sender = new APIUser { Id = value };
+            // xc-osu!: a payload carrying both "sender" and "sender_id" must not have the full sender (its username)
+            // replaced by an id-only placeholder, whichever of the two comes last.
+            set
+            {
+                if (Sender?.Id != value)
+                    Sender = new APIUser { Id = value };
+            }
         }
 
         /// <summary>

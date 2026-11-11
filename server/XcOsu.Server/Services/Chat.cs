@@ -66,6 +66,21 @@ namespace XcOsu.Server.Services
             return j;
         }
 
+        /// <summary>
+        /// Message JSON as osu-web sends it: "sender_id" first, the full "sender" last. osu!'s Message model replaces the
+        /// sender by an id-only placeholder when "sender_id" is read after "sender", which blanked usernames in the history.
+        /// </summary>
+        public static Newtonsoft.Json.Linq.JObject ToJson(Message m)
+        {
+            var j = Newtonsoft.Json.Linq.JObject.FromObject(m, JsonSerializer.Create(Api.Json.SETTINGS));
+            var sender = j["sender"];
+            j.Remove("sender");
+            j["sender"] = sender;
+            return j;
+        }
+
+        public static Newtonsoft.Json.Linq.JArray ToJson(IEnumerable<Message> messages) => new Newtonsoft.Json.Linq.JArray(messages.Select(ToJson));
+
         public static Newtonsoft.Json.Linq.JArray ToJson(IEnumerable<Channel> channels) => new Newtonsoft.Json.Linq.JArray(channels.Select(ToJson));
 
         public List<Channel> PublicChannels(int viewer)
@@ -180,7 +195,7 @@ namespace XcOsu.Server.Services
             }
 
             var msg = toMessage((id, channelId, senderId, content, isAction, ts, uuid ?? ""), new Dictionary<int, APIUser>());
-            _ = broadcast(recipients, "chat.message.new", new { messages = new[] { msg }, users = new[] { msg.Sender } });
+            _ = broadcast(recipients, "chat.message.new", new { messages = ToJson(new[] { msg }), users = new[] { msg.Sender } });
             return msg;
         }
 

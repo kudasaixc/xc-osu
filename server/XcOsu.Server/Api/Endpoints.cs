@@ -815,7 +815,7 @@ namespace XcOsu.Server.Api
                 if (!chat.CanRead(id, u)) return Json.Error("forbidden", 403);
                 int limit = Math.Clamp(int.TryParse(ctx.Request.Query["limit"], out int l) ? l : 50, 1, 50);
                 long? since = long.TryParse(ctx.Request.Query["since"], out long s) ? s : null;
-                return Json.Ok(chat.Messages(id, since, limit));
+                return Json.Ok(Chat.ToJson(chat.Messages(id, since, limit)));
             });
 
             api.MapPost("/chat/channels/{id:int}/messages", async (int id, HttpContext ctx, Chat chat) =>
@@ -826,7 +826,7 @@ namespace XcOsu.Server.Api
                 var p = await Json.Params(ctx.Request);
                 string content = p("message") ?? "";
                 if (string.IsNullOrWhiteSpace(content)) return Json.Error("empty message", 422);
-                return Json.Ok(chat.Post(id, u, content, p("is_action") == "true", p("uuid")));
+                return Json.Ok(Chat.ToJson(chat.Post(id, u, content, p("is_action") == "true", p("uuid"))));
             });
 
             api.MapPut("/chat/channels/{id:int}/mark-as-read/{message:long}", (int id, long message, HttpContext ctx, Chat chat) =>
@@ -845,7 +845,7 @@ namespace XcOsu.Server.Api
                 int channel = chat.OpenPm(u, target);
                 if (chat.PostRestriction(channel, u) is string error2) return Json.Error(error2, 403);
                 var msg = chat.Post(channel, u, p("message") ?? "", p("is_action") == "true", p("uuid"));
-                return Json.Ok(new { new_channel_id = channel, channel = Chat.ToJson(chat.Get(channel, u)!), message = msg });
+                return Json.Ok(new { new_channel_id = channel, channel = Chat.ToJson(chat.Get(channel, u)!), message = Chat.ToJson(msg) });
             });
 
             api.MapPost("/chat/ack", (HttpContext ctx) => uid(ctx) != null ? Json.Ok(new { silences = Array.Empty<object>() }) : unauthorized());
@@ -856,7 +856,7 @@ namespace XcOsu.Server.Api
                 long since = long.TryParse(ctx.Request.Query["since"], out long s) ? s : 0;
                 var channels = chat.JoinedChannels(u);
                 var messages = channels.SelectMany(ch => chat.Messages((int)ch.Id, since)).OrderBy(m => m.Id).ToList();
-                return Json.Ok(new { presence = Chat.ToJson(channels), messages, silences = Array.Empty<object>() });
+                return Json.Ok(new { presence = Chat.ToJson(channels), messages = Chat.ToJson(messages), silences = Array.Empty<object>() });
             });
 
             api.MapGet("/notifications", (HttpContext ctx, Notifications notifications) =>
