@@ -1,0 +1,4 @@
+# Local build products; sources and published release notes are tracked separately.
+**/bin/
+**/obj/
+**/node_modules

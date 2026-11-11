@@ -57,13 +57,36 @@ export async function register({ query, go, refreshShell }) {
   };
 }
 
-export function passwordReset() {
+export async function passwordReset({ hash }) {
+  const token = new URLSearchParams((hash || '').replace(/^#/, '')).get('token');
+  const status = token ? { available: true } : await api('/api/xc/password-reset');
   return {
     title: t('Forgotten password', 'Mot de passe oublié'),
-    html: `<section class="panel narrow"><h1>${t('Forgotten password', 'Mot de passe oublié')}</h1>
-      <p>${t('xc-osu! does not send e-mails, so a password cannot be reset automatically. Ask an xc softworks admin in the game chat or on Discord: they can set a new one for you.', 'xc-osu! n’envoie pas d’e-mails, donc un mot de passe ne peut pas être réinitialisé automatiquement. Demande à un admin xc softworks dans le chat du jeu ou sur Discord : il peut t’en définir un nouveau.')}</p>
-      <p>${t('If you still know your password, you can change it from your settings.', 'Si tu connais encore ton mot de passe, tu peux le changer depuis tes réglages.')}</p>
-      <p><a class="btn" href="${L('/home/account/edit')}#password">${t('Open my settings', 'Ouvrir mes réglages')}</a> <a class="btn ghost" href="${L('/login')}">${t('Sign in', 'Connexion')}</a></p></section>`,
+    html: `<section class="panel narrow"><h1>${token ? t('Choose a new password', 'Choisis un nouveau mot de passe') : t('Forgotten password', 'Mot de passe oublié')}</h1>
+      ${!status.available ? `<p role="status">${t('Email recovery is not available yet. Please contact xc softworks support.', 'La récupération par e-mail n’est pas encore disponible. Contacte le support xc softworks.')}</p>` : `
+      <p>${token ? t('This link expires after 25 minutes and can be used once.', 'Ce lien expire après 25 minutes et ne peut servir qu’une seule fois.') : t('Enter your account email to receive a password reset link.', 'Entre l’adresse e-mail de ton compte pour recevoir un lien de réinitialisation.')}</p>
+      <form id="password-recovery" class="form">
+      ${token ? `<label>${t('New password', 'Nouveau mot de passe')}<input name="password" type="password" autocomplete="new-password" minlength="8" maxlength="1024" required></label>
+      <label>${t('Confirm password', 'Confirme le mot de passe')}<input name="confirmation" type="password" autocomplete="new-password" minlength="8" maxlength="1024" required></label>` : `<label>E-mail<input name="email" type="email" autocomplete="email" maxlength="254" required></label>`}
+      <button class="btn" type="submit">${token ? t('Save password', 'Enregistrer le mot de passe') : t('Send reset link', 'Envoyer le lien')}</button><span class="msg" role="status"></span></form>`}
+      <p><a href="${L('/login')}">${t('Back to sign in', 'Retour à la connexion')}</a></p></section>`,
+    mount(view) {
+      // Remove the token from the address bar; keep it only in this page's closure.
+      if (token) history.replaceState(null, '', location.pathname + location.search);
+      const form = view.querySelector('#password-recovery');
+      if (!form) return;
+      form.addEventListener('submit', async e => {
+        e.preventDefault();
+        const msg = form.querySelector('.msg');
+        if (token && form.elements.password.value !== form.elements.confirmation.value) {
+          msg.textContent = t('Passwords do not match.', 'Les mots de passe ne correspondent pas.'); return;
+        }
+        const ok = await act(form.querySelector('button'), msg, () => api('/api/xc/password-reset/' + (token ? 'complete' : 'request'), {
+          method: 'POST', json: token ? { token, password: form.elements.password.value } : { email: form.elements.email.value.trim() },
+        }), token ? t('Password updated. You can sign in again.', 'Mot de passe modifié. Tu peux te reconnecter.') : t('If this address belongs to an account, a link will be sent. Check your spam folder too.', 'Si cette adresse correspond à un compte, un lien sera envoyé. Vérifie aussi les indésirables.'));
+        if (ok) { form.reset(); if (token) { signOut(); form.querySelector('button').disabled = true; } }
+      });
+    },
   };
 }
 

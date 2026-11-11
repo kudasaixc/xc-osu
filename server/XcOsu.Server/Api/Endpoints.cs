@@ -17,6 +17,7 @@ namespace XcOsu.Server.Api
         public static void Map(WebApplication app)
         {
             mapAuth(app);
+            PasswordReset.Map(app);
 
             var api = app.MapGroup("/api/v2");
             mapUsers(api);

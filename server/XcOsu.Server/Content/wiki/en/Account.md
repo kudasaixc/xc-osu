@@ -21,8 +21,12 @@ Signing in on the website and in the game are independent. Signing out of one le
 
 ## Forgotten password
 
-There is no automatic password reset by e-mail yet. See [Reporting a problem](/wiki/Reporting_a_problem) for how to reach us.
+Open [Forgot your password?](https://osu.xcsoftworks.com/web/home/password-reset) and enter the email address used for your account. The email contains a link valid for 25 minutes and one use. Check your spam folder. After resetting, sign in again on the site and in the game: existing sessions are revoked. If mail recovery is unavailable, the page will say so; see [Reporting a problem](/wiki/Reporting_a_problem).
 
 ## Friends
 
 Add a friend from their profile, in the game or on the site. Your friends list is shared between both.
+
+## BBCode
+
+The in-game me! page supports `[b]bold[/b]`, `[i]italic[/i]`, `[u]underline[/u]`, `[s]strike[/s]`, `[color=#ff66aa]colour[/color]`, `[size=20]size[/size]`, `[url=https://example.com]link[/url]` and `[img]https://example.com/image.png[/img]`. Markdown remains supported. Unknown or unclosed tags remain plain text.

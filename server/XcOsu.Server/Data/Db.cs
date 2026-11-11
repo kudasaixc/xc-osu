@@ -56,6 +56,11 @@ namespace XcOsu.Server.Data
                     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                     expires_at INTEGER NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS password_resets (
+                    token_hash TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    expires_at INTEGER NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS score_tokens (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL,

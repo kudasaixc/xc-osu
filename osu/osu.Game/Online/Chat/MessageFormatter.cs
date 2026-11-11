@@ -131,20 +131,28 @@ namespace osu.Game.Online.Chat
 
         private static void handleAdvanced(Regex regex, MessageFormatterResult result, int startIndex = 0)
         {
-            foreach (Match m in regex.Matches(result.Text, startIndex))
+            try
             {
-                int index = m.Index;
-                string linkText = m.Groups["link"].Value;
-                int indexLength = linkText.Length;
+                foreach (Match m in regex.Matches(result.Text, startIndex))
+                {
+                    int index = m.Index;
+                    string linkText = m.Groups["link"].Value;
+                    int indexLength = linkText.Length;
 
-                var details = GetLinkDetails(linkText);
-                var link = new Link(linkText, index, indexLength, details.Action, details.Argument);
+                    var details = GetLinkDetails(linkText);
+                    var link = new Link(linkText, index, indexLength, details.Action, details.Argument);
 
-                // sometimes an already-processed formatted link can reduce to a simple URL, too
-                // (example: [mean example - https://osu.ppy.sh](https://osu.ppy.sh))
-                // therefore we need to check if any of the pre-existing links contains the raw one we found
-                if (result.Links.All(existingLink => !existingLink.Overlaps(link)))
-                    result.Links.Add(link);
+                    // sometimes an already-processed formatted link can reduce to a simple URL, too
+                    // (example: [mean example - https://osu.ppy.sh](https://osu.ppy.sh))
+                    // therefore we need to check if any of the pre-existing links contains the raw one we found
+                    if (result.Links.All(existingLink => !existingLink.Overlaps(link)))
+                        result.Links.Add(link);
+                }
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                // Keep the original text and any links already found. One slow URL must not crash chat.
+                Logger.Log("Chat link detection timed out; showing the remaining message as plain text.");
             }
         }
 

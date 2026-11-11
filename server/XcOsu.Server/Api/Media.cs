@@ -121,6 +121,7 @@ namespace XcOsu.Server.Api
                 if (next.Length < 8) return Json.Error("New password must be at least 8 characters.", 422);
                 using var c = db.Open();
                 c.Exec("UPDATE users SET password_hash = $h WHERE id = $u", ("$h", Accounts.HashPassword(next)), ("$u", u));
+                c.Exec("DELETE FROM password_resets WHERE user_id = $u", ("$u", u));
                 return Results.NoContent();
             });
         }

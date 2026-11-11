@@ -5,6 +5,40 @@
       "date": "2026-11-11",
       "tag": "update",
       "title": {
+        "fr": "Chat, récupération du compte et profils BBCode",
+        "en": "Chat, account recovery and BBCode profiles"
+      },
+      "body": {
+        "fr": "Correctif du plantage à l’ouverture du chat, récupération du mot de passe par e-mail et mise en forme BBCode des profils dans le jeu.",
+        "en": "A fix for the chat-opening crash, password recovery by email, and BBCode formatting for in-game profiles."
+      },
+      "items": [
+        {
+          "fr": "L’ouverture du chat ne plante plus quand la détection des liens expire ; le texte reste visible",
+          "en": "Opening chat no longer crashes when link detection times out; message text stays visible"
+        },
+        {
+          "fr": "Récupération du mot de passe par e-mail, avec lien temporaire à usage unique et révocation des sessions existantes",
+          "en": "Password recovery by email, with an expiring single-use link and revocation of existing sessions"
+        },
+        {
+          "fr": "Mise en forme BBCode de la page me! en jeu : gras, italique, souligné, barré, couleurs, tailles, liens et images",
+          "en": "BBCode formatting on the in-game me! page: bold, italic, underline, strike, colours, sizes, links and images"
+        },
+        {
+          "fr": "Les beatmaps mania, taiko et catch non prises en charge sont refusées avec une explication",
+          "en": "Unsupported mania, taiko and catch beatmaps are rejected with an explanation"
+        },
+        {
+          "fr": "Les messages de connexion précisent que les scores sont envoyés uniquement au serveur privé xc osu",
+          "en": "Connection notices explain that scores are sent to the xc osu private server only"
+        }
+      ]
+    },
+    {
+      "date": "2026-11-11",
+      "tag": "update",
+      "title": {
         "fr": "Plantages corrigés, sauvegarde de tes données",
         "en": "Crash fixes and a backup of your data"
       },

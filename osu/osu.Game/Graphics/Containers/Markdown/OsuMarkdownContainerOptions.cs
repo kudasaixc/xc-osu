@@ -21,6 +21,8 @@ namespace osu.Game.Graphics.Containers.Markdown
         /// <seealso cref="FootnoteExtension"/>
         public bool Footnotes { get; init; }
 
+        public bool BbCode { get; init; }
+
         /// <summary>
         /// Allows the <see cref="OsuMarkdownContainer"/> container to make URL text clickable.
         /// </summary>
@@ -64,6 +66,9 @@ namespace osu.Game.Graphics.Containers.Markdown
 
             if (BlockAttributes)
                 pipeline = pipeline.UseBlockAttributes();
+
+            if (BbCode)
+                pipeline.InlineParsers.Insert(0, new BBCode.BbCodeInlineParser());
 
             return pipeline.Build();
         }

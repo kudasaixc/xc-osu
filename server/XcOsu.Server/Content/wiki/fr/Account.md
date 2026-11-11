@@ -21,8 +21,12 @@ La connexion sur le site et celle dans le jeu sont indépendantes. Se déconnect
 
 ## Mot de passe oublié
 
-Il n'y a pas encore de réinitialisation automatique par e-mail. La page [Signaler un problème](/wiki/Reporting_a_problem) explique comment nous joindre.
+Ouvre [Mot de passe oublié ?](https://osu.xcsoftworks.com/web/home/password-reset) et indique l’adresse e-mail de ton compte. Le lien envoyé est valable 25 minutes et une seule fois. Vérifie les indésirables. Après réinitialisation, reconnecte-toi sur le site et dans le jeu : les anciennes sessions sont révoquées. Si la récupération par e-mail est indisponible, la page l’indique ; consulte [Signaler un problème](/wiki/Reporting_a_problem).
 
 ## Amis
 
 Ajoute un ami depuis son profil, dans le jeu ou sur le site. Ta liste d'amis est commune aux deux.
+
+## BBCode
+
+La page me! en jeu prend en charge `[b]gras[/b]`, `[i]italique[/i]`, `[u]souligné[/u]`, `[s]barré[/s]`, `[color=#ff66aa]couleur[/color]`, `[size=20]taille[/size]`, `[url=https://example.com]lien[/url]` et `[img]https://example.com/image.png[/img]`. Markdown reste pris en charge. Les balises inconnues ou non fermées restent en texte brut.

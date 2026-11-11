@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.RateLimiting;
+using System.Threading.RateLimiting;
 // xc-osu! server — entry point. Same-origin with the web client (https://osu.xcsoftworks.com). xc softworks (kudasaixc)
 
 using Microsoft.AspNetCore.HttpOverrides;
@@ -21,6 +23,7 @@ builder.Services.AddHttpClient("mirrors", c =>
 
 builder.Services.AddSingleton<Db>();
 builder.Services.AddSingleton<Accounts>();
+builder.Services.AddSingleton<PasswordRecovery>();
 builder.Services.AddSingleton<Presence>();
 builder.Services.AddSingleton<Users>();
 builder.Services.AddSingleton<Mirrors>();
@@ -40,6 +43,13 @@ builder.Services.AddHostedService<Maintenance>();
 builder.Services.AddAuthentication(XcTokenAuthHandler.SCHEME)
        .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, XcTokenAuthHandler>(XcTokenAuthHandler.SCHEME, null);
 builder.Services.AddAuthorization();
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = 429;
+    options.AddPolicy("password-reset", ctx => RateLimitPartition.GetFixedWindowLimiter(
+        ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 5, Window = TimeSpan.FromMinutes(15), QueueLimit = 0 }));
+});
 
 builder.Services.AddSingleton<IUserIdProvider, UserIdProvider>();
 builder.Services.AddSignalR(o =>
@@ -78,6 +88,7 @@ var app = builder.Build();
 
 app.UseForwardedHeaders();
 app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20) });
+app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 

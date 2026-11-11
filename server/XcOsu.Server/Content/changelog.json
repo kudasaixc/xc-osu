@@ -1,5 +1,51 @@
 [
  {
+  "version": "2026.1111.2",
+  "date": "2026-11-11T17:00:00Z",
+  "entries": [
+   {
+    "category": "Online",
+    "category_fr": "En ligne",
+    "type": "fix",
+    "title": "Opening chat no longer crashes when link detection times out; message text stays visible",
+    "title_fr": "L’ouverture du chat ne plante plus quand la détection des liens expire ; le texte reste visible",
+    "major": true
+   },
+   {
+    "category": "Account",
+    "category_fr": "Compte",
+    "type": "add",
+    "title": "Password recovery by email, with an expiring single-use link and revocation of existing sessions",
+    "title_fr": "Récupération du mot de passe par e-mail, avec lien temporaire à usage unique et révocation des sessions existantes",
+    "major": true
+   },
+   {
+    "category": "Profile",
+    "category_fr": "Profil",
+    "type": "fix",
+    "title": "BBCode formatting on the in-game me! page: bold, italic, underline, strike, colours, sizes, links and images",
+    "title_fr": "Mise en forme BBCode de la page me! en jeu : gras, italique, souligné, barré, couleurs, tailles, liens et images",
+    "major": true
+   },
+   {
+    "category": "Gameplay",
+    "category_fr": "Jeu",
+    "type": "fix",
+    "title": "Unsupported mania, taiko and catch beatmaps are rejected with an explanation",
+    "title_fr": "Les beatmaps mania, taiko et catch non prises en charge sont refusées avec une explication",
+    "major": true
+   },
+   {
+    "category": "Online",
+    "category_fr": "En ligne",
+    "type": "add",
+    "title": "Connection notices explain that scores are sent to the xc osu private server only",
+    "title_fr": "Les messages de connexion précisent que les scores sont envoyés uniquement au serveur privé xc osu",
+    "major": true
+   }
+  ]
+ },
+ {
   "version": "2026.1111.1",
   "date": "2026-11-11T14:40:00Z",
   "entries": [
