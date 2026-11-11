@@ -25,7 +25,7 @@ namespace osu.Game.Graphics.Containers.Markdown.BBCode
     {
         private static readonly HashSet<string> tags = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "b", "i", "u", "s", "strike", "color", "colour", "size", "url", "img", "code", "quote", "notice", "list", "heading",
+            "b", "i", "u", "s", "strike", "color", "colour", "size", "url", "img", "code", "quote", "notice", "list", "heading", "centre", "center", "box", "spoiler",
         };
 
         public BbCodeInlineParser() => OpeningCharacters = new[] { '[' };

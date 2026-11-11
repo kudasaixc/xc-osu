@@ -64,7 +64,7 @@ check(normal.Links.Count == 1, "Normal chat links must still work");
 Console.WriteLine("PASS chat: forced regex timeout is handled, text preserved, ordinary links retained");
 
 var pipeline = new OsuMarkdownContainerOptions { BbCode = true }.BuildPipeline();
-foreach (string tag in new[] { "b", "i", "u", "s", "color=#ff66aa", "size=24", "url=https://example.com", "img", "code", "quote", "list" })
+foreach (string tag in new[] { "b", "i", "u", "s", "color=#ff66aa", "size=24", "url=https://example.com", "img", "code", "quote", "list", "centre", "center", "box=GOAL 1", "spoiler" })
 {
     string name = tag.Split('=')[0];
     var document = Markdown.Parse($"[{tag}]hello[/{name}]", pipeline);
@@ -76,7 +76,24 @@ check(!BbCodeInlineParser.TryRead("[script]bad[/script]", 0, 20, out _, out _), 
 check(Markdown.Parse("**existing Markdown**", pipeline).OfType<ParagraphBlock>().Single().Inline!.FirstChild is EmphasisInline, "Markdown compatibility");
 var multiline = Markdown.Parse(BbCodeInlineParser.Prepare("[b]first\n\nsecond[/b]"), pipeline);
 check(multiline.OfType<ParagraphBlock>().Single().Inline!.FirstChild is BbCodeInline, "BBCode across blank lines");
-Console.WriteLine("PASS profile: BBCode styles, nesting, unknown/unclosed tags, Markdown compatibility");
+const string screenshotPage = "[centre]\n[heading]CURRENT GOALS[/heading]\n\n[box=GOAL 1 — SHORT-TERM]\n[centre][s]Reach 5 digits[/s]\n\n[b]ACHIEVED![/b]\n[The Big Black](https://example.com/map)[/centre]\n[/box]\n[/centre]";
+var screenshotDocument = Markdown.Parse(BbCodeInlineParser.Prepare(screenshotPage), pipeline);
+check(screenshotDocument.OfType<ParagraphBlock>().Single().Inline!.FirstChild is BbCodeInline { Tag: "centre" }, "Screenshot multiline block remains whole");
+using (var centred = new ProfileBbCodeBlock(new BbCodeInline("centre", "", "[b]CURRENT GOALS[/b]")))
+{
+    check(centred.IsCentred && centred.Body.CreateTextFlow().TextAnchor == osu.Framework.Graphics.Anchor.TopCentre, "Centre block uses centred text layout");
+    check(centred.Header == null, "Centred block has no spoiler header");
+}
+using (var box = new ProfileBbCodeBlock(new BbCodeInline("box", "GOAL 1 — SHORT-TERM", "[centre][b]ACHIEVED![/b][/centre]")))
+{
+    check(!box.IsCentred && box.Header != null && box.Body.Alpha == 0, "Box has a collapsed clickable header");
+    box.Header!.Action();
+    check(box.Body.Alpha == 1 && box.Body.Text.Contains("[centre]"), "Opening box preserves nested content");
+    box.Header.Action();
+    check(box.Body.Alpha == 0, "Box closes again");
+}
+ProfileLayoutGame.Verify(screenshotPage);
+Console.WriteLine("PASS profile: inline styles, centre/center, multiline boxes, nested blocks, toggle, Markdown compatibility");
 
 if (!OperatingSystem.IsLinux()) { Console.WriteLine("Mail capture test requires Linux; skipped"); return; }
 string directory = Path.Combine(Path.GetTempPath(), "xc-recovery-test-" + Guid.NewGuid().ToString("N"));

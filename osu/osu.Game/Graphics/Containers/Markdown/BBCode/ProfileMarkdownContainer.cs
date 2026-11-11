@@ -8,6 +8,7 @@ using osu.Framework.Graphics.Containers.Markdown;
 using osu.Framework.Graphics.Shapes;
 using osu.Framework.Graphics.Sprites;
 using osu.Game.Graphics.Sprites;
+using osu.Game.Graphics.Containers;
 using osuTK;
 using osuTK.Graphics;
 
@@ -16,10 +17,26 @@ namespace osu.Game.Graphics.Containers.Markdown.BBCode
     public partial class ProfileMarkdownContainer : OsuMarkdownContainer
     {
         protected override OsuMarkdownContainerOptions Options => new OsuMarkdownContainerOptions { BbCode = true, CustomContainers = true };
-        public override OsuMarkdownTextFlowContainer CreateTextFlow() => new ProfileTextFlow();
+        private readonly bool centred;
+        private readonly int blockDepth;
+
+        public ProfileMarkdownContainer(bool centred = false, int blockDepth = 0)
+        {
+            this.centred = centred;
+            this.blockDepth = blockDepth;
+        }
+
+        public override OsuMarkdownTextFlowContainer CreateTextFlow() => new ProfileTextFlow(blockDepth)
+        {
+            TextAnchor = centred ? Anchor.TopCentre : Anchor.TopLeft,
+        };
 
         private partial class ProfileTextFlow : OsuMarkdownTextFlowContainer
         {
+            private readonly int blockDepth;
+
+            public ProfileTextFlow(int blockDepth) => this.blockDepth = blockDepth;
+
             private readonly record struct Style(bool Bold = false, bool Italic = false, bool Underline = false, bool Strike = false,
                                                  float Size = 14, Color4? Colour = null);
 
@@ -39,6 +56,15 @@ namespace osu.Game.Graphics.Containers.Markdown.BBCode
                 if (depth > 32) { addStyled(bb.Content, style); return; }
                 switch (bb.Tag)
                 {
+                    case "centre":
+                    case "center":
+                    case "box":
+                    case "spoiler":
+                        if (blockDepth >= 32) { addStyled(bb.Content, style); return; }
+                        NewLine();
+                        AddDrawable(new ProfileBbCodeBlock(bb, blockDepth + 1));
+                        NewLine();
+                        return;
                     case "b": style = style with { Bold = true }; break;
                     case "i": style = style with { Italic = true }; break;
                     case "u": style = style with { Underline = true }; break;
@@ -98,7 +124,7 @@ namespace osu.Game.Graphics.Containers.Markdown.BBCode
 
             private void addStyled(string text, Style style)
             {
-                var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+                var lines = text.Replace("\u200b", "", StringComparison.Ordinal).Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
                 for (int line = 0; line < lines.Length; line++)
                 {
                     if (line > 0) NewLine();
@@ -128,4 +154,68 @@ namespace osu.Game.Graphics.Containers.Markdown.BBCode
             }
         }
     }
+
+    /// <summary>A full-width BBCode block; box/spoiler headers toggle their nested profile content.</summary>
+    public partial class ProfileBbCodeBlock : Container
+    {
+        public ProfileMarkdownContainer Body { get; }
+        public OsuClickableContainer? Header { get; }
+        public bool IsCentred { get; }
+
+        public ProfileBbCodeBlock(BbCodeInline block, int depth = 0)
+        {
+            RelativeSizeAxes = Axes.X;
+            AutoSizeAxes = Axes.Y;
+            IsCentred = block.Tag is "centre" or "center";
+            Body = new ProfileMarkdownContainer(IsCentred, depth)
+            {
+                RelativeSizeAxes = Axes.X,
+                AutoSizeAxes = Axes.Y,
+                // Prepare() inserts markers only to keep a complete block in its outer paragraph.
+                // Parse its body afresh so Markdown links, paragraphs and nested BBCode still work.
+                Text = BbCodeInlineParser.Prepare(block.Content.Replace("\u200b", "", StringComparison.Ordinal).Trim('\n')),
+                DocumentPadding = new MarginPadding(IsCentred ? 0 : 12),
+                DocumentMargin = default,
+            };
+            if (IsCentred)
+            {
+                Child = Body;
+                return;
+            }
+
+            CornerRadius = 5;
+            Masking = true;
+            string caption = string.IsNullOrWhiteSpace(block.Parameter) ? "Show / hide" : block.Parameter;
+            var title = new OsuSpriteText
+            {
+                Text = "+ " + caption,
+                Font = OsuFont.GetFont(Typeface.Inter, size: 14, weight: FontWeight.Bold),
+                Margin = new MarginPadding(12),
+            };
+            Body.Alpha = 0;
+            Header = new OsuClickableContainer
+            {
+                RelativeSizeAxes = Axes.X,
+                AutoSizeAxes = Axes.Y,
+                Child = title,
+                Action = () =>
+                {
+                    Body.Alpha = Body.Alpha > 0 ? 0 : 1;
+                    title.Text = (Body.Alpha > 0 ? "− " : "+ ") + caption;
+                },
+            };
+            Children = new Drawable[]
+            {
+                new Box { RelativeSizeAxes = Axes.Both, Colour = new Color4(0, 0, 0, 0.2f) },
+                new FillFlowContainer
+                {
+                    RelativeSizeAxes = Axes.X,
+                    AutoSizeAxes = Axes.Y,
+                    Direction = FillDirection.Vertical,
+                    Children = new Drawable[] { Header, Body },
+                },
+            };
+        }
+    }
+
 }
