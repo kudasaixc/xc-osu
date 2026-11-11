@@ -403,6 +403,8 @@ namespace osu.Game.Beatmaps
 
                     if (ruleset?.Available != true)
                     {
+                        if (OperatingSystem.IsBrowser() && decodedInfo.Ruleset.OnlineID > 0)
+                            Logger.Log(XcSupportedModes.UnsupportedMessage, level: LogLevel.Important);
                         LogForModel(beatmapSet, $"Skipping import of {file.Filename} due to missing local ruleset {decodedInfo.Ruleset.OnlineID}.");
                         continue;
                     }

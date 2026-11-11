@@ -28,6 +28,7 @@ namespace osu.Game.Updater
     /// </summary>
     public partial class UpdateManager : CompositeDrawable
     {
+        private const string xcServerNotice = "xc osu uses its own private server. When you are signed in, eligible scores are submitted to xc osu, not to the official osu! servers. Your official osu! profile and rankings are not affected.";
         /// <summary>
         /// Whether this UpdateManager should be or is capable of checking for updates.
         /// </summary>
@@ -64,13 +65,13 @@ namespace osu.Game.Updater
 
                 // notify the user if they're using a build that is not officially sanctioned.
                 if (RuntimeInfo.EntryAssembly.GetCustomAttribute<OfficialBuildAttribute>() == null)
-                    Notifications.Post(new SimpleNotification { Text = NotificationsStrings.NotOfficialBuild });
+                    Notifications.Post(new SimpleNotification { Text = OperatingSystem.IsBrowser() ? xcServerNotice : NotificationsStrings.NotOfficialBuild });
             }
             else
             {
                 // log that this is not an official build, for if users build their own game without an assembly version.
                 // this is only logged because a notification would be too spammy in local test builds.
-                Logger.Log(NotificationsStrings.NotOfficialBuild.ToString());
+                Logger.Log(OperatingSystem.IsBrowser() ? xcServerNotice : NotificationsStrings.NotOfficialBuild.ToString());
             }
 
             config.BindWith(OsuSetting.ReleaseStream, releaseStream);

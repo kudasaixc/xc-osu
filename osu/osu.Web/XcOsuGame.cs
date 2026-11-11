@@ -47,6 +47,19 @@ namespace osu.Web
         {
             base.LoadComplete();
 
+            API.State.BindValueChanged(state =>
+            {
+                string message = state.NewValue switch
+                {
+                    osu.Game.Online.API.APIState.Online => "Connected to the xc osu private server. Eligible scores are submitted to xc osu only, not to the official osu! servers.",
+                    osu.Game.Online.API.APIState.Offline => "You are not signed in to xc osu. Sign in to submit eligible scores to the xc osu private server.",
+                    osu.Game.Online.API.APIState.Failing => "Connection to the xc osu private server interrupted. Score submission may be unavailable until the connection is restored.",
+                    _ => null,
+                };
+                if (message != null)
+                    osu.Framework.Logging.Logger.Log(message, level: osu.Framework.Logging.LogLevel.Important);
+            }, true);
+
             if (Telemetry.Enabled)
                 Add(new TelemetryProbe(this));
         }

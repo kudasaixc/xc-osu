@@ -588,6 +588,12 @@ namespace osu.Game.Screens.Play
 
             try
             {
+                if (XcSupportedModes.IsUnsupported(Beatmap.Value))
+                {
+                    Logger.Log(XcSupportedModes.UnsupportedMessage, level: LogLevel.Important);
+                    return null;
+                }
+
                 if (Beatmap.Value.Beatmap == null)
                     throw new InvalidOperationException("Beatmap was not loaded");
 

@@ -275,7 +275,9 @@ namespace osu.Game.Beatmaps.Formats
                     break;
 
                 case @"Mode":
-                    beatmap.BeatmapInfo.Ruleset = RulesetStore?.GetRuleset(Parsing.ParseInt(pair.Value)) ?? throw new ArgumentException("Ruleset is not available locally.");
+                    int mode = Parsing.ParseInt(pair.Value);
+                    // Preserve missing modes instead of swallowing an exception and leaving standard selected.
+                    beatmap.BeatmapInfo.Ruleset = RulesetStore?.GetRuleset(mode) ?? new RulesetInfo { OnlineID = mode, ShortName = $"unsupported-{mode}" };
                     break;
 
                 case @"LetterboxInBreaks":
