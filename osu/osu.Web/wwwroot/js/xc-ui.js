@@ -94,8 +94,14 @@ export function installUi(rt, canvas, hooks) {
   const lockOpts = { unadjustedMovement: true };
   function tryLock() {
     if (!wantLock || !canvas.requestPointerLock || globalThis.xcIosCompat || document.pointerLockElement === canvas) return;
-    const p = canvas.requestPointerLock(lockOpts);
-    if (p && p.catch) p.catch(() => { try { canvas.requestPointerLock(); } catch { } });
+    try {
+      const p = canvas.requestPointerLock(lockOpts);
+      p?.catch(error => {
+        // Retry only unsupported raw movement; denial needs a fresh user gesture.
+        if (error?.name !== 'NotSupportedError') return;
+        try { canvas.requestPointerLock()?.catch(() => {}); } catch { }
+      });
+    } catch { }
   }
   function tryFullscreen() {
     try {
@@ -433,7 +439,8 @@ export function installUi(rt, canvas, hooks) {
       case 2: canvas.style.cursor = a ? 'default' : 'none'; break;
       case 3: wantLock = !!a; if (a) tryLock(); else if (locked()) document.exitPointerLock(); break;
       case 4: wantFullscreen = a ? 1 : 0; tryFullscreen(); break;
-      case 5: if (s) window.open(s, '_blank', 'noopener'); break;
+      // links written for the official website lead to the same page of this site
+      case 5: if (s) window.open(s.replace(/^https?:\/\/osu\.ppy\.sh(?=[\/?#]|$)/i, location.origin), '_blank', 'noopener'); break;
       case 6: if (s != null) navigator.clipboard?.writeText(s).catch(() => { }); break;
       case 7: textInputActive = true; hiddenInput.focus({ preventScroll: true }); break;
       case 8: textInputActive = false; hiddenInput.blur(); break;

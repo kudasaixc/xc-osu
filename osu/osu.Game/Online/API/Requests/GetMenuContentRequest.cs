@@ -7,8 +7,9 @@ namespace osu.Game.Online.API.Requests
 {
     public class GetMenuContentRequest : OsuJsonWebRequest<APIMenuContent>
     {
-        public GetMenuContentRequest()
-            : base(@"https://assets.ppy.sh/menu-content.json")
+        // xc-osu!: the banners shown on the main menu come from this server, not from the official asset host.
+        public GetMenuContentRequest(string websiteUrl)
+            : base($@"{websiteUrl}/api/xc/menu-content")
         {
         }
     }

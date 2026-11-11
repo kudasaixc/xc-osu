@@ -1087,11 +1087,14 @@ namespace XcOsu.Server.Api
 
         private static void mapMisc(RouteGroupBuilder api)
         {
-            api.MapGet("/news", (IConfiguration config) => Json.Ok(News.Index(config)));
-            api.MapGet("/news/{slug}", (string slug, IConfiguration config) => News.Show(config, slug) is JObject post ? Json.Ok(post) : Json.Error("Post not found", 404));
+            api.MapGet("/news", (HttpContext ctx, IConfiguration config) =>
+                Json.Ok(News.Index(config, News.Locale(ctx), int.TryParse(ctx.Request.Query["year"], out int year) ? year : null)));
+            api.MapGet("/news/{slug}", (string slug, HttpContext ctx, IConfiguration config) =>
+                News.Show(config, slug, News.Locale(ctx)) is JObject post ? Json.Ok(post) : Json.Error("Post not found", 404));
 
-            api.MapGet("/changelog", () => Json.Ok(new { builds = Array.Empty<object>(), streams = Array.Empty<object>(), search = new { limit = 21 } }));
-            api.MapGet("/changelog/{stream}/{version}", () => Json.Error("Build not found", 404));
+            api.MapGet("/changelog", (HttpContext ctx, Presence presence) => Json.Ok(News.Changelog(News.Locale(ctx), presence.Online.Count(e => e.Value.Connections > 0))));
+            api.MapGet("/changelog/{stream}/{version}", (string version, HttpContext ctx, Presence presence) =>
+                News.ChangelogBuild(News.Locale(ctx), version, presence.Online.Count(e => e.Value.Connections > 0)) is JObject build ? Json.Ok(build) : Json.Error("Build not found", 404));
 
             // default menu backgrounds for everyone: every image dropped into the site's backgrounds/ folder (no rebuild needed).
             api.MapGet("/seasonal-backgrounds", (IConfiguration config) =>
@@ -1108,7 +1111,10 @@ namespace XcOsu.Server.Api
                 });
             });
 
-            api.MapGet("/wiki/{**path}", (string? path) => Json.Error("The xc-osu! wiki lives at osu.xcsoftworks.com.", 404));
+            // /wiki/{locale}/{path} is what the game asks for; the site also lists every page with /wiki-index
+            api.MapGet("/wiki-index", (HttpContext ctx) => Json.Ok(News.WikiIndex(News.Locale(ctx))));
+            api.MapGet("/wiki/{locale}/{**path}", (string locale, string? path) =>
+                News.Wiki(locale.StartsWith("fr", StringComparison.OrdinalIgnoreCase) ? "fr" : "en", path) is JObject page ? Json.Ok(page) : Json.Error("Page not found", 404));
 
             api.MapGet("/search", (HttpRequest req, Accounts accounts, UsersService users, Db db) =>
             {

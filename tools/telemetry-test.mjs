@@ -44,6 +44,24 @@ try {
   assert(bodies.every(b=>Buffer.byteLength(JSON.stringify(b))<=48000), 'keepalive packet limit');
   assert(bodies.some(b=>b.items.some(i=>i.n==='flight-context' && i.events.some(e=>e.type==='worker-ui'))), 'capture context joined');
   assert.equal(await page.evaluate(sid=>localStorage.getItem('xc.tm.v1.'+sid),previousSid),null,'acknowledged old outbox removed');
+  // Floods retain only actionable spikes, complete sampled captures and all frame windows.
+  await page.evaluate(() => {
+    const emit = item => window.tmLines[0]({level:'log', text:'[tm] '+JSON.stringify(item)});
+    emit({k:'s', sp:Array.from({length:100}, (_,i)=>({ms:i, th:'draw', kd:'late'})), spx:12});
+    const at = Date.now();
+    for (let capture=0; capture<2; capture++) for (let part=0; part<3; part++)
+      emit({k:'e', n:'flight', at:at+capture, part, parts:3, frames:[]});
+    Object.defineProperty(document, 'hidden', {configurable:true, value:true});
+    emit({k:'s', sp:[{ms:1000, th:'draw', kd:'late'}]});
+    emit({k:'w', th:{draw:{late:2}}});
+  });
+  await page.waitForTimeout(150);
+  const flood = await page.evaluate(() => Object.keys(localStorage).filter(k=>k.startsWith('xc.tm.v1.'))
+    .flatMap(k=>JSON.parse(localStorage.getItem(k)).items));
+  assert.equal(flood.filter(i=>i.k==='s').length,1,'hidden spikes suppressed');
+  assert.deepEqual(flood.find(i=>i.k==='s').sp.map(s=>s.ms),[99,98,97,96,95],'worst five spikes retained');
+  assert.deepEqual(flood.filter(i=>i.n==='flight').map(i=>i.part),[0,1,2],'capture sampled as a complete unit');
+  assert(flood.some(i=>i.k==='w' && i.js.hidden===1),'background histogram retained');
   await page.reload(); await start(false);
   assert.equal(await page.evaluate(()=>Object.keys(localStorage).filter(k=>k.startsWith('xc.tm.v1.')).length),0,'opt out clears pending data');
   console.log('PASS: opt-out, durable retry, pagehide beacon, acknowledgements, reload recovery');

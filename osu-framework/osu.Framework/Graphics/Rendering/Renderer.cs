@@ -279,6 +279,8 @@ namespace osu.Framework.Graphics.Rendering
             int uploads = 0;
             int uploadedPixels = 0;
 
+            var uploadTimer = System.Diagnostics.Stopwatch.StartNew();
+
             // continue attempting to upload textures until enough uploads have been performed.
             while (textureUploadQueue.TryDequeue(out INativeTexture? texture))
             {
@@ -293,6 +295,11 @@ namespace osu.Framework.Graphics.Rendering
                     break;
 
                 if ((uploadedPixels += texture.Width * texture.Height) > MaxPixelsUploadedPerFrame)
+                    break;
+
+                // Bound accumulated upload work on the browser render thread.
+                // At least one upload is allowed to avoid starving large textures.
+                if (OperatingSystem.IsBrowser() && uploadTimer.Elapsed.TotalMilliseconds >= 2)
                     break;
             }
 

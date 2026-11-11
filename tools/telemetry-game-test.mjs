@@ -31,8 +31,12 @@ try {
   assert(complete,'complete capture with frames before and after the trigger');
   assert(items.filter(e=>e.n==='flight').every(e=>e.name==='draw'),'only display stalls consume circular captures');
   const windows=items.filter(e=>e.k==='w');
-  const observedUpdateHz=windows.map(w=>w.th.update.n/(w.dur/1000));
-  assert(observedUpdateHz.every(hz=>hz<=250),'default web update pacing stays near or below 240 Hz');
+  // Before the first screen event the update thread is still starting the game (no frame limit applied yet);
+  // only windows recorded on an active screen exercise the web host's update ceiling.
+  const paced=windows.filter(w=>w.scr!=='boot');
+  assert(paced.length>0,'frame windows recorded once a screen was active');
+  const observedUpdateHz=paced.map(w=>w.th.update.n/(w.dur/1000));
+  assert(observedUpdateHz.every(hz=>hz<=250),'web update pacing stays near or below 240 Hz on active screens');
   assert(items.filter(e=>e.k==='s').flatMap(e=>e.sp||[]).filter(s=>s.th==='update').some(s=>['scheduler','tree','mask','drawNodes'].every(k=>Number.isFinite(s[k]))),'update phase timings emitted by actual engine');
   console.log('Observed update rates:',observedUpdateHz.map(hz=>hz.toFixed(1)).join(', '));
   if(process.argv[3]) await writeFile(process.argv[3],JSON.stringify({test:'headless SwiftShader, not comparable to user hardware',items},null,2));

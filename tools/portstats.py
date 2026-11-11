@@ -70,8 +70,13 @@ def describe(repo):
 
 def main():
     out = pathlib.Path(sys.argv[1])
-    trees = [tree_stats(*t) for t in TREES if (t[1] / '.git').exists()]
+    missing = [name for name, repo, _, _ in TREES if not (repo / '.git').exists()]
+    if missing:
+        raise SystemExit('portstats: missing Git sources: ' + ', '.join(missing) + '; existing statistics preserved')
+    trees = [tree_stats(*t) for t in TREES]
     up = sum(t['upstream'] for t in trees); ch = sum(t['changed'] for t in trees); ad = sum(t['added'] for t in trees)
+    if not up:
+        raise SystemExit('portstats: empty source counts; existing statistics preserved')
     xc = xc_only()
     lazer = describe(ROOT / 'osu') or ''
     m = re.match(r'^(\d{4}\.\d+\.\d+)(?:-(\d+)-g([0-9a-f]+))?$', lazer)

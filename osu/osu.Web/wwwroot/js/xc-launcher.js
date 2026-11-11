@@ -136,6 +136,10 @@ function commandLine(o) {
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const tr = (v, lang) => (v && typeof v === 'object') ? (v[lang] ?? v.en ?? '') : (v ?? '');
 
+// Names WebGL reports when the browser draws on the CPU instead of the graphics card (Windows WARP, SwiftShader, Mesa).
+// The game runs at a fraction of its normal frame rate there, and the cause is a browser/driver setting, not the game.
+export const isSoftwareRenderer = (gpu) => /Basic Render Driver|SwiftShader|llvmpipe|softpipe|Software Rasterizer|\bWARP\b/i.test(String(gpu || ''));
+
 export class Launcher {
   constructor(root, t, { options, build, blocked, onLangChange }) {
     this.root = root; this.t = t; this.o = options; this.build = build; this.blocked = blocked; this.onLangChange = onLangChange;
@@ -150,31 +154,35 @@ export class Launcher {
 
   async loadPerformance() {
     const host = this.root.querySelector('#ln-performance');
+    const fr = this.t.lang === 'fr', label = (a,b) => fr ? a : b;
     try {
       const response = await fetch('./launcher/performance.json', { cache: 'no-store' });
       if (!response.ok) throw new Error('history unavailable');
       const history = await response.json();
-      host.replaceChildren();
-      const updated = document.createElement('p'); updated.className = 'muted';
-      updated.textContent = this.t('history.updated') + ' ' + new Date(history.updated).toLocaleString(); host.append(updated);
-      if (!history.rows.length) { host.append(this.t('history.empty')); return; }
-      const table = document.createElement('table'); table.className = 'port'; table.style.minWidth = '850px'; host.append(table);
-      const header = table.createTHead().insertRow();
-      for (const key of ['build','device','sample','mean','p99','max','late']) {
-        const th = document.createElement('th'); th.scope = 'col'; th.style.padding = '8px'; th.textContent = this.t('history.' + key); header.append(th);
-      }
-      const body = table.createTBody();
-      for (const row of history.rows.slice().reverse()) {
-        const r = body.insertRow(); const setup = row.setup || {};
-        const p99 = row.p99 ? (row.p99.upper == null ? '> ' + row.p99.lower : `(${row.p99.lower}, ${row.p99.upper}]`) : '—';
-        const device = `${row.gpu} · ${setup.browser} · ${setup.width}×${setup.height} · ${setup.refreshHz} Hz · scale ${setup.renderScale}% · workers ${setup.workers} · update ${setup.maxUpdateHz || 'auto'}`;
-        for (const value of [row.build + (row.first ? ' · ' + new Date(row.first).toLocaleDateString() : ''), device, `${row.sessions} / ${Math.round(row.seconds)} s / ${row.frames}`, row.meanMs, p99, row.maxMs, row.latePercent + '%']) {
-          const cell = r.insertCell(); cell.textContent = String(value); cell.style.cssText = 'padding:10px 8px;vertical-align:top';
-        }
-        r.cells[0].style.cssText += ';max-width:160px;overflow-wrap:anywhere';
-      }
+      const rows = (history.rows || []).slice().sort((a,b) => (b.last || 0) - (a.last || 0));
+      const builds = [...new Set(rows.map(r => r.build))];
+      const shortGpu = gpu => String(gpu || 'GPU').replace(/^ANGLE \([^,]+,\s*/, '').replace(/\s*\(0x[^)]*\)/g, '').replace(/\s*(Direct3D.*|OpenGL.*|\/PCIe.*)$/, '').replace(/,? or similar.*$/, '').replace(/[, )]+$/, '');
+      const num = n => Number.isFinite(Number(n)) ? Number(n).toLocaleString(fr ? 'fr-FR' : 'en-US', {maximumFractionDigits: 1}) : '—';
+      host.innerHTML = `<p class="muted small">${esc(this.t('history.updated'))} ${esc(new Date(history.updated).toLocaleString(fr ? 'fr-FR' : 'en-US'))}</p>
+        <label class="perf-filter">${label('Version à afficher','Show version')} <select id="perf-version">${builds.map((b,i) => `<option value="${esc(b)}">${i === 0 ? label('Dernière activité · ','Latest activity · ') : ''}${esc(b.split(':')[1] || b)}</option>`).join('')}<option value="all">${label('Toutes les versions','All versions')}</option></select></label>
+        <p class="muted small">${label('FPS ≈ 1 000 / temps moyen d’une image. Le P99 décrit les images les plus lentes : plus il est bas, mieux c’est. Les sessions courtes incluent le chargement et ne suffisent pas à juger le jeu.','FPS ≈ 1,000 / average frame time. P99 describes the slowest frames: lower is better. Short sessions include loading and cannot establish gameplay performance.')}</p><div id="perf-results" class="perf-results"></div>`;
+      const render = () => {
+        const selected = host.querySelector('#perf-version').value;
+        const filtered = rows.filter(r => selected === 'all' || r.build === selected);
+        host.querySelector('#perf-results').innerHTML = filtered.map(row => {
+          const s = row.setup || {}, p = row.p99;
+          const range = p ? (p.upper == null ? '> ' + num(p.lower) : num(p.lower) + '–' + num(p.upper)) + ' ms' : '—';
+          return `<article class="perf-card"><header><h3>${esc(shortGpu(row.gpu))}</h3><span class="tag">${esc(s.browser || '—')}</span></header>
+          <p class="muted small">${esc(s.width)} × ${esc(s.height)} · ${esc(s.refreshHz)} Hz · ${num(row.seconds)} s ${label('observées','observed')} · ${num(row.sessions)} session(s)</p>
+          ${row.seconds < 60 ? `<p class="perf-caution">${label('Échantillon court — résultat indicatif','Short sample — indicative result')}</p>` : ''}
+          <dl class="perf-metrics"><div><dt>${label('FPS moyens estimés','Estimated average FPS')}</dt><dd>${row.meanMs > 0 ? num(1000 / row.meanMs) : '—'}</dd></div><div><dt>${label('Temps par image','Average frame time')}</dt><dd>${num(row.meanMs)} <small>ms</small></dd></div><div><dt>${label('Images lentes · P99','Slow frames · P99')}</dt><dd>${range}</dd></div></dl>
+          <details><summary>${label('Détails de la mesure','Measurement details')}</summary><p>${label('Pire image','Worst frame')}: ${num(row.maxMs)} ms · ${label('Images en retard','Late frames')}: ${num(row.latePercent)} % · ${num(row.frames)} frames</p><p>${label('Échelle','Scale')}: ${esc(s.renderScale)} % · Workers: ${esc(s.workers)} · Update: ${esc(s.maxUpdateHz || 'auto')}</p><p class="muted small">${esc(row.build)}<br>${esc(row.gpu)}</p></details></article>`;
+        }).join('') || `<p>${esc(this.t('history.empty'))}</p>`;
+      };
+      host.querySelector('#perf-version').addEventListener('change', render); render();
     } catch { host.textContent = this.t('history.empty'); }
   }
+
 
   waitForLaunch() { return new Promise((res) => { this.resolve = res; }); }
 
@@ -203,6 +211,7 @@ export class Launcher {
             <h1 class="title"><span id="ln-ver">osu!lazer</span><small id="ln-ahead"></small></h1>
             <p class="lede">${t('play.lede')}</p>
             <p class="hello" id="ln-hello">${this.hello()}</p>
+            <div id="ln-gpuwarn" role="alert" hidden style="margin:14px 0 0;padding:12px 16px;border-radius:10px;border:1px solid var(--warn);background:rgba(232,176,74,.12);font-size:14px;line-height:1.5;max-width:760px"></div>
           </header>
           <div class="grid-2">
             <div class="panel"><h2>${t('spec.title')}</h2><dl class="spec" id="ln-spec"></dl></div>
@@ -543,7 +552,7 @@ export class Launcher {
       </article>`;
     const posts = data.posts || [];
     this.root.querySelector('#ln-posts').innerHTML = posts.map((p) => `<div class="panel">${post(p)}</div>`).join('');
-    this.root.querySelector('#ln-latest').innerHTML = posts.length ? post(posts[0]) + `<button type="button" class="link" data-goto="news">${t('play.allnews', posts.length)}</button>` : '';
+    this.root.querySelector('#ln-latest').innerHTML = posts.length ? posts.slice(0, 3).map(post).join('<hr class="news-divider">') + `<button type="button" class="link" data-goto="news">${t('play.allnews', posts.length)}</button>` : '';
     this.root.querySelector('#ln-latest [data-goto]')?.addEventListener('click', () => this.show('news'));
 
     // completion: done = 1, in progress = 0.5, weighted
@@ -581,6 +590,7 @@ export class Launcher {
       if (!r.ok) throw new Error(r.status);
       b = await r.json();
     } catch { box.innerHTML = `<p class="muted">${t('build.none')}</p>`; return; }
+    if (!b.upstreamLines || !b.trees?.length) { box.textContent = t('build.none'); return; }
     this.b = b;
     const nf = (n) => n.toLocaleString(lang);
     const pct = (x) => x.toLocaleString(lang, { maximumFractionDigits: 2 });
@@ -590,6 +600,7 @@ export class Launcher {
     this.root.querySelector('#ln-ver').textContent = 'osu!lazer ' + (lz.release || '');
     if (lz.ahead) this.root.querySelector('#ln-ahead').textContent = t('build.ahead', lz.ahead);
     box.innerHTML = `
+      <p class="muted small">${esc(lang === 'fr' ? 'Mesure des sources locales, actualisée le ' : 'Local source measurement, updated ')}${esc(new Date(b.generated).toLocaleString(lang))}</p>
       <div class="kept"><b>${pct(b.keptPct)} %</b><span>${t('build.kept', nf(b.upstreamLines))}</span></div>
       <table class="trees"><thead><tr><th>${t('build.tree')}</th><th>${t('build.keptcol')}</th><th class="num">${t('build.changed')}</th></tr></thead><tbody>${(b.trees || []).map((tr) => {
         const kept = tr.upstream ? 100 * (tr.upstream - tr.changed) / tr.upstream : 100;
@@ -625,6 +636,22 @@ export class Launcher {
     el.innerHTML = rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${v}</dd></div>`).join('');
   }
 
+  /** Shown on the Play tab when the browser renders on the CPU; `raw` is the unmasked WebGL renderer string. */
+  renderGpuWarning(raw) {
+    const box = this.root.querySelector('#ln-gpuwarn');
+    if (!box || !isSoftwareRenderer(raw)) return;
+    const t = this.t, ua = navigator.userAgent;
+    const steps = /Firefox\//.test(ua) ? t('gpuwarn.firefox')
+      : /Edg\//.test(ua) ? t('gpuwarn.chromium', 'edge://settings/system', 'edge://gpu')
+      : /Chrome\//.test(ua) ? t('gpuwarn.chromium', 'chrome://settings/system', 'chrome://gpu')
+      : t('gpuwarn.other');
+    const code = (s) => esc(s).replace(/\[\[(.+?)\]\]/g, '<code style="user-select:all">$1</code>');
+    box.innerHTML = `<strong style="color:var(--warn)">${esc(t('gpuwarn.title'))}</strong>
+      <p style="margin:6px 0 0">${esc(t('gpuwarn.body', this.gpu || raw))}</p>
+      <p style="margin:6px 0 0">${code(steps)}</p>`;
+    box.hidden = false;
+  }
+
   // ----------------------------------------------------------------- machine info (all read from the browser)
   async systemInfo() {
     const t = this.t, rows = [];
@@ -641,6 +668,7 @@ export class Launcher {
         this.gpu = (parts[1] || parts[0]).replace(/\s*\(0x[0-9a-f]+\).*$/i, '').replace(/\s+(Direct3D|OpenGL|Metal)\b.*$/, '').trim();
       } else gpu = 'WebGL2 ✕';
     } catch { }
+    this.renderGpuWarning(gpu);
     const brands = navigator.userAgentData?.brands?.filter((b) => !/Not.?A.?Brand/i.test(b.brand)).map((b) => `${b.brand} ${b.version}`).join(', ');
     const ff = /Firefox\/(\d+)/.exec(navigator.userAgent), sf = !brands && !ff && /Version\/([\d.]+).*Safari/.exec(navigator.userAgent);
     rows.push([t('sys.cpu'), String(cores)]);

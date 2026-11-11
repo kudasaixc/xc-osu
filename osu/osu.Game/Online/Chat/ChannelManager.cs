@@ -444,6 +444,10 @@ namespace osu.Game.Online.Chat
 
         private void addMessages(List<Message> messages)
         {
+            // xc-osu!: a response without a message list (an empty update, a channel with no history) is not an error.
+            if (messages == null)
+                return;
+
             var channels = JoinedChannels.ToList();
             var blockedUserIds = localUserBlocks.Select(b => b.TargetID).ToList();
 

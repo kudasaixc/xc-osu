@@ -56,6 +56,9 @@ namespace osu.Game.Screens.Menu
 
         protected override void PopOut() => content.FadeOut(transition_duration, Easing.OutQuint);
 
+        [Resolved]
+        private osu.Game.Online.API.IAPIProvider api { get; set; } = null!;
+
         protected override void LoadComplete()
         {
             base.LoadComplete();
@@ -69,7 +72,7 @@ namespace osu.Game.Screens.Menu
             if (!FetchOnlineContent)
                 return;
 
-            var request = new GetMenuContentRequest();
+            var request = new GetMenuContentRequest(api.Endpoints.WebsiteUrl);
             Task.Run(request.Perform)
                 .ContinueWith(r =>
                 {

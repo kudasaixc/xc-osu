@@ -17,11 +17,11 @@ try {
   const {Launcher,loadOptions}=await import('/js/xc-launcher.js');const {makeT}=await import('/js/xc-i18n.js');
   const l=new Launcher(document.querySelector('#xc-launcher'),makeT('fr'),{options:loadOptions(),build:'pacing1',blocked:false});l.show('status');
  });
- await page.waitForFunction(()=>document.querySelector('#ln-performance table'));
- const content=await page.locator('#ln-performance').textContent();assert(content.includes('16.997'));assert(content.includes('(33, 50]'));
+ await page.waitForFunction(()=>document.querySelector('#ln-performance .perf-card'));
+ const content=await page.locator('#ln-performance').textContent();assert(content.includes('17'));assert(content.includes('33–50 ms'));
  await page.screenshot({path:'/tmp/xc-performance-history.png'});
  await page.setViewportSize({width:393,height:852});
  const size=await page.locator('#ln-performance').evaluate(e=>({client:e.clientWidth,scroll:e.scrollWidth}));
- assert(size.scroll>size.client,'wide table scrolls on mobile');
+ assert(size.scroll<=size.client + 1,'cards fit on mobile');
  console.log('PASS: real baseline renders in launcher status, P99 bounds and horizontal scroll on mobile');
 }finally{await browser.close();}

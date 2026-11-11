@@ -1,0 +1,300 @@
+[
+ {
+  "version": "2026.1111.0",
+  "date": "2026-11-11T03:00:00Z",
+  "entries": [
+   {
+    "category": "Website",
+    "category_fr": "Site web",
+    "type": "add",
+    "title": "The website opens: profiles, account settings, rankings, beatmaps, teams, news",
+    "title_fr": "Ouverture du site : profils, réglages du compte, classements, beatmaps, équipes, actualités",
+    "major": true
+   },
+   {
+    "category": "Website",
+    "category_fr": "Site web",
+    "type": "add",
+    "title": "Wiki and changelog, in the game and on the site, in English and French",
+    "title_fr": "Wiki et journal des modifications, dans le jeu et sur le site, en français et en anglais",
+    "major": true
+   },
+   {
+    "category": "Website",
+    "category_fr": "Site web",
+    "type": "fix",
+    "title": "Links opened from the game (profiles, beatmaps, scores, rooms, \"report an issue\") now lead to a page of the site",
+    "title_fr": "Les liens ouverts depuis le jeu (profils, beatmaps, scores, salles, « signaler un problème ») mènent maintenant à une page du site",
+    "major": false
+   },
+   {
+    "category": "Launcher",
+    "category_fr": "Launcher",
+    "type": "add",
+    "title": "Warning when the browser draws on the processor instead of the graphics card, with the steps to fix it",
+    "title_fr": "Avertissement quand le navigateur dessine avec le processeur au lieu de la carte graphique, avec la marche à suivre",
+    "major": false
+   },
+   {
+    "category": "Online",
+    "category_fr": "En ligne",
+    "type": "add",
+    "title": "News posts are written in English and French and served in the player's language",
+    "title_fr": "Les actualités sont rédigées en français et en anglais et servies dans la langue du joueur",
+    "major": false
+   }
+  ]
+ },
+ {
+  "version": "2026.1110.0",
+  "date": "2026-11-10T21:00:00Z",
+  "entries": [
+   {
+    "category": "Online",
+    "category_fr": "En ligne",
+    "type": "add",
+    "title": "Medals, with a notification when one is earned",
+    "title_fr": "Médailles, avec une notification à chaque obtention",
+    "major": true
+   },
+   {
+    "category": "Online",
+    "category_fr": "En ligne",
+    "type": "add",
+    "title": "Daily challenge with streaks",
+    "title_fr": "Défi quotidien avec séries",
+    "major": true
+   },
+   {
+    "category": "Online",
+    "category_fr": "En ligne",
+    "type": "add",
+    "title": "Quick play and ranked play matchmaking",
+    "title_fr": "Appariement en partie rapide et en partie classée",
+    "major": true
+   },
+   {
+    "category": "Online",
+    "category_fr": "En ligne",
+    "type": "add",
+    "title": "Teams, with tag and flag",
+    "title_fr": "Équipes, avec tag et drapeau",
+    "major": false
+   },
+   {
+    "category": "Online",
+    "category_fr": "En ligne",
+    "type": "add",
+    "title": "Comments and votes on beatmaps, beatmap tags, pinned scores, recent activity, rank history",
+    "title_fr": "Commentaires et votes sur les beatmaps, tags de beatmap, scores épinglés, activité récente, historique de rang",
+    "major": false
+   },
+   {
+    "category": "Online",
+    "category_fr": "En ligne",
+    "type": "add",
+    "title": "Beatmap search understands filters such as stars>=6, ar>9, length<3m, status=ranked",
+    "title_fr": "La recherche de beatmaps comprend des filtres comme stars>=6, ar>9, length<3m, status=ranked",
+    "major": false
+   },
+   {
+    "category": "Performance",
+    "category_fr": "Performances",
+    "type": "fix",
+    "title": "Memory collection no longer stops the game several times a second (larger nursery)",
+    "title_fr": "Le nettoyage de la mémoire n'arrête plus le jeu plusieurs fois par seconde (nursery agrandie)",
+    "major": true
+   },
+   {
+    "category": "Performance",
+    "category_fr": "Performances",
+    "type": "fix",
+    "title": "The draw thread no longer waits up to 100 ms for the update thread and misses screen refreshes",
+    "title_fr": "Le thread de dessin n'attend plus le thread de mise à jour jusqu'à 100 ms en ratant des rafraîchissements",
+    "major": false
+   },
+   {
+    "category": "Performance",
+    "category_fr": "Performances",
+    "type": "fix",
+    "title": "Game logic capped at 240 updates per second by default instead of running unbounded",
+    "title_fr": "Logique du jeu plafonnée à 240 mises à jour par seconde par défaut au lieu de tourner sans limite",
+    "major": false
+   },
+   {
+    "category": "Performance",
+    "category_fr": "Performances",
+    "type": "fix",
+    "title": "Images are decoded by native code instead of interpreted code",
+    "title_fr": "Les images sont décodées par du code natif au lieu de code interprété",
+    "major": false
+   },
+   {
+    "category": "Performance",
+    "category_fr": "Performances",
+    "type": "fix",
+    "title": "The largest engine file is kept in the browser's cache between visits",
+    "title_fr": "Le plus gros fichier du moteur reste dans le cache du navigateur entre deux visites",
+    "major": false
+   },
+   {
+    "category": "Audio",
+    "category_fr": "Audio",
+    "type": "fix",
+    "title": "Hit sounds are heard about 63 ms after the key press instead of 85 to 112 ms on the test machine",
+    "title_fr": "Les sons de frappe s'entendent environ 63 ms après l'appui au lieu de 85 à 112 ms sur la machine de test",
+    "major": true
+   },
+   {
+    "category": "Audio",
+    "category_fr": "Audio",
+    "type": "fix",
+    "title": "The audio buffer shrinks back after a dropout instead of staying enlarged for the whole session",
+    "title_fr": "Le tampon audio rétrécit après une coupure au lieu de rester agrandi toute la session",
+    "major": false
+   },
+   {
+    "category": "Audio",
+    "category_fr": "Audio",
+    "type": "fix",
+    "title": "The music clock is compensated with a measured output delay",
+    "title_fr": "L'horloge de la musique est compensée avec un retard de sortie mesuré",
+    "major": false
+   },
+   {
+    "category": "Input",
+    "category_fr": "Entrées",
+    "type": "fix",
+    "title": "Keys held while the window loses focus no longer stay stuck",
+    "title_fr": "Les touches tenues quand la fenêtre perd le focus ne restent plus coincées",
+    "major": false
+   },
+   {
+    "category": "Input",
+    "category_fr": "Entrées",
+    "type": "fix",
+    "title": "The cursor is only captured during gameplay and in fullscreen",
+    "title_fr": "Le curseur n'est capturé qu'en partie et en plein écran",
+    "major": false
+   },
+   {
+    "category": "Input",
+    "category_fr": "Entrées",
+    "type": "add",
+    "title": "F11 and Alt+Enter toggle fullscreen; Escape reaches the game in fullscreen on Chromium browsers",
+    "title_fr": "F11 et Alt+Entrée basculent le plein écran ; Échap arrive au jeu en plein écran sur les navigateurs Chromium",
+    "major": false
+   },
+   {
+    "category": "Launcher",
+    "category_fr": "Launcher",
+    "type": "add",
+    "title": "Launcher with news, port status, known issues and start-up options",
+    "title_fr": "Launcher avec les nouvelles, l'état du portage, les problèmes connus et les options de démarrage",
+    "major": true
+   },
+   {
+    "category": "Launcher",
+    "category_fr": "Launcher",
+    "type": "add",
+    "title": "iPhone / iPad preset, applied automatically on those devices",
+    "title_fr": "Préréglage iPhone / iPad, appliqué automatiquement sur ces appareils",
+    "major": false
+   },
+   {
+    "category": "Launcher",
+    "category_fr": "Launcher",
+    "type": "add",
+    "title": "Performance and crash diagnostics, which can be turned off, and a Status tab showing the measurements",
+    "title_fr": "Diagnostics de performance et de plantage, désactivables, et un onglet État qui montre les mesures",
+    "major": false
+   },
+   {
+    "category": "Launcher",
+    "category_fr": "Launcher",
+    "type": "add",
+    "title": "In-game performance graph (Ctrl+Alt+P) and engine console (Ctrl+Alt+L)",
+    "title_fr": "Graphique de performances en jeu (Ctrl+Alt+P) et console du moteur (Ctrl+Alt+L)",
+    "major": false
+   }
+  ]
+ },
+ {
+  "version": "2026.1109.0",
+  "date": "2026-11-09T15:00:00Z",
+  "entries": [
+   {
+    "category": "Gameplay",
+    "category_fr": "Jeu",
+    "type": "add",
+    "title": "First public version: the lazer client running in a browser tab, osu! standard",
+    "title_fr": "Première version publique : le client lazer dans un onglet de navigateur, osu! standard",
+    "major": true
+   },
+   {
+    "category": "Gameplay",
+    "category_fr": "Jeu",
+    "type": "add",
+    "title": "WebGL2 rendering with the game's original renderer",
+    "title_fr": "Rendu WebGL2 avec le moteur de rendu d'origine du jeu",
+    "major": false
+   },
+   {
+    "category": "Gameplay",
+    "category_fr": "Jeu",
+    "type": "add",
+    "title": "Game, drawing, audio and input each run on their own thread",
+    "title_fr": "Le jeu, le dessin, l'audio et les entrées tournent chacun sur leur thread",
+    "major": false
+   },
+   {
+    "category": "Audio",
+    "category_fr": "Audio",
+    "type": "add",
+    "title": "xcbass, xc-osu!'s own audio engine",
+    "title_fr": "xcbass, le moteur audio de xc-osu!",
+    "major": false
+   },
+   {
+    "category": "Gameplay",
+    "category_fr": "Jeu",
+    "type": "add",
+    "title": "The original Realm database, with beatmaps, skins and settings kept by the browser",
+    "title_fr": "La base de données Realm d'origine, avec beatmaps, skins et réglages conservés par le navigateur",
+    "major": false
+   },
+   {
+    "category": "Gameplay",
+    "category_fr": "Jeu",
+    "type": "add",
+    "title": "Import by dropping .osz, .osk and .osr files on the page",
+    "title_fr": "Import par dépôt de fichiers .osz, .osk et .osr sur la page",
+    "major": false
+   },
+   {
+    "category": "Online",
+    "category_fr": "En ligne",
+    "type": "add",
+    "title": "xc-osu! servers: accounts, score submission, pp, rankings, friends, chat",
+    "title_fr": "Serveurs xc-osu! : comptes, envoi des scores, pp, classements, amis, chat",
+    "major": true
+   },
+   {
+    "category": "Online",
+    "category_fr": "En ligne",
+    "type": "add",
+    "title": "Beatmap search and download through public mirrors",
+    "title_fr": "Recherche et téléchargement de beatmaps par des miroirs publics",
+    "major": false
+   },
+   {
+    "category": "Online",
+    "category_fr": "En ligne",
+    "type": "add",
+    "title": "Multiplayer rooms, playlists and spectating",
+    "title_fr": "Salles multijoueur, playlists et mode spectateur",
+    "major": false
+   }
+  ]
+ }
+]

@@ -89,6 +89,9 @@
     .spec dt { color: var(--l-ink-3); }
     .spec dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 
+    .news-divider { border: 0; border-top: 1px solid var(--line); margin: 22px 0; }
+    .post { overflow-wrap: anywhere; }
+    .post p { line-height: 1.7; }
     .posts { display: grid; gap: 16px; max-width: 760px; }
     .post-meta { display: flex; gap: 10px; align-items: center; font-size: 13px; color: var(--l-ink-3); }
     .tag { font-size: 11.5px; padding: 1px 9px; border-radius: 999px; border: 1px solid var(--l-edge-2); color: var(--l-ink-2); }
@@ -257,7 +260,8 @@
     .pf-stats { margin-top: 6px; white-space: pre-line; font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); }
 
     @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
-  </style>
+  .perf-filter { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:20px 0; } .perf-filter select { max-width:100%; padding:10px; background:var(--bg); color:inherit; border:1px solid var(--line); border-radius:8px; } .perf-results { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr)); gap:16px; margin-top:20px; } .perf-card { padding:20px; border:1px solid var(--line); border-radius:14px; background:var(--panel); min-width:0; } .perf-card header { display:flex; align-items:center; gap:10px; justify-content:space-between; } .perf-card h3 { margin:0; font-size:17px; } .perf-card p { line-height:1.6; overflow-wrap:anywhere; } .perf-metrics { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin:20px 0; } .perf-metrics dt { font-size:12px; color:var(--l-ink-2); } .perf-metrics dd { margin:7px 0 0; font-size:21px; font-weight:650; } .perf-metrics small { font-size:12px; } .perf-card summary { cursor:pointer; color:var(--l-ink-2); padding:8px 0; } .perf-caution { color:#efc580; font-size:12px; } @media(max-width:450px) { .perf-metrics { grid-template-columns:1fr; } .perf-metrics > div { display:flex; justify-content:space-between; align-items:center; } .perf-metrics dd { margin:0; } }
+</style>
   <script type="module" src="main#[.{fingerprint}].js"></script>
 </head>
 <body>

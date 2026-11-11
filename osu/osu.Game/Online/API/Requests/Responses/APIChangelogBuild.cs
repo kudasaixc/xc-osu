@@ -35,7 +35,7 @@ namespace osu.Game.Online.API.Requests.Responses
         [JsonProperty("versions")]
         public VersionNavigation Versions { get; set; }
 
-        public string Url => $"https://osu.ppy.sh/home/changelog/{UpdateStream.Name}/{Version}";
+        public string Url => $"/home/changelog/{UpdateStream.Name}/{Version}"; // xc-osu!: relative, resolved against this server's site
 
         public class VersionNavigation
         {

@@ -147,6 +147,31 @@ cannot abort the start gate anymore. `tools/ios-preset-test.mjs` covers these ca
 This mitigates startup pressure and fixes a concrete gate error; physical-device
 memory kills still require iPhone validation. No native/AOT rebuild is needed.
 
+### Crash telemetry (2026-11-10)
+
+All in `js/xc-telemetry.js` (page only, no engine change):
+
+- `crash` event (`xcTelemetryCrash(name, {code, text})`, called by `main.js` on a non-zero engine exit and on a failed
+  runtime start): exit code, message, current screen/overlay, uptime, JS heap and the last 60 console lines of every
+  level, scrubbed. Sent at once by beacon.
+- Error / warning lines arriving within 300 ms of each other (stack trace, Mono thread dump) are one `log` event
+  (`text` multi-line, `lines`, up to 80 lines / 9000 chars; `cont: 1` when a burst continues in a second event).
+  A message is sent three times at most per session, then counted in `log-repeats`; lines matching the fatal pattern
+  (`FATAL`: thread dump, assertion, RuntimeError, abort...) are category `crash`, never capped, stored synchronously
+  and beaconed 60 ms later.
+- Scrubbing keeps method and symbol names: only identifiers of 32+ characters containing a digit and no underscore
+  are masked, plus JWTs, e-mails, labelled secrets, URL query strings and numeric path segments.
+- `unclean-exit` event: every session keeps a marker in `localStorage` (`xc.tm.live.v1.<sid>`, refreshed every 5 s
+  with the screen/overlay). A marker without an end (`pagehide` or `crash`) found by the next launch is reported with
+  the dead session id (`prev`), its last screen, uptime, whether it was hidden, and the first fatal line seen. This is
+  the only trace of a frozen page or a killed tab. Markers refreshed in the last 20 s belong to another open tab.
+- `iid`: random installation id (`xc.tm.iid`) sent with each batch, so the sessions of one browser can be linked.
+  Removed with everything else when diagnostics are disabled.
+
+`python3 tools/tmreport.py` lists crashes, unclean exits, fatal log blocks and sessions per installation.
+Test: `node tools/telemetry-crash-test.mjs`. Not covered yet: the beatmap / ruleset / mods being loaded (needs the
+engine side).
+
 ### Local telemetry viewer
 
 Launcher → Options → Diagnostics & performance graphs → View local telemetry. The browser retains up to three sessions of 256 KB each independently of server acknowledgements. The viewer shows stutter frame intervals, browser context events, raw GC/texture/frame data, and session JSON; export and delete operate locally. Disabling diagnostics stops new collection on the next launch but preserves existing local history until deleted. Older records are evicted at the limit; partial captures are labelled. No previous server-only sessions are reconstructed. Run `node tools/telemetry-local-test.mjs` to verify archive persistence, opt-out, viewing, export, deletion and launcher integration.
@@ -230,3 +255,19 @@ press (up to ~165 ms after a few underruns), of which only ~50 ms is the browser
   36-54 ms) while the music position was compensated with 52.7 ms (`baseLatency + outputLatency` + one quantum): the
   game's music clock ran ~8 ms behind the music. `main.js` now feeds xcbass the measured average (smoothed, 1 ms
   hysteresis); `?oldlatency` restores the previous figure for comparison.
+
+## Site web /web/ (2026-11-11)
+Équivalent d'osu-web pour xc-osu! : profils, réglages du compte, classements, beatmaps, équipes, scores, salons, amis, recherche, actualités, wiki, journal des modifications. Servi sous `https://osu.xcsoftworks.com/web/`.
+- Sources : `web/` (SPA en modules ES sans build : `index.html`, `web.css`, `js/*.js`, `data/medals.json`, `fonts/`). Routage History sous `/web`, textes `t(en, fr)`, jeton dans `localStorage` (`xc.web.auth`).
+- Déploiement : `tools/deploy-web.sh` → `site/web/a/<hash du contenu>/` + `site/web/index.html` (`__A__` remplacé). `tools/deploy.sh` exclut `/web/`.
+- Tests : `node tools/web-test.mjs` (serveur isolé sur `XC_WEB_API`, défaut `http://127.0.0.1:5081`) ; `XC_WEB_READONLY=http://127.0.0.1:5080 XC_SHOT_DIR=…` ajoute une passe en lecture seule sur les vraies données avec captures desktop + mobile et contrôle de débordement.
+- Apache (`/etc/apache2/sites-enabled/osu-le-ssl.conf`, fichier réel — la copie dans `sites-available` est périmée) : GET/HEAD sur `/users|u|beatmapsets|beatmaps|b|s|scores|teams|rankings|multiplayer|home|wiki|community|comments|news|changelog|help|legal|store|p` → 302 vers `/web$0` ; `POST /users` (inscription du jeu) reste proxifié vers le serveur ; repli SPA `^/web/` (hors `/web/a/`) → `/web/index.html` ; COEP/COOP retirés sur `/web` seulement ; `/web/a/` en cache immuable.
+- Liens du jeu : `ExternalLinkOpener` réécrit `https://osu.ppy.sh…` vers `api.Endpoints.WebsiteUrl` ; `xc-ui.js` fait de même côté navigateur. Les sections qui n'existent pas (forums, boutique, tournois) tombent sur une page qui l'explique ; « report an issue » (`/community/forums/topics/create`) mène à `/web/wiki/Reporting_a_problem`.
+- Visuel : toute la palette dérive d'une teinte `--h` (une par section, posée par `main.js` ; un profil applique la teinte du joueur). Colonne de 1000 px, blocs à plat séparés de 2 px, bandeau de titre pleine largeur, lignes de score avec bloc pp en biais. Police Nunito auto-hébergée (`web/fonts/`), aucune requête vers un tiers pour le style.
+
+## Contenu rédigé : actualités, wiki, journal des modifications (2026-11-11)
+Dans `server/XcOsu.Server/Content/` (copié à côté du binaire) :
+- `news/YYYY-MM-DD[THHMM]-slug.{en,fr}.md` (première ligne `# Titre`) ;
+- `wiki/{en,fr}/Chemin.md` (`Main_page.md` utilise les blocs HTML `wiki-main-page__blurb` / `wiki-main-page-panel` attendus par l'overlay du jeu) ;
+- `changelog.json` (builds du plus récent au plus ancien ; entrées `category`/`category_fr`, `type`, `title`/`title_fr`, `major`).
+Langue : `?locale=` puis `Accept-Language`. Endpoints aux formes attendues par le jeu : `/api/v2/news[/{slug}]`, `/api/v2/wiki/{locale}/{path}`, `/api/v2/changelog[/{stream}/{version}]`, plus `/api/v2/wiki-index` et `/api/xc/menu-content` pour le site et le menu. Ajouter un article = déposer deux fichiers puis republier le serveur.

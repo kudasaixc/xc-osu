@@ -44,6 +44,9 @@ namespace XcOsu.Server.Api
             app.MapGet("/api/xc/cover/{id}", (string id, Db db) =>
                 serve(int.TryParse(id, out int u) ? Path.Combine(db.DataDirectory, "covers", u.ToString()) : "", "cover-default.jpg"));
 
+            // banners of the game's main menu ({ image, url, begins, expires } entries); none for now
+            app.MapGet("/api/xc/menu-content", () => Json.Ok(new { images = Array.Empty<object>() }));
+
             app.MapGet("/api/xc/settings", () => Results.File(Path.Combine(assets, "settings.html"), "text/html; charset=utf-8"));
 
             app.MapGet("/api/xc/badge/{name}", (string name) => serve(Path.Combine(assets, "badge-" + Path.GetFileName(name)), "badge-xc.png"));

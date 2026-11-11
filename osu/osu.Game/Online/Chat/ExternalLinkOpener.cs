@@ -47,6 +47,13 @@ namespace osu.Game.Online.Chat
         {
             bool isTrustedDomain;
 
+            // xc-osu!: links written for the official website lead to the same page of this server's own site.
+            foreach (string official in new[] { @"https://osu.ppy.sh", @"http://osu.ppy.sh" })
+            {
+                if (url.StartsWith(official, StringComparison.OrdinalIgnoreCase) && (url.Length == official.Length || url[official.Length] is '/' or '?' or '#'))
+                    url = api.Endpoints.WebsiteUrl + url[official.Length..];
+            }
+
             if (url.StartsWith('/'))
             {
                 url = $"{api.Endpoints.WebsiteUrl}{url}";

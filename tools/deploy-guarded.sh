@@ -38,7 +38,7 @@ STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 SNAPSHOT="$BACKUPS/site-pre-$MODE-$STAMP-$$"
 mkdir "$SNAPSHOT"
 BACKUP_READY=0
-RESTORE_ARGS=(--exclude=/dev/ --exclude=/aot/ --exclude=/backgrounds/ --exclude=/launcher/performance.json)
+RESTORE_ARGS=(--exclude=/dev/ --exclude=/aot/ --exclude=/backgrounds/ --exclude=/web/ --exclude=/launcher/performance.json)
 
 rollback() {
     code=${1:-$?}

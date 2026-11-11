@@ -1,65 +1,496 @@
 {
- "updated": "2026-11-10",
- "posts": [
-  {
-   "date": "2026-11-10", "tag": "launcher",
-   "title": { "fr": "Nouveau launcher", "en": "New launcher" },
-   "body": { "fr": "Le moteur se télécharge en arrière-plan dès l’ouverture de la page, pendant que tu règles ton lancement.", "en": "The engine now downloads in the background as soon as the page opens, while you set up your launch." },
-   "items": [
-    { "fr": "Limiteurs RAM (GC souple / strict), CPU (cœurs annoncés, threads, thread pool), plafonds FPS / update / arrière-plan", "en": "RAM limiters (soft / hard GC), CPU limiters (reported cores, workers, thread pool), FPS / update / background caps" },
-    { "fr": "Résolution de rendu, préférence GPU, canvas faible latence, MSAA, latence audio", "en": "Render resolution, GPU preference, low-latency canvas, MSAA, audio latency" },
-    { "fr": "Graphiques de performance en jeu (Ctrl+Alt+P) et console (Ctrl+Alt+L)", "en": "In-game performance graphs (Ctrl+Alt+P) and console (Ctrl+Alt+L)" },
-    { "fr": "Lancement verbeux : les vraies étapes et les vrais logs du moteur", "en": "Verbose launch: the engine’s real stages and real logs" }
-   ]
-  },
-  {
-   "date": "2026-11-09", "tag": "perf",
-   "title": { "fr": "Build AOT mixte (test)", "en": "Mixed AOT build (test)" },
-   "body": { "fr": "Une partie des assemblies compilée en WebAssembly natif au lieu de l’interpréteur. Disponible sur /aot/ pour les tests, pas encore par défaut.", "en": "Part of the assemblies compiled to native WebAssembly instead of the interpreter. Available at /aot/ for testing, not the default yet." }
-  },
-  {
-   "date": "2026-11-09", "tag": "online",
-   "title": { "fr": "Serveur xc-osu! en ligne", "en": "xc-osu! server online" },
-   "body": { "fr": "API compatible lazer hébergée ici : comptes, scores, pp calculés avec les calculateurs officiels, classements, chat, amis, spectateur et multijoueur via SignalR. Les beatmaps arrivent par des miroirs (catboy.best, osu.direct, nerinyan).", "en": "Lazer-compatible API hosted here: accounts, scores, pp from the official calculators, rankings, chat, friends, spectator and multiplayer over SignalR. Beatmaps come from mirrors (catboy.best, osu.direct, nerinyan)." }
-  },
-  {
-   "date": "2026-11-09", "tag": "database",
-   "title": { "fr": "Le vrai Realm, compilé en wasm", "en": "The real Realm, compiled to wasm" },
-   "body": { "fr": "realm-core d’origine compilé avec pthreads, avec une couche fichiers cohérente (xcvfs) pour read/write/mmap. Fini le shim en mémoire : ta base est un vrai fichier .realm sauvegardé dans IndexedDB.", "en": "The original realm-core built with pthreads, plus a coherent file layer (xcvfs) for read/write/mmap. No more in-memory shim: your database is a real .realm file saved in IndexedDB." }
-  },
-  {
-   "date": "2026-11-09", "tag": "audio",
-   "title": { "fr": "xcbass : l’audio sans BASS", "en": "xcbass: audio without BASS" },
-   "body": { "fr": "Réimplémentation de l’API BASS / BASS_FX / BASSmix en C (décodeurs dr_* et stb_vorbis, tempo signalsmith), mixée dans un tampon partagé lu par un AudioWorklet.", "en": "A C reimplementation of the BASS / BASS_FX / BASSmix API (dr_* and stb_vorbis decoders, signalsmith tempo), mixed into a shared ring read by an AudioWorklet." }
-  },
-  {
-   "date": "2026-11-09", "tag": "engine",
-   "title": { "fr": "Premier boot multithread", "en": "First multithreaded boot" },
-   "body": { "fr": "Rendu WebGL2 sur un worker dédié (OffscreenCanvas), threads update / audio / entrées en vrais threads .NET. Le GLRenderer d’osu-framework tourne sans modification de fond.", "en": "WebGL2 rendering on a dedicated worker (OffscreenCanvas), update / audio / input as real .NET threads. osu-framework’s GLRenderer runs essentially unmodified." }
-  }
- ],
- "progress": [
-  { "name": { "fr": "Rendu WebGL2", "en": "WebGL2 rendering" }, "weight": 3, "status": "done" },
-  { "name": { "fr": "Multithreading", "en": "Multithreading" }, "weight": 3, "status": "done" },
-  { "name": { "fr": "Audio (xcbass)", "en": "Audio (xcbass)" }, "weight": 3, "status": "done" },
-  { "name": { "fr": "Base de données Realm", "en": "Realm database" }, "weight": 3, "status": "done" },
-  { "name": { "fr": "Sauvegarde locale", "en": "Local saves" }, "weight": 2, "status": "done" },
-  { "name": { "fr": "Clavier, souris, tactile, manette", "en": "Keyboard, mouse, touch, gamepad" }, "weight": 2, "status": "done" },
-  { "name": { "fr": "Tablettes graphiques", "en": "Drawing tablets" }, "weight": 1, "status": "partial", "note": { "fr": "Stylet via Pointer Events ; WebHID pas encore", "en": "Pen via Pointer Events; WebHID not yet" } },
-  { "name": { "fr": "Import beatmaps / skins", "en": "Beatmap / skin import" }, "weight": 2, "status": "done" },
-  { "name": { "fr": "Comptes, scores, pp, classements", "en": "Accounts, scores, pp, rankings" }, "weight": 3, "status": "done" },
-  { "name": { "fr": "Téléchargement de beatmaps", "en": "Beatmap downloads" }, "weight": 2, "status": "done" },
-  { "name": { "fr": "Spectateur / multijoueur", "en": "Spectator / multiplayer" }, "weight": 2, "status": "partial" },
-  { "name": { "fr": "Modes taiko / catch / mania", "en": "taiko / catch / mania" }, "weight": 2, "status": "todo" },
-  { "name": { "fr": "Vidéos (storyboards, fonds)", "en": "Video (storyboards, backgrounds)" }, "weight": 1, "status": "todo", "note": { "fr": "FFmpeg n’est pas encore porté", "en": "FFmpeg is not ported yet" } },
-  { "name": { "fr": "Build AOT (performances)", "en": "AOT build (performance)" }, "weight": 2, "status": "partial" },
-  { "name": { "fr": "Launcher", "en": "Launcher" }, "weight": 1, "status": "done" }
- ],
- "issues": [
-  { "severity": "high", "title": { "fr": "Build AOT instable", "en": "AOT build unstable" }, "body": { "fr": "Les appels interpréteur → AOT de génériques partagés avec des structs 8 octets (Vector2) plantent (« function signature mismatch »). L’AOT reste en test sur /aot/.", "en": "Interpreter → AOT calls of shared generics with 8-byte structs (Vector2) crash (\"function signature mismatch\"). AOT stays in testing at /aot/." } },
-  { "severity": "medium", "title": { "fr": "osu! standard uniquement", "en": "osu! standard only" }, "body": { "fr": "Seul le ruleset osu! est embarqué pour l’instant.", "en": "Only the osu! ruleset ships for now." } },
-  { "severity": "medium", "title": { "fr": "Pas de vidéo", "en": "No video" }, "body": { "fr": "Les vidéos de storyboard et de fond ne sont pas lues (FFmpeg non porté).", "en": "Storyboard and background videos don’t play (FFmpeg not ported)." } },
-  { "severity": "low", "title": { "fr": "Premier lancement lourd", "en": "Heavy first launch" }, "body": { "fr": "Le premier téléchargement du moteur est gros ; les suivants viennent du cache du navigateur.", "en": "The first engine download is large; later launches come from the browser cache." } },
-  { "severity": "low", "title": { "fr": "Testé surtout sous Chromium", "en": "Mostly tested on Chromium" }, "body": { "fr": "Il faut SharedArrayBuffer, WebGL2 et l’isolation cross-origin. Firefox et Safari sont moins testés.", "en": "Needs SharedArrayBuffer, WebGL2 and cross-origin isolation. Firefox and Safari are less tested." } }
- ]
+  "updated": "2026-11-11",
+  "posts": [
+    {
+      "date": "2026-11-11",
+      "tag": "site",
+      "title": {
+        "fr": "xc-osu! a son site",
+        "en": "xc-osu! has its website"
+      },
+      "body": {
+        "fr": "Profils, réglages du compte, classements, beatmaps, équipes, actualités, wiki et journal des modifications sont sur osu.xcsoftworks.com/web. Les liens ouverts depuis le jeu (profil, beatmap, score, « signaler un problème ») y mènent maintenant.",
+        "en": "Profiles, account settings, rankings, beatmaps, teams, news, wiki and changelog live at osu.xcsoftworks.com/web. Links opened from the game (profile, beatmap, score, “report an issue”) now lead there."
+      },
+      "items": [
+        {
+          "fr": "Modifier son profil : avatar, bannière, page « me! », mot de passe, équipe",
+          "en": "Edit your profile: avatar, cover, “me!” page, password, team"
+        },
+        {
+          "fr": "Wiki en français et en anglais : performances, son, contrôles, dépannage, vie privée",
+          "en": "Wiki in French and English: performance, sound, controls, troubleshooting, privacy"
+        },
+        {
+          "fr": "Actualités et journal des modifications, aussi lisibles dans le jeu",
+          "en": "News and changelog, also readable inside the game"
+        }
+      ]
+    },
+    {
+      "date": "2026-11-11",
+      "tag": "diagnostics",
+      "title": {
+        "fr": "Alerte quand le navigateur dessine sans carte graphique",
+        "en": "A warning when the browser draws without the graphics card"
+      },
+      "body": {
+        "fr": "Si le navigateur fait le rendu avec le processeur (accélération matérielle coupée ou pilote bloqué), le jeu est injouable quelle que soit la carte graphique. Le launcher le détecte maintenant et explique comment réactiver l’accélération.",
+        "en": "When the browser renders on the CPU (hardware acceleration off or driver blocked), the game is unplayable whatever the graphics card. The launcher now detects it and explains how to turn acceleration back on."
+      }
+    },
+    {
+      "date": "2026-11-11",
+      "tag": "correctifs",
+      "title": {
+        "fr": "Correctif : erreur du chat en pleine partie",
+        "en": "Fix: chat error in the middle of a play"
+      },
+      "body": {
+        "fr": "Les diagnostics ont remonté une erreur du chat qui pouvait interrompre une partie quand le serveur répondait sans message. Elle est corrigée dans cette version.",
+        "en": "Diagnostics reported a chat error that could interrupt a play when the server answered without any message. It is fixed in this version."
+      }
+    },
+    {
+      "date": "2026-11-10",
+      "tag": "nouveautés",
+      "title": {
+        "fr": "Le point sur xc-osu!",
+        "en": "What’s new in xc-osu!"
+      },
+      "body": {
+        "fr": "Le launcher évolue : choisis tes réglages, découvre les dernières nouvelles et retrouve l’état du portage avant de lancer une partie. Le moteur se prépare en arrière-plan pendant ta visite.",
+        "en": "The launcher is evolving: choose your settings, catch up on news and check port progress before playing. The engine prepares in the background while you browse."
+      }
+    },
+    {
+      "date": "2026-11-10",
+      "tag": "performances",
+      "title": {
+        "fr": "Un historique pour suivre les performances",
+        "en": "A history to track performance"
+      },
+      "body": {
+        "fr": "L’onglet État présente les mesures reçues, regroupées par version, GPU et configuration. Temps des images et saccades permettent de suivre le comportement du jeu. Les résultats dépendent du matériel et du nombre de sessions : ils ne garantissent pas un gain de FPS.",
+        "en": "The Status tab shows collected measurements grouped by version, GPU and configuration. Frame times and stutters help track game behavior. Results depend on hardware and sample sizes; they do not guarantee higher FPS."
+      }
+    },
+    {
+      "date": "2026-11-10",
+      "tag": "mobile",
+      "title": {
+        "fr": "Un préréglage pour iPhone et iPad",
+        "en": "An iPhone and iPad preset"
+      },
+      "body": {
+        "fr": "Dans les options, le préréglage iPhone / iPad limite la résolution de rendu et réduit les workers en réserve. Il désactive aussi le plein écran automatique et le verrouillage du pointeur. Ces réglages s’appliquent au prochain lancement ; la compatibilité reste à vérifier selon le navigateur.",
+        "en": "In Options, the iPhone / iPad preset limits render resolution and reduces idle workers. It also disables automatic fullscreen and pointer lock. Settings apply on the next launch; compatibility still depends on the browser."
+      }
+    },
+    {
+      "date": "2026-11-10",
+      "tag": "diagnostics",
+      "title": {
+        "fr": "Mieux comprendre les saccades et les erreurs",
+        "en": "Understanding stutters and errors"
+      },
+      "body": {
+        "fr": "Les diagnostics de performance disposent d’une vue locale pour consulter les mesures. Les graphiques en jeu et la console restent accessibles avec Ctrl+Alt+P et Ctrl+Alt+L. Tu peux désactiver l’envoi des diagnostics dans les options.",
+        "en": "Performance diagnostics include a local view for inspecting measurements. In-game graphs and the console remain available with Ctrl+Alt+P and Ctrl+Alt+L. You can disable diagnostic uploads in Options."
+      }
+    },
+    {
+      "date": "2026-11-10",
+      "tag": "launcher",
+      "title": {
+        "fr": "Nouveau launcher",
+        "en": "New launcher"
+      },
+      "body": {
+        "fr": "Le moteur se télécharge en arrière-plan dès l’ouverture de la page, pendant que tu règles ton lancement.",
+        "en": "The engine now downloads in the background as soon as the page opens, while you set up your launch."
+      },
+      "items": [
+        {
+          "fr": "Limiteurs RAM (GC souple / strict), CPU (cœurs annoncés, threads, thread pool), plafonds FPS / update / arrière-plan",
+          "en": "RAM limiters (soft / hard GC), CPU limiters (reported cores, workers, thread pool), FPS / update / background caps"
+        },
+        {
+          "fr": "Résolution de rendu, préférence GPU, canvas faible latence, MSAA, latence audio",
+          "en": "Render resolution, GPU preference, low-latency canvas, MSAA, audio latency"
+        },
+        {
+          "fr": "Graphiques de performance en jeu (Ctrl+Alt+P) et console (Ctrl+Alt+L)",
+          "en": "In-game performance graphs (Ctrl+Alt+P) and console (Ctrl+Alt+L)"
+        },
+        {
+          "fr": "Lancement verbeux : les vraies étapes et les vrais logs du moteur",
+          "en": "Verbose launch: the engine’s real stages and real logs"
+        }
+      ]
+    },
+    {
+      "date": "2026-11-09",
+      "tag": "perf",
+      "title": {
+        "fr": "Build AOT mixte (test)",
+        "en": "Mixed AOT build (test)"
+      },
+      "body": {
+        "fr": "Une partie des assemblies compilée en WebAssembly natif au lieu de l’interpréteur. Disponible sur /aot/ pour les tests, pas encore par défaut.",
+        "en": "Part of the assemblies compiled to native WebAssembly instead of the interpreter. Available at /aot/ for testing, not the default yet."
+      }
+    },
+    {
+      "date": "2026-11-09",
+      "tag": "online",
+      "title": {
+        "fr": "Serveur xc-osu! en ligne",
+        "en": "xc-osu! server online"
+      },
+      "body": {
+        "fr": "API compatible lazer hébergée ici : comptes, scores, pp calculés avec les calculateurs officiels, classements, chat, amis, spectateur et multijoueur via SignalR. Les beatmaps arrivent par des miroirs (catboy.best, osu.direct, nerinyan).",
+        "en": "Lazer-compatible API hosted here: accounts, scores, pp from the official calculators, rankings, chat, friends, spectator and multiplayer over SignalR. Beatmaps come from mirrors (catboy.best, osu.direct, nerinyan)."
+      }
+    },
+    {
+      "date": "2026-11-09",
+      "tag": "database",
+      "title": {
+        "fr": "Le vrai Realm, compilé en wasm",
+        "en": "The real Realm, compiled to wasm"
+      },
+      "body": {
+        "fr": "realm-core d’origine compilé avec pthreads, avec une couche fichiers cohérente (xcvfs) pour read/write/mmap. Fini le shim en mémoire : ta base est un vrai fichier .realm sauvegardé dans IndexedDB.",
+        "en": "The original realm-core built with pthreads, plus a coherent file layer (xcvfs) for read/write/mmap. No more in-memory shim: your database is a real .realm file saved in IndexedDB."
+      }
+    },
+    {
+      "date": "2026-11-09",
+      "tag": "audio",
+      "title": {
+        "fr": "xcbass : l’audio sans BASS",
+        "en": "xcbass: audio without BASS"
+      },
+      "body": {
+        "fr": "Réimplémentation de l’API BASS / BASS_FX / BASSmix en C (décodeurs dr_* et stb_vorbis, tempo signalsmith), mixée dans un tampon partagé lu par un AudioWorklet.",
+        "en": "A C reimplementation of the BASS / BASS_FX / BASSmix API (dr_* and stb_vorbis decoders, signalsmith tempo), mixed into a shared ring read by an AudioWorklet."
+      }
+    },
+    {
+      "date": "2026-11-09",
+      "tag": "engine",
+      "title": {
+        "fr": "Premier boot multithread",
+        "en": "First multithreaded boot"
+      },
+      "body": {
+        "fr": "Rendu WebGL2 sur un worker dédié (OffscreenCanvas), threads update / audio / entrées en vrais threads .NET. Le GLRenderer d’osu-framework tourne sans modification de fond.",
+        "en": "WebGL2 rendering on a dedicated worker (OffscreenCanvas), update / audio / input as real .NET threads. osu-framework’s GLRenderer runs essentially unmodified."
+      }
+    }
+  ],
+  "progress": [
+    {
+      "name": {
+        "fr": "Rendu WebGL2",
+        "en": "WebGL2 rendering"
+      },
+      "weight": 3,
+      "status": "done"
+    },
+    {
+      "name": {
+        "fr": "Multithreading",
+        "en": "Multithreading"
+      },
+      "weight": 3,
+      "status": "done"
+    },
+    {
+      "name": {
+        "fr": "Audio (xcbass)",
+        "en": "Audio (xcbass)"
+      },
+      "weight": 3,
+      "status": "done"
+    },
+    {
+      "name": {
+        "fr": "Base de données Realm",
+        "en": "Realm database"
+      },
+      "weight": 3,
+      "status": "done"
+    },
+    {
+      "name": {
+        "fr": "Sauvegarde locale",
+        "en": "Local saves"
+      },
+      "weight": 2,
+      "status": "done"
+    },
+    {
+      "name": {
+        "fr": "Clavier, souris, tactile, manette",
+        "en": "Keyboard, mouse, touch, gamepad"
+      },
+      "weight": 2,
+      "status": "partial",
+      "note": {
+        "fr": "Entrées implémentées ; validation multiappareils incomplète",
+        "en": "Inputs implemented; cross-device validation incomplete"
+      }
+    },
+    {
+      "name": {
+        "fr": "Tablettes graphiques",
+        "en": "Drawing tablets"
+      },
+      "weight": 1,
+      "status": "partial",
+      "note": {
+        "fr": "Stylet via Pointer Events ; WebHID pas encore",
+        "en": "Pen via Pointer Events; WebHID not yet"
+      }
+    },
+    {
+      "name": {
+        "fr": "Import beatmaps / skins",
+        "en": "Beatmap / skin import"
+      },
+      "weight": 2,
+      "status": "done"
+    },
+    {
+      "name": {
+        "fr": "Comptes, scores, pp, classements",
+        "en": "Accounts, scores, pp, rankings"
+      },
+      "weight": 3,
+      "status": "done"
+    },
+    {
+      "name": {
+        "fr": "Téléchargement de beatmaps",
+        "en": "Beatmap downloads"
+      },
+      "weight": 2,
+      "status": "done"
+    },
+    {
+      "name": {
+        "fr": "Spectateur / multijoueur",
+        "en": "Spectator / multiplayer"
+      },
+      "weight": 2,
+      "status": "partial",
+      "note": {
+        "fr": "Services présents ; validation complète en navigateur en attente",
+        "en": "Services present; full browser validation pending"
+      }
+    },
+    {
+      "name": {
+        "fr": "Modes taiko / catch / mania",
+        "en": "taiko / catch / mania"
+      },
+      "weight": 2,
+      "status": "todo"
+    },
+    {
+      "name": {
+        "fr": "Vidéos (storyboards, fonds)",
+        "en": "Video (storyboards, backgrounds)"
+      },
+      "weight": 1,
+      "status": "todo",
+      "note": {
+        "fr": "FFmpeg n’est pas encore porté",
+        "en": "FFmpeg is not ported yet"
+      }
+    },
+    {
+      "name": {
+        "fr": "Build AOT (performances)",
+        "en": "AOT build (performance)"
+      },
+      "weight": 2,
+      "status": "partial",
+      "note": {
+        "fr": "Déployé à la racine ; stabilité et gameplay à valider",
+        "en": "Deployed at the root; stability and gameplay need validation"
+      }
+    },
+    {
+      "name": {
+        "fr": "Launcher",
+        "en": "Launcher"
+      },
+      "weight": 1,
+      "status": "done"
+    },
+    {
+      "name": {
+        "fr": "Site web (profils, classements, beatmaps)",
+        "en": "Website (profiles, rankings, beatmaps)"
+      },
+      "weight": 2,
+      "status": "done",
+      "note": {
+        "fr": "osu.xcsoftworks.com/web",
+        "en": "osu.xcsoftworks.com/web"
+      }
+    },
+    {
+      "name": {
+        "fr": "Wiki, actualités, journal des modifications",
+        "en": "Wiki, news, changelog"
+      },
+      "weight": 1,
+      "status": "done",
+      "note": {
+        "fr": "Dans le jeu et sur le site",
+        "en": "In the game and on the website"
+      }
+    },
+    {
+      "name": {
+        "fr": "Diagnostics et historique de performance",
+        "en": "Diagnostics and performance history"
+      },
+      "status": "done",
+      "weight": 1,
+      "note": {
+        "fr": "Vue locale et historique disponibles",
+        "en": "Local view and history available"
+      }
+    },
+    {
+      "name": {
+        "fr": "Compatibilité Safari / iOS / Firefox",
+        "en": "Safari / iOS / Firefox compatibility"
+      },
+      "status": "partial",
+      "weight": 2,
+      "note": {
+        "fr": "Préréglage iOS disponible ; validation navigateurs incomplète",
+        "en": "iOS preset available; browser validation incomplete"
+      }
+    },
+    {
+      "name": {
+        "fr": "Fluidité et cadence des mises à jour",
+        "en": "Smoothness and update pacing"
+      },
+      "status": "partial",
+      "weight": 3,
+      "note": {
+        "fr": "Instrumentation disponible ; validation en partie restante",
+        "en": "Instrumentation available; gameplay validation pending"
+      }
+    }
+  ],
+  "issues": [
+    {
+      "severity": "high",
+      "title": {
+        "fr": "AOT déployé : stabilité à valider",
+        "en": "AOT deployed: stability needs validation"
+      },
+      "body": {
+        "fr": "Le moteur AOT mixte est maintenant déployé sur la page principale. La validation complète du démarrage et du gameplay reste à terminer ; des plantages peuvent subsister. L’ancienne mention « uniquement sur /aot/ » est obsolète.",
+        "en": "The mixed AOT engine is now deployed on the main page. Full boot and gameplay validation remains pending; crashes may still occur. The former “only on /aot/” notice is outdated."
+      }
+    },
+    {
+      "severity": "medium",
+      "title": {
+        "fr": "osu! standard uniquement",
+        "en": "osu! standard only"
+      },
+      "body": {
+        "fr": "Seul le ruleset osu! est embarqué pour l’instant.",
+        "en": "Only the osu! ruleset ships for now."
+      }
+    },
+    {
+      "severity": "medium",
+      "title": {
+        "fr": "Pas de vidéo",
+        "en": "No video"
+      },
+      "body": {
+        "fr": "Les vidéos de storyboard et de fond ne sont pas lues (FFmpeg non porté).",
+        "en": "Storyboard and background videos don’t play (FFmpeg not ported)."
+      }
+    },
+    {
+      "severity": "low",
+      "title": {
+        "fr": "Premier lancement lourd",
+        "en": "Heavy first launch"
+      },
+      "body": {
+        "fr": "Le premier téléchargement du moteur est gros ; les suivants viennent du cache du navigateur.",
+        "en": "The first engine download is large; later launches come from the browser cache."
+      }
+    },
+    {
+      "severity": "low",
+      "title": {
+        "fr": "Testé surtout sous Chromium",
+        "en": "Mostly tested on Chromium"
+      },
+      "body": {
+        "fr": "Il faut SharedArrayBuffer, WebGL2 et l’isolation cross-origin. Firefox et Safari sont moins testés.",
+        "en": "Needs SharedArrayBuffer, WebGL2 and cross-origin isolation. Firefox and Safari are less tested."
+      }
+    },
+    {
+      "severity": "medium",
+      "title": {
+        "fr": "Cadence et saccades en cours de validation",
+        "en": "Frame pacing and stutters under validation"
+      },
+      "body": {
+        "fr": "La cible de mise à jour autour de 240 Hz n’a pas passé un contrôle précédent. Les mesures de temps des images restent dépendantes du GPU, des réglages et des transitions ; la fluidité doit encore être validée en partie.",
+        "en": "An earlier check of the update target around 240 Hz failed. Frame timings depend on GPU, settings and transitions; smoothness still needs gameplay validation."
+      }
+    },
+    {
+      "severity": "medium",
+      "title": {
+        "fr": "Multijoueur et spectateur : validation partielle",
+        "en": "Multiplayer and spectator: partial validation"
+      },
+      "body": {
+        "fr": "Les services sont présents, mais leur fonctionnement complet en session navigateur reste à valider.",
+        "en": "The services are present, but complete browser-session behavior still needs validation."
+      }
+    },
+    {
+      "severity": "low",
+      "title": {
+        "fr": "Tablettes : prise en charge limitée",
+        "en": "Limited tablet support"
+      },
+      "body": {
+        "fr": "Le stylet passe par les événements du navigateur. L’accès direct WebHID n’est pas encore disponible.",
+        "en": "Pen input uses browser events. Direct WebHID access is not yet available."
+      }
+    },
+    {
+      "severity": "low",
+      "title": {
+        "fr": "Forums, boutique et tournois absents",
+        "en": "No forums, store or tournaments"
+      },
+      "body": {
+        "fr": "Ces parties du site officiel n’existent pas sur xc-osu!. Leurs liens mènent à une page qui l’explique ; pour signaler un problème, voir le wiki.",
+        "en": "These parts of the official website do not exist on xc-osu!. Their links lead to a page saying so; to report a problem, see the wiki."
+      }
+    }
+  ]
 }

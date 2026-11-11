@@ -73,6 +73,26 @@ namespace osu.Game.IO.Archives
                 if (entry.Size > MaximumEntrySize)
                     throw new InsufficientMemoryException($@"Size of file ""{name}"" exceeds allowable limit of {MaximumEntrySize} bytes");
 
+                // Browser linear memory is shared with the running game. Avoid a large
+                // contiguous ImageSharp allocation for audio/video during archive import.
+                // A seekable temporary stream preserves hashing and rewind semantics.
+                if (OperatingSystem.IsBrowser() && entry.Size >= 1024 * 1024)
+                {
+                    var temporary = new FileStream(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")),
+                        FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 65536, FileOptions.DeleteOnClose);
+                    try
+                    {
+                        s.CopyTo(temporary, 65536);
+                        temporary.Position = 0;
+                        return temporary;
+                    }
+                    catch
+                    {
+                        temporary.Dispose();
+                        throw;
+                    }
+                }
+
                 if (entry.Size > 0)
                 {
                     var owner = MemoryAllocator.Default.Allocate<byte>((int)entry.Size);

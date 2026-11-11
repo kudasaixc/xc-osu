@@ -99,6 +99,7 @@ if (!auto) {
 }
 
 startTelemetry(options, build, xcLog);
+globalThis.xcTelemetryCheckpoint?.('launch-start');
 const L = buildLaunch(options);
 let lastBoot = null;
 try { lastBoot = JSON.parse(localStorage.getItem('xc.lastBoot') || 'null'); } catch { }
@@ -135,6 +136,7 @@ try {
 } catch (e) {
   console.error('[launch] engine download failed: ' + dl.error);
   globalThis.xcTelemetryCheckpoint?.('download-failed');
+  globalThis.xcTelemetryCrash?.('download', { text: String(e?.stack || e?.message || e) });
   boot.fail(t('dl.failed', dl.error));
   throw e;
 }
@@ -160,6 +162,7 @@ try {
 } catch (e) {
   console.error('[launch] runtime start failed', e);
   globalThis.xcTelemetryCheckpoint?.('runtime-failed');
+  globalThis.xcTelemetryCrash?.('runtime-start', { text: String(e?.stack || e?.message || e) });
   boot.fail(String(e?.message || e));
   throw e;
 }
@@ -374,7 +377,11 @@ const ui = installUi(rt, canvas, {
   onFirstGesture: () => { globalThis.xcAudioResume?.(); },
   onExit: (code, msg) => {
     flush();
-    if (code) { console.error('[launch] xc-osu! crashed:\n' + msg); if (!boot.done) boot.fail(msg); else { logViewer.show(); } }
+    if (code) {
+      console.error('[launch] xc-osu! crashed:\n' + msg);
+      globalThis.xcTelemetryCrash?.('exit', { code, text: msg });
+      if (!boot.done) boot.fail(msg); else { logViewer.show(); }
+    }
     else say('xc-osu! has exited.');
   },
   storeImport: async (file) => {

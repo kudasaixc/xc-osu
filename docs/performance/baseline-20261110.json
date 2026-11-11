@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "updated": "2026-11-10T16:15:51.176837+00:00",
+  "rows": [
+    {
+      "key": "9d256bbcc9948f48",
+      "build": "3bb52dda7b",
+      "gpu": "ANGLE (Intel, Intel(R) UHD Graphics (0x00004628) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "setup": {
+        "frameSync": "game",
+        "maxUpdateHz": 0,
+        "renderScale": 100,
+        "workers": 12,
+        "iosCompat": false,
+        "cores": 12,
+        "width": 1920,
+        "height": 1080,
+        "dpr": 1,
+        "browser": "Edge",
+        "refreshHz": 60
+      },
+      "sessions": 1,
+      "windows": 10,
+      "seconds": 100.38,
+      "frames": 5901,
+      "late": 89,
+      "repeated": 317,
+      "maxMs": 200.26,
+      "updateMaxMs": 354.64,
+      "first": 1794326917721,
+      "last": 1794327008039,
+      "intervalSamples": 5899,
+      "meanMs": 16.997,
+      "p99": {
+        "lower": 33,
+        "upper": 50
+      },
+      "updateP99": {
+        "lower": 9,
+        "upper": 10
+      },
+      "latePercent": 1.508
+    }
+  ]
+}

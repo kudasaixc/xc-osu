@@ -44,7 +44,7 @@ try {
   launcher.show('options');
  });
  await page.waitForFunction(()=>document.querySelector('#ln-performance')?.textContent.includes('Intel test'));
- assert((await page.locator('#ln-performance').textContent()).includes('(33, 50]'));
+ assert((await page.locator('#ln-performance').textContent()).includes('33–50 ms'));
  await page.locator('#ln-local-telemetry').click();
  assert((await page.locator('#xc-local-telemetry').textContent()).includes('Aucun historique local'));
  console.log('PASS: acknowledged history survives reload, opt-out, curve/context viewer, export, local deletion, no viewer network');
