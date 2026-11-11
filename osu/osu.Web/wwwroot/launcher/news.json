@@ -3,6 +3,40 @@
   "posts": [
     {
       "date": "2026-11-11",
+      "tag": "update",
+      "title": {
+        "fr": "Plantages corrigés, sauvegarde de tes données",
+        "en": "Crash fixes and a backup of your data"
+      },
+      "body": {
+        "fr": "Les beatmaps avec vidéo ne font plus planter le jeu, et le launcher peut exporter puis réimporter tout ce que ton navigateur stocke pour xc-osu!.",
+        "en": "Beatmaps with a video no longer crash the game, and the launcher can export and re-import everything your browser stores for xc-osu!."
+      },
+      "items": [
+        {
+          "fr": "Beatmaps avec vidéo : la map se lance, la vidéo est simplement ignorée",
+          "en": "Beatmaps with a video: the map starts, the video is simply skipped"
+        },
+        {
+          "fr": "Options → Exporter / Importer les données : beatmaps, skins, scores, réglages et connexion dans un fichier .xcbak",
+          "en": "Options → Export / Import data: beatmaps, skins, scores, settings and login in one .xcbak file"
+        },
+        {
+          "fr": "La sensibilité de la souris s’applique dès l’entrée en plein écran",
+          "en": "Mouse sensitivity applies as soon as the game goes fullscreen"
+        },
+        {
+          "fr": "Chat : les noms restent affichés dans l’historique ; la liste des joueurs en ligne s’affiche tout de suite",
+          "en": "Chat: names stay visible in the history; the online players list shows up right away"
+        },
+        {
+          "fr": "Lien vers le site dans la barre du launcher, nouvel avatar par défaut",
+          "en": "Website link in the launcher rail, new default avatar"
+        }
+      ]
+    },
+    {
+      "date": "2026-11-11",
       "tag": "site",
       "title": {
         "fr": "xc-osu! a son site",
@@ -422,8 +456,8 @@
         "en": "No video"
       },
       "body": {
-        "fr": "Les vidéos de storyboard et de fond ne sont pas lues (FFmpeg non porté).",
-        "en": "Storyboard and background videos don’t play (FFmpeg not ported)."
+        "fr": "Les vidéos de storyboard et de fond ne sont pas lues (FFmpeg non porté). Les beatmaps qui en ont une se jouent sans la vidéo.",
+        "en": "Storyboard and background videos don’t play (FFmpeg not ported). Beatmaps that have one play without it."
       }
     },
     {

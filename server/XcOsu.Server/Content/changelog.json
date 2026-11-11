@@ -1,5 +1,75 @@
 [
  {
+  "version": "2026.1111.1",
+  "date": "2026-11-11T14:40:00Z",
+  "entries": [
+   {
+    "category": "Gameplay",
+    "category_fr": "Jeu",
+    "type": "fix",
+    "title": "Beatmaps with a video no longer crash the game while loading (the video is skipped)",
+    "title_fr": "Les beatmaps avec vidéo ne font plus planter le jeu au chargement (la vidéo est ignorée)",
+    "major": true
+   },
+   {
+    "category": "Launcher",
+    "category_fr": "Launcher",
+    "type": "add",
+    "title": "Export and import of all local data (beatmaps, skins, scores, settings, login) as a .xcbak file",
+    "title_fr": "Export et import de toutes les données locales (beatmaps, skins, scores, réglages, connexion) dans un fichier .xcbak",
+    "major": true
+   },
+   {
+    "category": "Input",
+    "category_fr": "Entrées",
+    "type": "fix",
+    "title": "Mouse sensitivity applies as soon as the game enters fullscreen",
+    "title_fr": "La sensibilité de la souris s'applique dès l'entrée en plein écran",
+    "major": false
+   },
+   {
+    "category": "Online",
+    "category_fr": "En ligne",
+    "type": "fix",
+    "title": "Chat history keeps the names of the senders after coming back to the game",
+    "title_fr": "L'historique du chat garde le nom des expéditeurs quand on revient dans le jeu",
+    "major": false
+   },
+   {
+    "category": "Online",
+    "category_fr": "En ligne",
+    "type": "fix",
+    "title": "The online players list no longer waits two seconds before showing anyone",
+    "title_fr": "La liste des joueurs en ligne n'attend plus deux secondes avant d'afficher quelqu'un",
+    "major": false
+   },
+   {
+    "category": "Online",
+    "category_fr": "En ligne",
+    "type": "add",
+    "title": "New default avatar",
+    "title_fr": "Nouvel avatar par défaut",
+    "major": false
+   },
+   {
+    "category": "Launcher",
+    "category_fr": "Launcher",
+    "type": "add",
+    "title": "Link to the website in the launcher rail",
+    "title_fr": "Lien vers le site dans la barre du launcher",
+    "major": false
+   },
+   {
+    "category": "Launcher",
+    "category_fr": "Launcher",
+    "type": "fix",
+    "title": "Leaving the iPhone / iPad preset turns fullscreen back on",
+    "title_fr": "Quitter le préréglage iPhone / iPad réactive le plein écran",
+    "major": false
+   }
+  ]
+ },
+ {
   "version": "2026.1111.0",
   "date": "2026-11-11T03:00:00Z",
   "entries": [
