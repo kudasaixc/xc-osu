@@ -67,6 +67,10 @@ async function bigAsset(uri) {
 }
 
 const builder = dotnet
+  // The game's translations are not loaded in the browser yet, so its interface is English. Without this the runtime
+  // takes the browser's language as the game language: a French browser got an English game that asked the server
+  // for French news, changelog and wiki. Picking a language in the game's settings still overrides it.
+  .withApplicationCulture('en')
   .withConfig({ pthreadPoolInitialSize: options.workers, pthreadPoolUnusedSize: options.iosCompat ? 0 : Math.min(4, options.workers) })
   .withResourceLoader((type, name, defaultUri) => BIG_ASSET.test(name) ? bigAsset(defaultUri) : defaultUri)
   .withModuleConfig({ onDownloadResourceProgress: (loaded, total) => { dl.loaded = loaded; dl.total = total; emit(); } });

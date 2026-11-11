@@ -283,3 +283,11 @@ Télémétrie du 2026-11-10 15:50 au 2026-11-11 12:58 UTC (70 sessions).
 - **Avatar par défaut** : `server/XcOsu.Server/Assets/avatar-default.png` (servi tant qu'un compte n'a pas d'avatar).
 - **Launcher** : lien « Site web » en bas du rail (`https://osu.xcsoftworks.com/web/`) ; boutons Exporter / Importer dans Options (`js/xc-backup.js`).
 - **Format `.xcbak`** (décrit en tête de `js/xc-backup.js`) : `XCOSUBAK`, version, drapeaux, puis un flux gzip contenant un en-tête JSON (dont `localStorage` = options du launcher) et chaque enregistrement de la base IndexedDB `/xc` (chemin, mode, date, contenu). Export en flux (boîte d'enregistrement si le navigateur en a une, sinon téléchargement) ; l'import lit d'abord tout le fichier pour le valider, puis recrée la base au format IDBFS (version 21, store `FILE_DATA`, index `timestamp`) et recharge. Test : `node tools/backup-test.mjs <url>`.
+
+## Game language vs server content language
+
+The game's satellite translation assemblies are not loaded in the browser, so the interface is always English. The
+runtime used to take the browser's culture, which made a French browser run an English game that sent
+`Accept-Language: fr` and received the French changelog, news and wiki. `main.js` now starts the runtime with
+`.withApplicationCulture('en')`: the game language defaults to English and the server content follows it. A language
+picked explicitly in the game's settings is still sent as is.
