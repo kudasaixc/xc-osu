@@ -38,6 +38,12 @@ namespace osu.Game.Online.Metadata
             localFriends.BindCollectionChanged((_, _) => RefreshFriends().FireAndForget());
         }
 
+        protected override void Dispose(bool isDisposing)
+        {
+            localFriends.UnbindAll();
+            base.Dispose(isDisposing);
+        }
+
         #region Beatmap metadata updates
 
         public abstract Task<BeatmapUpdates> GetChangesSince(int queueId);

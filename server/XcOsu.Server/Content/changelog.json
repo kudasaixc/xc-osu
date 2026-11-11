@@ -1,5 +1,43 @@
 [
  {
+  "version": "2026.1111.3",
+  "date": "2026-11-11T17:10:00Z",
+  "entries": [
+   {
+    "category": "Performance",
+    "category_fr": "Performances",
+    "type": "fix",
+    "title": "Spread browser mod-panel attachment over update frames instead of finalising every panel at once",
+    "title_fr": "Étalement de l’ajout des tuiles du menu des mods sur plusieurs frames dans le navigateur",
+    "major": true
+   },
+   {
+    "category": "Performance",
+    "category_fr": "Performances",
+    "type": "fix",
+    "title": "Attach preloaded beatmap cards progressively, including pagination and card-size changes",
+    "title_fr": "Ajout progressif des cartes de beatmaps préchargées, y compris la pagination et les changements de taille",
+    "major": true
+   },
+   {
+    "category": "Online",
+    "category_fr": "En ligne",
+    "type": "fix",
+    "title": "Ignore friends refreshes against a disposed SignalR connection during logout",
+    "title_fr": "Les rafraîchissements des amis ne remontent plus d’erreur si la connexion SignalR est détruite pendant la déconnexion",
+    "major": false
+   },
+   {
+    "category": "Diagnostics",
+    "category_fr": "Diagnostic",
+    "type": "fix",
+    "title": "Preserve fatal errors after suppressed repeated warnings and keep resource timing durations non-negative",
+    "title_fr": "Conservation des erreurs fatales après des avertissements répétitifs filtrés et correction des durées réseau négatives",
+    "major": false
+   }
+  ]
+ },
+ {
   "version": "2026.1111.2",
   "date": "2026-11-11T17:00:00Z",
   "entries": [

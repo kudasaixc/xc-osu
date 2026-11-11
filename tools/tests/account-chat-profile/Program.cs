@@ -1,4 +1,10 @@
 using System.Reflection;
+using Microsoft.AspNetCore.SignalR.Client;
+using osu.Framework.Bindables;
+using osu.Framework.Graphics.Shapes;
+using osu.Game.Graphics.Containers;
+using osu.Game.Online;
+using osu.Game.Online.Metadata;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Configuration;
@@ -13,6 +19,35 @@ using XcOsu.Server.Data;
 using XcOsu.Server.Services;
 
 static void check(bool value, string message) { if (!value) throw new Exception(message); }
+
+// A page is finalised one tree per update, and a superseded page cannot attach old trees.
+using (var queue = new FrameStagedDrawableQueue<TrackedBox>())
+{
+    var first = new TrackedBox(); var second = new TrackedBox(); var discarded = new TrackedBox();
+    var attached = new List<TrackedBox>();
+    queue.Replace(new[] { first, second, discarded });
+    queue.AttachNext(attached.Add);
+    check(attached.SequenceEqual(new[] { first }) && queue.Count == 2, "One tree attached per frame");
+    queue.AttachNext(attached.Add);
+    check(attached.SequenceEqual(new[] { first, second }), "Panel order preserved");
+    var replacement = new TrackedBox();
+    queue.Replace(new[] { replacement });
+    check(discarded.WasDisposed && !first.WasDisposed, "Only unattached superseded panels disposed");
+    queue.AttachNext(attached.Add);
+    check(attached.Last() == replacement && queue.Count == 0, "No stale panel after replacement");
+    queue.AttachNext(_ => throw new Exception("Empty queue must do nothing"));
+    first.Dispose(); second.Dispose(); replacement.Dispose();
+}
+Console.WriteLine("PASS UI staging: one tree per frame, ordering, cancellation, ownership and replacement");
+
+var metadata = new OnlineMetadataClient(new EndpointConfiguration());
+await metadata.RefreshFriends();
+check(metadata.GetChangesSince(0).IsCanceled, "Disconnected metadata catch-up returns a cancelled task");
+var disposedHub = new HubConnectionBuilder().WithUrl("https://unused.test/metadata").Build();
+await disposedHub.DisposeAsync();
+typeof(OnlineMetadataClient).GetField("connector", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(metadata, new DisposedHubConnector(disposedHub));
+await metadata.RefreshFriends();
+Console.WriteLine("PASS metadata: disconnected and disposed SignalR connections do not surface logout errors");
 
 // Force a timeout in the exact method from the production stack trace.
 var handler = typeof(MessageFormatter).GetMethod("handleAdvanced", BindingFlags.NonPublic | BindingFlags.Static)!;
@@ -96,4 +131,19 @@ finally
 {
     Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
     Directory.Delete(directory, recursive: true);
+}
+
+sealed class DisposedHubConnector(HubConnection hub) : IHubClientConnector
+{
+    public HubConnection CurrentConnection => hub;
+    public IBindable<bool> IsConnected { get; } = new BindableBool(true);
+    public Action<HubConnection>? ConfigureConnection { get; set; }
+    public Task Disconnect() => Task.CompletedTask;
+    public Task Reconnect() => Task.CompletedTask;
+    public void Dispose() { }
+}
+
+partial class TrackedBox : Box
+{
+    public bool WasDisposed => IsDisposed;
 }

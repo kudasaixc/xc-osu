@@ -1,8 +1,9 @@
-﻿// Copyright (c) ppy Pty Ltd <contact@ppy.sh>. Licensed under the MIT Licence.
+// Copyright (c) ppy Pty Ltd <contact@ppy.sh>. Licensed under the MIT Licence.
 // See the LICENCE file in the repository root for full licence text.
 
 #nullable disable
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -148,10 +149,12 @@ namespace osu.Game.Overlays
         private CancellationTokenSource cancellationToken;
 
         private Task panelLoadTask;
+        private readonly FrameStagedDrawableQueue<BeatmapCard> pendingCards = new FrameStagedDrawableQueue<BeatmapCard>();
 
         private void onSearchStarted()
         {
             cancellationToken?.Cancel();
+            pendingCards.Dispose();
 
             previewTrackManager.StopAnyPlaying(this);
 
@@ -181,9 +184,15 @@ namespace osu.Game.Overlays
                     return;
                 }
 
-                var content = createCardContainerFor(newCards);
-
-                panelLoadTask = LoadComponentAsync(foundContent = content, replaceResultsAreaContent, (cancellationToken = new CancellationTokenSource()).Token);
+                var content = createCardContainerFor(OperatingSystem.IsBrowser() ? Array.Empty<BeatmapCard>() : newCards);
+                foundContent = content;
+                var token = (cancellationToken = new CancellationTokenSource()).Token;
+                panelLoadTask = LoadComponentAsync(content, loadedContent =>
+                {
+                    replaceResultsAreaContent(loadedContent);
+                    if (OperatingSystem.IsBrowser())
+                        panelLoadTask = LoadComponentsAsync(newCards, loaded => pendingCards.Replace(loaded), token);
+                }, token);
             }
             else
             {
@@ -195,8 +204,12 @@ namespace osu.Game.Overlays
                 panelLoadTask = LoadComponentsAsync(newCards, loaded =>
                 {
                     lastFetchDisplayedTime = Time.Current;
-                    foundContent.AddRange(loaded);
-                    loaded.ForEach(p => p.FadeIn(200, Easing.OutQuint));
+                    if (OperatingSystem.IsBrowser()) pendingCards.Replace(loaded);
+                    else
+                    {
+                        foundContent.AddRange(loaded);
+                        loaded.ForEach(p => p.FadeIn(200, Easing.OutQuint));
+                    }
                 }, (cancellationToken = new CancellationTokenSource()).Token);
             }
         }
@@ -241,19 +254,21 @@ namespace osu.Game.Overlays
 
         private void onCardSizeChanged()
         {
-            if (foundContent?.IsAlive != true || !foundContent.Any())
+            if (foundContent?.IsAlive != true || (!foundContent.Any() && pendingCards.Count == 0))
                 return;
 
             Loading.Show();
 
-            var newCards = createCardsFor(foundContent.Reverse().Select(card => card.BeatmapSet));
+            var newCards = createCardsFor(foundContent.Reverse().Concat(pendingCards.PendingItems).Select(card => card.BeatmapSet));
 
             cancellationToken?.Cancel();
+            pendingCards.Dispose();
 
             panelLoadTask = LoadComponentsAsync(newCards, cards =>
             {
                 foundContent.Clear();
-                foundContent.AddRange(cards);
+                if (OperatingSystem.IsBrowser()) pendingCards.Replace(cards);
+                else foundContent.AddRange(cards);
                 Loading.Hide();
             }, (cancellationToken = new CancellationTokenSource()).Token);
         }
@@ -261,6 +276,7 @@ namespace osu.Game.Overlays
         protected override void Dispose(bool isDisposing)
         {
             cancellationToken?.Cancel();
+            pendingCards.Dispose();
             base.Dispose(isDisposing);
         }
 
@@ -373,10 +389,16 @@ namespace osu.Game.Overlays
         protected override void Update()
         {
             base.Update();
+            pendingCards.AttachNext(card =>
+            {
+                foundContent.Add(card);
+                card.FadeIn(200, Easing.OutQuint);
+                lastFetchDisplayedTime = Time.Current;
+            });
 
             const int pagination_scroll_distance = 500;
 
-            bool shouldShowMore = panelLoadTask?.IsCompleted != false
+            bool shouldShowMore = pendingCards.Count == 0 && panelLoadTask?.IsCompleted != false
                                   && Time.Current - lastFetchDisplayedTime > time_between_fetches
                                   && (ScrollFlow.ScrollableExtent > 0 && ScrollFlow.IsScrolledToEnd(pagination_scroll_distance));
 

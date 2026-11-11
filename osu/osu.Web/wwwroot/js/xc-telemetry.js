@@ -150,7 +150,7 @@ export function startTelemetry(options, build, log) {
     const now = Date.now(), fatal = FATAL.test(text);
     const continues = now - lastLineAt <= BLOCK_GAP;
     lastLineAt = now;
-    if (continues && suppressing) return;
+    if (continues && suppressing && !fatal) return;
     if (continues && block && block.lines < BLOCK_LINES && block.text.length + text.length < BLOCK_CHARS) {
       block.text += '\n' + text; block.lines++;
       if (line.level === 'error') block.name = 'error';
@@ -250,9 +250,11 @@ export function startTelemetry(options, build, log) {
     new PerformanceObserver(list => {
       for (const e of list.getEntries()) {
         if (e.name.includes('/api/xc/tm')) continue;
-        const end = performance.timeOrigin + e.responseEnd;
+        // duration remains consistent for cached / restricted resource timing entries.
+        const duration = Math.max(0, e.duration);
+        const end = performance.timeOrigin + e.startTime + duration;
         remember('network', { phase: 'start', kind: e.initiatorType }, performance.timeOrigin + e.startTime);
-        remember('network', { phase: 'end', kind: e.initiatorType, ms: e.duration, bytes: e.transferSize }, end);
+        remember('network', { phase: 'end', kind: e.initiatorType, ms: duration, bytes: e.transferSize }, end);
       }
     }).observe({ type: 'resource', buffered: true });
   } catch { }

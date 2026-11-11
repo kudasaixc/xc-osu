@@ -5,6 +5,36 @@
       "date": "2026-11-11",
       "tag": "update",
       "title": {
+        "fr": "Menu des mods et navigation progressive",
+        "en": "Progressive mod menu and browsing"
+      },
+      "body": {
+        "fr": "Ajout progressif des tuiles des mods et des cartes de beatmaps, correctif SignalR à la déconnexion et rapports d’erreur plus fiables.",
+        "en": "Progressive attachment of mod panels and beatmap cards, a SignalR logout fix and more reliable error reports."
+      },
+      "items": [
+        {
+          "fr": "Étalement de l’ajout des tuiles du menu des mods sur plusieurs frames dans le navigateur",
+          "en": "Spread browser mod-panel attachment over update frames instead of finalising every panel at once"
+        },
+        {
+          "fr": "Ajout progressif des cartes de beatmaps préchargées, y compris la pagination et les changements de taille",
+          "en": "Attach preloaded beatmap cards progressively, including pagination and card-size changes"
+        },
+        {
+          "fr": "Les rafraîchissements des amis ne remontent plus d’erreur si la connexion SignalR est détruite pendant la déconnexion",
+          "en": "Ignore friends refreshes against a disposed SignalR connection during logout"
+        },
+        {
+          "fr": "Conservation des erreurs fatales après des avertissements répétitifs filtrés et correction des durées réseau négatives",
+          "en": "Preserve fatal errors after suppressed repeated warnings and keep resource timing durations non-negative"
+        }
+      ]
+    },
+    {
+      "date": "2026-11-11",
+      "tag": "update",
+      "title": {
         "fr": "Chat, récupération du compte et profils BBCode",
         "en": "Chat, account recovery and BBCode profiles"
       },

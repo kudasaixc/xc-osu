@@ -16,6 +16,7 @@ using osu.Framework.Graphics.Sprites;
 using osu.Framework.Input.Events;
 using osu.Game.Configuration;
 using osu.Game.Graphics;
+using osu.Game.Graphics.Containers;
 using osu.Game.Graphics.UserInterface;
 using osu.Game.Localisation;
 using osu.Game.Overlays.Mods.Input;
@@ -68,6 +69,7 @@ namespace osu.Game.Overlays.Mods
 
         private Task? latestLoadTask;
         private ModPanel[]? latestLoadedPanels;
+        private readonly FrameStagedDrawableQueue<ModPanel> pendingPanels = new FrameStagedDrawableQueue<ModPanel>();
         internal bool ItemsLoaded => latestLoadTask?.IsCompleted == true && allPanelsLoaded;
         private bool? wasPresent;
 
@@ -88,7 +90,7 @@ namespace osu.Game.Overlays.Mods
             }
         }
 
-        public override bool IsPresent => base.IsPresent || Scheduler.HasPendingTasks;
+        public override bool IsPresent => base.IsPresent || Scheduler.HasPendingTasks || pendingPanels.Count > 0;
 
         public ModColumn(ModType modType, bool allowIncompatibleSelection)
         {
@@ -151,13 +153,21 @@ namespace osu.Game.Overlays.Mods
         private void asyncLoadPanels()
         {
             cancellationTokenSource?.Cancel();
+            pendingPanels.Dispose();
 
             var panels = availableMods.Select(mod => CreateModPanel(mod).With(panel => panel.Shear = Vector2.Zero)).ToArray();
             latestLoadedPanels = panels;
 
             latestLoadTask = LoadComponentsAsync(panels, loaded =>
             {
-                ItemsFlow.ChildrenEnumerable = loaded;
+                if (OperatingSystem.IsBrowser())
+                {
+                    // Finalising every panel tree in one update stalls the first opening.
+                    ItemsFlow.Clear();
+                    pendingPanels.Replace(loaded);
+                }
+                else
+                    ItemsFlow.ChildrenEnumerable = loaded;
                 updateState();
             }, (cancellationTokenSource = new CancellationTokenSource()).Token);
         }
@@ -178,6 +188,13 @@ namespace osu.Game.Overlays.Mods
             }
         }
 
+        protected override void Dispose(bool isDisposing)
+        {
+            cancellationTokenSource?.Cancel();
+            pendingPanels.Dispose();
+            base.Dispose(isDisposing);
+        }
+
         #region Bulk select / deselect
 
         private const double initial_multiple_selection_delay = 120;
@@ -192,6 +209,7 @@ namespace osu.Game.Overlays.Mods
         protected override void Update()
         {
             base.Update();
+            pendingPanels.AttachNext(ItemsFlow.Add);
 
             // we override `IsPresent` to include the scheduler's pending task state to make async loads work correctly when columns are masked away
             // (see description of https://github.com/ppy/osu/pull/19783).

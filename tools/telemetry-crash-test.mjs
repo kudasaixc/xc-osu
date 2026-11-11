@@ -17,6 +17,12 @@ try {
   });
   await page.goto('https://telemetry.test/');
   const start = enabled => page.evaluate(async enabled => {
+    const NativeObserver = window.PerformanceObserver;
+    window.tmObservers = {};
+    window.PerformanceObserver = class extends NativeObserver {
+      constructor(callback) { super(callback); this.callback = callback; }
+      observe(options) { window.tmObservers[options.type] = this.callback; return super.observe(options); }
+    };
     const {startTelemetry} = await import('/tm.js');
     window.tmLines = [];
     window.tmLog = {lines: [{level:'log',text:'loading storyboard for someone@example.org'}, {level:'error',text:'boom'}], on(fn){ window.tmLines.push(fn); }};
@@ -42,6 +48,16 @@ try {
   const iid = bodies[0].iid;
   assert.match(iid, /^[0-9a-f-]{36}$/, 'installation id sent');
 
+  // Restricted resource timing must not put the end before the start or report negative durations.
+  await page.evaluate(() => {
+    window.tmObservers.resource({getEntries: () => [{name:'https://telemetry.test/cached', initiatorType:'regression-negative', startTime:performance.now() - 10, responseEnd:0, duration:-5, transferSize:0}]});
+    window.tmLines[0]({level:'log', text:'[tm] ' + JSON.stringify({k:'e',n:'flight',at:Date.now(),part:0,parts:1,frames:[]})});
+  });
+  await settle();
+  const network = items().filter(i => i.n === 'flight-context').flatMap(i => i.events || []).filter(i => i.kind === 'regression-negative');
+  assert.equal(network.length, 2);
+  assert(network[1].at >= network[0].at && network[1].ms >= 0, 'non-negative, correctly ordered resource context');
+
   // a thread dump: many lines in one burst = one event, names readable, secrets removed
   await page.evaluate(() => {
     const emit = (text, level = 'error') => window.tmLines[0]({level, text});
@@ -64,6 +80,16 @@ try {
   for (let i = 0; i < 6; i++) { await page.evaluate(() => window.tmLines[0]({level:'error', text:'unhandled rejection: NotAllowedError: A user gesture is required to request Pointer Lock.'})); await page.waitForTimeout(350); }
   await settle();
   assert.equal(items().filter(i => i.n === 'log' && i.text.startsWith('unhandled rejection')).length, 3, 'repeats capped');
+  // A fatal line immediately after a suppressed repeat must break out of suppression.
+  await page.evaluate(() => {
+    const emit = text => window.tmLines[0]({level:'error', text});
+    emit('unhandled rejection: NotAllowedError: A user gesture is required to request Pointer Lock.');
+    emit('SIGABRT: regression-fatal-after-suppressed-warning');
+    emit('at actualRootCauseBeforeFinalizer ()');
+  });
+  await settle();
+  assert(items().some(i => i.n === 'log' && i.category === 'crash' && i.text.includes('regression-fatal-after-suppressed-warning') && i.text.includes('actualRootCauseBeforeFinalizer')), 'fatal burst survives log repeat suppression');
+
   // ... a later burst after a send starts a new event
   await page.evaluate(() => window.tmLines[0]({level:'warn', text:'Texture upload queue is full'}));
   await settle();

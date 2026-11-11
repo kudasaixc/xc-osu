@@ -177,7 +177,7 @@ namespace osu.Game.Online.Metadata
         public override Task<BeatmapUpdates> GetChangesSince(int queueId)
         {
             if (connector?.IsConnected.Value != true)
-                return Task.FromCanceled<BeatmapUpdates>(CancellationToken.None);
+                return Task.FromCanceled<BeatmapUpdates>(new CancellationToken(true));
 
             Logger.Log($"Requesting any changes since last known queue id {queueId}");
 
@@ -296,11 +296,24 @@ namespace osu.Game.Online.Metadata
 
         public override async Task RefreshFriends()
         {
-            if (connector?.IsConnected.Value != true)
-                throw new OperationCanceledException();
+            // A friends change can race with logout / connector disposal. Capture the connection
+            // once and treat its teardown as cancellation rather than an unobserved error.
+            var current = connection;
+            if (connector?.IsConnected.Value != true || current == null)
+                return;
 
-            Debug.Assert(connection != null);
-            await connection.InvokeAsync(nameof(IMetadataServer.RefreshFriends)).ConfigureAwait(false);
+            try
+            {
+                await current.InvokeAsync(nameof(IMetadataServer.RefreshFriends)).ConfigureAwait(false);
+            }
+            catch (ObjectDisposedException)
+            {
+                // The captured connection was disposed while the friends update was in flight.
+            }
+            catch (InvalidOperationException) when (current.State != HubConnectionState.Connected)
+            {
+                // The connection stopped between the connected check and the invocation.
+            }
         }
 
         protected override void Dispose(bool isDisposing)
