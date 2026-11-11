@@ -535,8 +535,11 @@ export class Launcher {
     if (dp) dp.textContent = this.t('dock.preset', this.t('preset.' + (cur || 'custom')));
     box.querySelectorAll('[data-p]').forEach((b) => b.onclick = () => {
       const keep = Object.fromEntries([...NOT_PRESET].map((k) => [k, this.o[k]]));
+      const wasIos = !!this.o.iosCompat;
       this.o = { ...defaults(), ...PRESETS[b.dataset.p], ...keep, iosDefaultsVersion: this.o.iosDefaultsVersion };
       if (b.dataset.p === 'ios') this.o.fullscreen = false;
+      // the iPhone / iPad preset switches fullscreen off; leaving it must not keep it off for good
+      else if (wasIos) this.o.fullscreen = true;
       this.changed(true);
     });
   }

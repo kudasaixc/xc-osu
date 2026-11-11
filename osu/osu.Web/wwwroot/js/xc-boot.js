@@ -174,12 +174,12 @@ export class BootScreen {
   }
 
   /** Engine fully loaded and holding its intro: one click/key opens it (inside that gesture: fullscreen + audio). */
-  showGate(onOpen) {
+  showGate(onOpen, fullscreen = true) {
     if (this.done || this.gate) return;
     this.stage('components', 'done', this.t('stage.componentsN', this.components));
     const g = document.createElement('div');
     g.className = 'gate';
-    g.innerHTML = `<div class="gate-ring" aria-hidden="true"></div><div class="gate-title">${this.t('gate.title')}</div><div class="gate-sub">${this.t('gate.sub')} · ${this.t('gate.fs')}</div>`;
+    g.innerHTML = `<div class="gate-ring" aria-hidden="true"></div><div class="gate-title">${this.t('gate.title')}</div><div class="gate-sub">${this.t('gate.sub')} · ${this.t(fullscreen ? 'gate.fs' : 'gate.nofs')}</div>`;
     this.root.append(g);
     this.root.classList.add('gated');
     this.root.querySelector('#boot-bar').style.width = '100%';

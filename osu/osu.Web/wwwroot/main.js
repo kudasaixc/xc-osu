@@ -367,7 +367,7 @@ const ui = installUi(rt, canvas, {
       globalThis.xcTelemetryCheckpoint?.('gate-open');
       canvas.focus({ preventScroll: true });
       say('start click: fullscreen ' + (L.fullscreen ? 'requested' : 'off') + ', audio ' + (globalThis.xcAudioDebug?.().state || 'not initialised yet'));
-    });
+    }, L.fullscreen);
   },
   onAttached: () => {
     attachedAt = performance.now();
