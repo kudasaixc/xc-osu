@@ -45,10 +45,13 @@ namespace XcOsu.Server.Api
 
         private static void mapAuth(WebApplication app)
         {
-            app.MapPost("/oauth/token", async (HttpRequest req, Accounts accounts) =>
+            app.MapPost("/oauth/token", async (HttpRequest req, Accounts accounts, ILoggerFactory loggerFactory) =>
             {
                 var p = await Json.Params(req);
+                bool browser = p("browser_session") == "1";
+                if (browser && !BrowserSession.SameOrigin(req)) return Results.StatusCode(403);
                 int? userId = null;
+                long? sessionExpiresAt = null;
 
                 switch (p("grant_type"))
                 {
@@ -56,11 +59,16 @@ namespace XcOsu.Server.Api
                         var row = accounts.Verify(p("username") ?? "", p("password") ?? "");
                         userId = row?.Id;
                         if (userId == null)
+                        {
+                            loggerFactory.CreateLogger("Security.Authentication").LogWarning("Password sign-in rejected from {Address}", req.HttpContext.Connection.RemoteIpAddress);
                             return Json.Ok(new { error = "invalid_grant", error_description = "Incorrect sign in", hint = "Incorrect sign in", message = "Incorrect sign in" }, 400);
+                        }
                         break;
 
                     case "refresh_token":
-                        userId = accounts.Refresh(p("refresh_token") ?? "");
+                        var refreshed = accounts.Refresh(p("refresh_token") is { Length: > 0 } supplied ? supplied : browser ? req.Cookies[BrowserSession.RefreshCookie] ?? "" : "");
+                        userId = refreshed?.UserId;
+                        sessionExpiresAt = refreshed?.SessionExpiresAt;
                         if (userId == null || accounts.Get(userId.Value) is not { Restricted: false })
                             return Json.Ok(new { error = "invalid_grant", error_description = "The refresh token is invalid.", message = "The refresh token is invalid." }, 401);
                         break;
@@ -72,17 +80,24 @@ namespace XcOsu.Server.Api
                         return Json.Ok(new { error = "unsupported_grant_type" }, 400);
                 }
 
-                var (access, refresh) = accounts.IssueToken(userId.Value);
+                var (access, refresh) = accounts.IssueToken(userId.Value, sessionExpiresAt);
+                req.HttpContext.Response.Headers.CacheControl = "no-store";
+                if (browser)
+                {
+                    BrowserSession.Set(req.HttpContext.Response, access, refresh);
+                    return Json.Ok(new { browser_session = true, expires_in = Accounts.TOKEN_LIFETIME_SECONDS });
+                }
                 return Json.Ok(new { token_type = "Bearer", expires_in = Accounts.TOKEN_LIFETIME_SECONDS, access_token = access, refresh_token = refresh });
             });
 
-            app.MapPost("/users", async (HttpContext ctx, Accounts accounts) =>
+            app.MapPost("/users", async (HttpContext ctx, Accounts accounts, AccountMail mail) =>
             {
                 var p = await Json.Params(ctx.Request);
                 string country = ctx.Request.Headers["CF-IPCountry"].ToString() is { Length: 2 } cc && cc != "XX" ? cc.ToUpperInvariant() : "XX";
                 var errors = accounts.Register(p("user[username]") ?? "", p("user[user_email]") ?? "", p("user[password]") ?? "", country);
                 if (errors != null)
                     return Json.Ok(new { form_error = new { user = errors } }, 422);
+                mail.Request(p("user[user_email]") ?? "", "verify");
                 return Json.Ok(new { });
             });
 
@@ -94,6 +109,9 @@ namespace XcOsu.Server.Api
             {
                 string auth = req.Headers.Authorization.ToString();
                 if (auth.StartsWith("Bearer ")) accounts.Revoke(auth[7..]);
+                else if (BrowserSession.SameOrigin(req) && req.Cookies[BrowserSession.AccessCookie] is string cookie) accounts.Revoke(cookie);
+                else if (req.Cookies.ContainsKey(BrowserSession.AccessCookie)) return Results.StatusCode(403);
+                BrowserSession.Clear(req.HttpContext.Response);
                 return Results.NoContent();
             });
         }
@@ -432,6 +450,23 @@ namespace XcOsu.Server.Api
                 return Json.Ok(decorateSet(set, c, uid(ctx)));
             });
 
+            // like osu!: "{id} {artist} - {title}.osz", with an ASCII fallback for old clients and filename* for the real name
+            static async Task<string> oszDisposition(int id, Mirrors mirrors, CancellationToken ct)
+            {
+                string name = id.ToString();
+                try
+                {
+                    if (await mirrors.GetBeatmapset(id, ct) is JObject set && set.Value<string>("artist") is { Length: > 0 } artist && set.Value<string>("title") is { Length: > 0 } title)
+                        name = $"{id} {artist} - {title}";
+                }
+                catch (Exception) when (!ct.IsCancellationRequested) { }
+                var invalid = new HashSet<char>("\\/:*?\"<>|");
+                string clean = new string(name.Select(ch => char.IsControl(ch) || invalid.Contains(ch) ? '_' : ch).ToArray()).Trim().TrimEnd('.');
+                if (clean.Length > 200) clean = clean[..200].TrimEnd();
+                string ascii = new string(clean.Select(ch => ch is >= ' ' and <= '~' && ch != '%' ? ch : '_').ToArray());
+                return $"attachment; filename=\"{ascii}.osz\"; filename*=UTF-8''{Uri.EscapeDataString(clean + ".osz")}";
+            }
+
             api.MapGet("/beatmapsets/{id:int}/download", async (int id, HttpContext ctx, Mirrors mirrors, CancellationToken ct) =>
             {
                 bool noVideo = ctx.Request.Query["noVideo"] == "1";
@@ -441,7 +476,7 @@ namespace XcOsu.Server.Api
                 ctx.Response.StatusCode = 200;
                 ctx.Response.ContentType = "application/x-osu-beatmap-archive";
                 if (res.Content.Headers.ContentLength is long len) ctx.Response.ContentLength = len;
-                ctx.Response.Headers.ContentDisposition = $"attachment; filename=\"{id}.osz\"";
+                ctx.Response.Headers.ContentDisposition = await oszDisposition(id, mirrors, ct);
                 await using var stream = await res.Content.ReadAsStreamAsync(ct);
                 await stream.CopyToAsync(ctx.Response.Body, 1 << 16, ct);
                 return Results.Empty;
@@ -502,8 +537,13 @@ namespace XcOsu.Server.Api
                 var body = req.ContentType?.Contains("json") == true ? await Json.Body<JObject>(req) : null;
                 if (body?["mods"] is JArray arr)
                     mods.AddRange(arr.Select(m => m.Type == JTokenType.String ? new APIMod { Acronym = m.Value<string>()! } : m.ToObject<APIMod>()!));
-                var d = await perf.CalculateDifficulty(id, ruleset, mods, ct);
-                return Json.Ok(new { attributes = new { star_rating = d?.starRating ?? 0, max_combo = d?.maxCombo ?? 0 } });
+                if (mods.Count > 32) return Json.Error("Too many mods", 422);
+                try
+                {
+                    var d = await perf.CalculateDifficulty(id, ruleset, mods, ct);
+                    return Json.Ok(new { attributes = new { star_rating = d?.starRating ?? 0, max_combo = d?.maxCombo ?? 0 } });
+                }
+                catch (Scores.SubmitException e) { return Json.Error(e.Message, e.Status); }
             });
 
             // user tags
@@ -1022,7 +1062,7 @@ namespace XcOsu.Server.Api
                     """, r => r.GetInt64(0), ("$t", type), ("$i", commentable), ("$p", parent), ("$o", (page - 1) * 50));
                 bool hasMore = top.Count > 50;
                 top = top.Take(50).ToList();
-                var replies = top.Count == 0 ? new List<long>() : c.Query($"SELECT id FROM comments WHERE parent_id IN ({string.Join(',', top)}) ORDER BY created_at", r => r.GetInt64(0));
+                var replies = top.Count == 0 ? new List<long>() : c.Query($"SELECT id FROM comments WHERE parent_id IN ({string.Join(',', top)}) ORDER BY created_at LIMIT 100", r => r.GetInt64(0));
                 return Json.Ok(bundle(c, top.Concat(replies).ToList(), type, commentable, uid(ctx), accounts, users, hasMore, parent));
             });
 
@@ -1037,6 +1077,9 @@ namespace XcOsu.Server.Api
                 long? parent = long.TryParse(p("comment[parent_id]"), out long pid) && pid > 0 ? pid : null;
                 string now = DateTimeOffset.UtcNow.ToString("O");
                 using var c = db.Open();
+                if (type is not ("news_post" or "beatmapset" or "build") || commentable <= 0
+                    || (parent != null && c.Scalar<long>("SELECT COUNT(*) FROM comments WHERE id = $p AND commentable_type = $t AND commentable_id = $i AND deleted_at IS NULL", ("$p", parent), ("$t", type), ("$i", commentable)) != 1))
+                    return Json.Error("Invalid comment target", 422);
                 long id = c.Insert("INSERT INTO comments (commentable_type, commentable_id, parent_id, user_id, message, created_at, updated_at) VALUES ($t, $i, $p, $u, $m, $n, $n)",
                     ("$t", type), ("$i", commentable), ("$p", parent), ("$u", u), ("$m", message.Length > 4000 ? message[..4000] : message), ("$n", now));
 
@@ -1053,7 +1096,7 @@ namespace XcOsu.Server.Api
                 var p = await Json.Params(ctx.Request);
                 using var c = db.Open();
                 c.Exec("UPDATE comments SET message = $m, edited_at = $n, edited_by_id = $u, updated_at = $n WHERE id = $i AND (user_id = $u OR $a = 1)",
-                    ("$m", p("comment[message]") ?? ""), ("$n", DateTimeOffset.UtcNow.ToString("O")), ("$u", u), ("$i", id), ("$a", accounts.Get(u)?.IsAdmin == true ? 1 : 0));
+                    ("$m", (p("comment[message]") ?? "") is var edited && edited.Length > 4000 ? edited[..4000] : edited), ("$n", DateTimeOffset.UtcNow.ToString("O")), ("$u", u), ("$i", id), ("$a", accounts.Get(u)?.IsAdmin == true ? 1 : 0));
                 return Json.Ok(bundle(c, new List<long> { id }, null, null, u, accounts, users));
             });
 
@@ -1144,6 +1187,15 @@ namespace XcOsu.Server.Api
                 if (uid(ctx) is not int u) return unauthorized();
                 var p = await Json.Params(ctx.Request);
                 using var c = db.Open();
+                if ((p("reason")?.Length ?? 0) > 100 || (p("comments")?.Length ?? 0) > 4000 || (p("reportable_type")?.Length ?? 0) > 40)
+                    return Json.Error("Report fields too long", 422);
+                string reportType = p("reportable_type") ?? "user";
+                long reportId = long.TryParse(p("reportable_id"), out long parsedReportId) ? parsedReportId : 0;
+                if (reportId <= 0 || reportType is not ("user" or "score" or "comment" or "message" or "beatmapset"))
+                    return Json.Error("Invalid report target", 422);
+                if (c.Scalar<long>("SELECT COUNT(*) FROM reports WHERE reporter_id = $u AND reportable_type = $t AND reportable_id = $i AND created_at > $at",
+                    ("$u", u), ("$t", reportType), ("$i", reportId), ("$at", DateTimeOffset.UtcNow.AddHours(-24).ToString("O"))) > 0)
+                    return Results.NoContent();
                 c.Exec("INSERT INTO reports (reporter_id, reportable_type, reportable_id, reason, comments, created_at) VALUES ($u, $t, $i, $r, $c, $n)",
                     ("$u", u), ("$t", p("reportable_type") ?? "user"), ("$i", long.TryParse(p("reportable_id"), out long rid) ? rid : 0), ("$r", p("reason")),
                     ("$c", p("comments")), ("$n", DateTimeOffset.UtcNow.ToString("O")));
@@ -1160,8 +1212,10 @@ namespace XcOsu.Server.Api
                 string hash = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(12)).ToLowerInvariant();
                 string dir = Path.Combine(db.DataDirectory, "screenshots");
                 Directory.CreateDirectory(dir);
-                await using (var fs = File.Create(Path.Combine(dir, hash + ".jpg")))
-                    await file.CopyToAsync(fs);
+                using var input = new MemoryStream();
+                await file.CopyToAsync(input, ctx.RequestAborted);
+                var jpeg = await SafeImages.Reencode(input.ToArray(), true, ctx.RequestAborted);
+                await SafeImages.WriteAtomic(Path.Combine(dir, hash + ".jpg"), jpeg, ctx.RequestAborted);
                 using var c = db.Open();
                 c.Exec("INSERT INTO screenshots (user_id, hash, created_at) VALUES ($u, $h, $n)", ("$u", u), ("$h", hash), ("$n", DateTimeOffset.UtcNow.ToString("O")));
                 return Json.Ok(new { url = $"{users.PublicBase}/api/xc/ss/{hash}" });

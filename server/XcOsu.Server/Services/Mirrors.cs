@@ -204,17 +204,28 @@ namespace XcOsu.Server.Services
         public async Task<byte[]?> GetOsuFile(int beatmapId, CancellationToken ct)
         {
             string path = Path.Combine(osuCache, $"{beatmapId}.osu");
-            if (File.Exists(path)) return await File.ReadAllBytesAsync(path, ct);
+            if (File.Exists(path) && new FileInfo(path).Length <= 8 * 1024 * 1024) return await File.ReadAllBytesAsync(path, ct);
 
             foreach (string url in new[] { $"https://catboy.best/osu/{beatmapId}", $"https://osu.direct/api/osu/{beatmapId}" })
             {
                 try
                 {
-                    using var res = await http.GetAsync(url, ct);
+                    using var res = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
                     if (!res.IsSuccessStatusCode) continue;
-                    byte[] data = await res.Content.ReadAsByteArrayAsync(ct);
+                    if (res.Content.Headers.ContentLength > 8 * 1024 * 1024) continue;
+                    using var input = await res.Content.ReadAsStreamAsync(ct);
+                    using var output = new MemoryStream();
+                    byte[] buffer = new byte[81920];
+                    int read;
+                    while ((read = await input.ReadAsync(buffer, ct)) > 0)
+                    {
+                        if (output.Length + read > 8 * 1024 * 1024) throw new HttpRequestException("Beatmap too large");
+                        output.Write(buffer, 0, read);
+                    }
+                    byte[] data = output.ToArray();
+                    if (!System.Text.Encoding.UTF8.GetString(data, 0, Math.Min(128, data.Length)).Contains("osu file format v")) continue;
                     if (data.Length < 16) continue;
-                    await File.WriteAllBytesAsync(path, data, ct);
+                    await SafeImages.WriteAtomic(path, data, ct);
                     return data;
                 }
                 catch (Exception e) when (e is HttpRequestException or TaskCanceledException)

@@ -44,10 +44,11 @@ namespace XcOsu.Server.Api
 
         public static void Map(WebApplication app)
         {
-            app.MapGet("/api/xc/teams", (Db db, Users users, Accounts accounts) =>
+            app.MapGet("/api/xc/teams", (HttpRequest req, Db db, Users users, Accounts accounts) =>
             {
                 using var c = db.Open();
-                var ids = c.Query("SELECT id FROM teams ORDER BY id", r => r.GetInt64(0));
+                int page = Math.Clamp(int.TryParse(req.Query["page"], out var requested) ? requested : 1, 1, 100000);
+                var ids = c.Query("SELECT id FROM teams ORDER BY id LIMIT 50 OFFSET $offset", r => r.GetInt64(0), ("$offset", (page - 1) * 50));
                 return Json.Ok(new JArray(ids.Select(id => teamJson(c, users, accounts, id, false))));
             });
 
@@ -97,7 +98,8 @@ namespace XcOsu.Server.Api
                 if (c.Scalar<long>("SELECT COUNT(*) FROM teams WHERE id = $t", ("$t", id)) == 0) return Json.Error("Team not found", 404);
                 if (teamOf(c, u) != null) return Json.Error("Leave your current team first.", 422);
                 if (c.Scalar<long>("SELECT COUNT(*) FROM team_members WHERE team_id = $t", ("$t", id)) >= max_members) return Json.Error("This team is full.", 422);
-                c.Exec("INSERT INTO team_members (team_id, user_id) VALUES ($t, $u)", ("$t", id), ("$u", u));
+                if (c.Exec("INSERT INTO team_members (team_id, user_id) SELECT $t, $u WHERE (SELECT COUNT(*) FROM team_members WHERE team_id = $t) < 256", ("$t", id), ("$u", u)) != 1)
+                    return Json.Error("This team is full.", 422);
                 return Json.Ok(teamJson(c, users, accounts, id, true));
             });
 
@@ -145,7 +147,7 @@ namespace XcOsu.Server.Api
 
                 string dir = Path.Combine(db.DataDirectory, "team-flags");
                 Directory.CreateDirectory(dir);
-                await File.WriteAllBytesAsync(Path.Combine(dir, id.ToString()), ms.ToArray());
+                await SafeImages.WriteAtomic(Path.Combine(dir, id.ToString()), await SafeImages.Reencode(ms.ToArray(), false, ctx.RequestAborted), ctx.RequestAborted);
 
                 using var c2 = db.Open();
                 string url = $"{users.PublicBase}/api/xc/team-flag/{id}?v={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";

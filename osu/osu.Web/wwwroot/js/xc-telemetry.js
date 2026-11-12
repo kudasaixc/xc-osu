@@ -267,17 +267,24 @@ export function startTelemetry(options, build, log) {
   }
   // Bound disk usage across abandoned sessions.
   for (const k of keys().slice(0, -8)) localStorage.removeItem(k);
+  let sessionUntil = 0;
   async function send() {
     if (busy) return;
     busy = true;
     closeBlock();
     try {
+      if (Date.now() >= sessionUntil) {
+        const session = await fetch('/api/xc/tm/session', { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(10000) });
+        if (!session.ok) return;
+        sessionUntil = Date.now() + 50 * 60000;
+      }
       for (const k of new Set([key, ...keys()])) {
         const raw = k === key ? batch : JSON.parse(localStorage.getItem(k) || 'null');
         const body = raw ? packet(raw) : null;
         if (!body || size(body) > MAX_BYTES) continue;
         const sent = JSON.parse(body);
-        const response = await fetch('/api/xc/tm', { method: 'POST', body, credentials: 'omit', headers: { 'Content-Type': 'text/plain' }, signal: AbortSignal.timeout(10000) });
+        const response = await fetch('/api/xc/tm', { method: 'POST', body, credentials: 'same-origin', headers: { 'Content-Type': 'text/plain' }, signal: AbortSignal.timeout(10000) });
+        if (response.status === 401) sessionUntil = 0;
         if (!response.ok) break;
         const { seq } = await response.json();
         if (!Number.isSafeInteger(seq)) break;

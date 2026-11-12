@@ -10,6 +10,7 @@ namespace XcOsu.Server.Api
     {
         public static readonly JsonSerializerSettings SETTINGS = new JsonSerializerSettings
         {
+            MaxDepth = 32,
             DateFormatHandling = DateFormatHandling.IsoDateFormat,
             NullValueHandling = NullValueHandling.Include,
             ReferenceLoopHandling = ReferenceLoopHandling.Ignore,
@@ -40,8 +41,16 @@ namespace XcOsu.Server.Api
         public static async Task<T?> Body<T>(HttpRequest req)
         {
             using var reader = new StreamReader(req.Body);
-            string s = await reader.ReadToEndAsync();
+            string s = await ReadBounded(reader);
             return string.IsNullOrWhiteSpace(s) ? default : JsonConvert.DeserializeObject<T>(s, SETTINGS);
+        }
+
+        private static async Task<string> ReadBounded(StreamReader reader)
+        {
+            char[] buffer = new char[262145];
+            int count = await reader.ReadBlockAsync(buffer);
+            if (count > 262144) throw new BadHttpRequestException("Request too large", 413);
+            return new string(buffer, 0, count);
         }
 
         /// <summary>Reads a parameter from the query, a form body or a JSON body (osu! sends all three).</summary>
@@ -56,7 +65,7 @@ namespace XcOsu.Server.Api
             {
                 req.EnableBuffering();
                 using var reader = new StreamReader(req.Body, leaveOpen: true);
-                string s = await reader.ReadToEndAsync();
+                string s = await ReadBounded(reader);
                 req.Body.Position = 0;
                 try { json = string.IsNullOrWhiteSpace(s) ? null : JObject.Parse(s); }
                 catch (JsonException) { }

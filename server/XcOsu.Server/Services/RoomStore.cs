@@ -71,6 +71,36 @@ namespace XcOsu.Server.Services
                 ("$h", hostId), ("$c", category), ("$t", type), ("$d", DateTimeOffset.UtcNow.ToString("O")));
         }
 
+        public ServerRoom CreatePlaylistRoom(int hostId, JObject json)
+        {
+            if (json["playlist"] is not JArray playlist || playlist.Count is < 1 or > 100)
+                throw new ArgumentException("Invalid playlist");
+            using var c = db.Open();
+            using var transaction = c.BeginTransaction();
+            long id = c.Insert("INSERT INTO rooms (json, host_id, category, type, created_at) VALUES ('{}', $h, 'normal', 'playlists', $at)",
+                ("$h", hostId), ("$at", DateTimeOffset.UtcNow.ToString("O")));
+            int channel = (int)c.Insert("INSERT INTO chat_channels (name, description, type, room_id) VALUES ($n, $d, 'MULTIPLAYER', $r)",
+                ("$n", $"#mp_{id}"), ("$d", json.Value<string>("name")), ("$r", id));
+            foreach (var item in playlist)
+            {
+                long itemId = Interlocked.Increment(ref nextPlaylistItemId);
+                item["id"] = itemId;
+                item["room_id"] = id;
+                c.Exec("INSERT INTO playlist_items (id, room_id, json) VALUES ($i, $r, $j)",
+                    ("$i", itemId), ("$r", id), ("$j", item.ToString(Formatting.None)));
+            }
+            json["id"] = id;
+            json["channel_id"] = channel;
+            json["current_playlist_item"] = playlist[0].DeepClone();
+            c.Exec("UPDATE rooms SET json = $j, ends_at = $e WHERE id = $i",
+                ("$j", json.ToString(Formatting.None)), ("$e", endsAt(json)), ("$i", id));
+            c.Exec("INSERT INTO chat_members (channel_id, user_id) VALUES ($c, $u)", ("$c", channel), ("$u", hostId));
+            transaction.Commit();
+            var room = new ServerRoom { Id = id, Json = json, ChannelId = channel };
+            Rooms[id] = room;
+            return room;
+        }
+
         public void Persist(ServerRoom room)
         {
             using var c = db.Open();

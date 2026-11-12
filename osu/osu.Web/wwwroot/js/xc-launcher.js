@@ -249,6 +249,7 @@ export class Launcher {
             <h1 class="title">${t('nav.options')}</h1>
             <span class="head-actions"><button type="button" class="btn" id="ln-export" title="${esc(t('backup.export.hint'))}">${t('backup.export')}</button><button type="button" class="btn" id="ln-import" title="${esc(t('backup.import.hint'))}">${t('backup.import')}</button><input type="file" id="ln-import-file" accept=".xcbak" hidden><button type="button" class="btn danger" id="ln-wipe" title="${esc(t('wipe.hint'))}">${t('wipe.btn')}</button><button type="button" class="btn" id="ln-reset">${t('opt.reset')}</button></span>
           </header>
+          <label>Mot de passe de sauvegarde (facultatif pour exporter, requis pour importer une sauvegarde chiffrée)<input type="password" id="ln-backup-password" autocomplete="off" maxlength="256"></label>
           <p class="backup-status" id="ln-backup-status" role="status" hidden></p>
           <div class="presets"><span class="muted">${t('presets')}</span><div id="ln-presets" class="chips" role="group"></div></div>
           <div id="ln-opts" class="opt-grid"></div>
@@ -330,7 +331,7 @@ export class Launcher {
       const picker = import('./xc-backup.js'); // the save dialog needs the click, so nothing slow before it
       this.backupBusy(true, t('backup.export.start'));
       const { exportBackup } = await picker;
-      const r = await exportBackup({ build: this.build, onProgress: (n, total, bytes) => this.backupBusy(true, t('backup.export.busy', Math.floor(100 * n / total), fmtBytes(bytes))) });
+      const r = await exportBackup({ build: this.build, password: this.root.querySelector('#ln-backup-password')?.value || '', onProgress: (n, total, bytes) => this.backupBusy(true, t('backup.export.busy', Math.floor(100 * n / total), fmtBytes(bytes))) });
       this.backupBusy(false, t('backup.export.done', r.name, fmtBytes(r.bytes), r.entries));
     } catch (e) { this.backupError(e); }
   }
@@ -342,7 +343,7 @@ export class Launcher {
     try {
       this.backupBusy(true, t('backup.import.check', 0));
       const { importBackup } = await import('./xc-backup.js');
-      await importBackup(file, { onProgress: (phase, n, total) => this.backupBusy(true, t('backup.import.' + phase, total ? Math.min(100, Math.floor(100 * n / total)) : 0)) });
+      await importBackup(file, { password: this.root.querySelector('#ln-backup-password')?.value || '', onProgress: (phase, n, total) => this.backupBusy(true, t('backup.import.' + phase, total ? Math.min(100, Math.floor(100 * n / total)) : 0)) });
       this.backupBusy(true, t('backup.import.done'));
       setTimeout(() => location.reload(), 900);
     } catch (e) { this.backupError(e); }

@@ -91,7 +91,7 @@ export async function beatmapset({ params: [id], hash }) {
           <p class="set-sub">${statusChip(set.status)} ${t('mapped by', 'mappée par')} <b>${esc(set.creator)}</b> · ${set.ranked_date ? `${t('ranked', 'classée le')} ${dateText(set.ranked_date)}` : `${t('updated', 'mise à jour le')} ${dateText(set.last_updated)}`}</p>
           <div class="set-actions">
             <button type="button" class="btn" id="fav" aria-pressed="false"></button>
-            <a class="btn ghost" href="/api/v2/beatmapsets/${set.id}/download" download="${set.id}.osz">${t('Download (.osz)', 'Télécharger (.osz)')}</a>
+            <a class="btn ghost" href="/api/v2/beatmapsets/${set.id}/download" download="${esc(`${set.id} ${set.artist} - ${set.title}`.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim() + '.osz')}">${t('Download (.osz)', 'Télécharger (.osz)')}</a>
             ${set.preview_url ? `<audio controls preload="none" src="${esc(set.preview_url)}" aria-label="${t('Preview', 'Extrait')}"></audio>` : ''}
           </div>
           <p class="muted small">${t('In the game, find it from the beatmap listing with this ID:', 'Dans le jeu, retrouve-la depuis la liste des beatmaps avec cet ID :')} <code>${set.id}</code></p>
@@ -174,10 +174,11 @@ export function commentThread({ type, id, query }) {
   const wrap = document.createElement('div');
   wrap.className = 'comments';
   const canPost = type != null;
+  let page = 1;
   const load = async () => {
     wrap.innerHTML = `<span class="muted">${t('Loading…', 'Chargement…')}</span>`;
     let data;
-    try { data = await v2('/comments?' + (query || `commentable_type=${type}&commentable_id=${id}`)); }
+    try { data = await v2('/comments?' + (query || `commentable_type=${type}&commentable_id=${id}`) + '&page=' + page); }
     catch (e) { wrap.innerHTML = `<span class="bad">${esc(e.message)}</span>`; return; }
     const users = new Map((data.users || []).map((u) => [u.id, u])), voted = new Set(data.user_votes || []);
     const replies = new Map();
@@ -195,6 +196,7 @@ export function commentThread({ type, id, query }) {
             ${mine ? `<button type="button" class="link danger" data-delete>${t('Delete', 'Supprimer')}</button>` : ''}
             ${!canPost ? `<a class="link" href="${L(c.commentable_type === 'beatmapset' ? '/beatmapsets/' + c.commentable_id : '/')}">${t('See in context', 'Voir le contexte')}</a>` : ''}
           </div>`}
+          ${!nested && c.replies_count > (replies.get(c.id)?.length || 0) ? `<button type="button" class="link" data-more-replies="${c.id}">${t('See all replies', 'Voir toutes les réponses')}</button>` : ''}
           ${!nested && replies.has(c.id) ? `<ul class="comment-replies">${replies.get(c.id).map((r) => one(r, true)).join('')}</ul>` : ''}
         </div>
       </li>`;
@@ -205,6 +207,18 @@ export function commentThread({ type, id, query }) {
     wrap.innerHTML = (canPost ? (signedIn() ? form(null) : `<p class="muted"><a href="${L('/login?next=' + encodeURIComponent(location.pathname.slice(WEB.length) + location.hash))}">${t('Sign in', 'Connecte-toi')}</a> ${t('to comment.', 'pour commenter.')}</p>`) : '')
       + ((data.comments || []).length ? `<ul class="comment-list">${data.comments.map((c) => one(c, false)).join('')}</ul>` : empty(t('No comments yet.', 'Aucun commentaire pour l’instant.')));
 
+    if (page > 1 || data.has_more) {
+      const nav = document.createElement('nav');
+      for (const [label, target, enabled] of [['←', page - 1, page > 1], ['→', page + 1, data.has_more]]) {
+        if (!enabled) continue;
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'btn ghost'; button.textContent = label;
+        button.onclick = () => { page = target; load(); }; nav.append(button);
+      }
+      wrap.append(nav);
+    }
+    wrap.querySelectorAll('[data-more-replies]').forEach(button => button.addEventListener('click', () => {
+      button.replaceWith(commentThread({ query: 'parent_id=' + button.dataset.moreReplies + '&sort=old' }));
+    }));
     const submit = async (e) => {
       e.preventDefault();
       const f = e.target, fields = { 'comment[message]': f.message.value.trim(), 'comment[commentable_type]': type, 'comment[commentable_id]': id };

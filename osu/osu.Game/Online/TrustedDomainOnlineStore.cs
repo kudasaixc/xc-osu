@@ -9,7 +9,7 @@ namespace osu.Game.Online
 {
     public sealed class TrustedDomainOnlineStore : OnlineStore
     {
-        // xc-osu!: our own server (xc softworks) and the beatmap mirrors are trusted alongside ppy.sh.
+        // xc-osu!: trust our server and beatmap mirrors; official avatars are explicitly blocked below.
         private static readonly string[] trusted_domains = { @"ppy.sh", @"xcsoftworks.com", @"catboy.best", @"nerinyan.moe", @"osu.direct" };
 
         private static bool isTrusted(string host)
@@ -25,7 +25,7 @@ namespace osu.Game.Online
 
         protected override string GetLookupUrl(string url)
         {
-            if (!Uri.TryCreate(url, UriKind.Absolute, out Uri? uri) || !isTrusted(uri.Host))
+            if (!Uri.TryCreate(url, UriKind.Absolute, out Uri? uri) || !isTrusted(uri.Host) || uri.Host.Equals("a.ppy.sh", StringComparison.OrdinalIgnoreCase))
             {
                 Logger.Log($@"Blocking resource lookup from external website: {url}", LoggingTarget.Network, LogLevel.Important);
                 return string.Empty;
