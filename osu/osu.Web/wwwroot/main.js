@@ -18,6 +18,9 @@ const say = (m) => console.log('[launch] ' + m);
 const query = new URLSearchParams(location.search);
 const engineBuild = 'source'; // replaced by stamp.py from the published engine asset fingerprints
 const build = 'pacing1:' + engineBuild + ':' + (new URL(import.meta.url).searchParams.get('v') || 'dev');
+// Engine .wasm files are served from this CDN (Cloudflare R2) when set, with the site itself as fallback.
+// tools/r2-sync.py fills it in at deploy time, only once every .wasm of the build is on the CDN.
+const cdnBase = '';
 
 let options = loadOptions();
 let t = makeT(options.lang);
@@ -49,6 +52,24 @@ if (typeof PerformanceObserver !== 'undefined') {
 // content-fingerprinted, so a new build simply misses and replaces the old entry).
 const BIG_ASSET = /^osu\.Game\.Resources\./;
 const BIG_CACHE = 'xc-big-assets-v1';
+// The CDN copy is tried first; anything going wrong there (blocked domain, missing file, bad content)
+// falls back to the same file on the site. Workers and dotnet.js always stay same-origin.
+const originFetch = (uri, integrity) => fetch(uri, { credentials: 'same-origin', ...(integrity ? { integrity } : {}) });
+async function engineFetch(uri, integrity) {
+  if (!cdnBase) return originFetch(uri, integrity);
+  const cdn = cdnBase + '_framework/' + new URL(uri, document.baseURI).pathname.split('/').pop();
+  try {
+    const res = await fetch(cdn, { mode: 'cors', credentials: 'omit', ...(integrity ? { integrity } : {}) });
+    if (res.ok) return res;
+    console.warn('[launch] cdn answered ' + res.status + ' for ' + cdn + ', using the site copy');
+  } catch (e) {
+    console.warn('[launch] cdn failed for ' + cdn + ' (' + e + '), using the site copy');
+  }
+  return originFetch(uri, integrity);
+}
+
+// The Cache Storage key stays the site URL wherever the bytes came from, so moving to or from the CDN
+// does not make anyone download the file again.
 async function bigAsset(uri) {
   const url = new URL(uri, document.baseURI).href;
   let cache = null;
@@ -57,7 +78,7 @@ async function bigAsset(uri) {
     const hit = await cache.match(url);
     if (hit) return hit;
   } catch { cache = null; }
-  const res = await fetch(url, { credentials: 'same-origin' });
+  const res = await engineFetch(url);
   if (cache && res.ok && res.status === 200) {
     cache.put(url, res.clone()).then(async () => {
       for (const k of await cache.keys()) if (k.url !== url) await cache.delete(k);
@@ -72,7 +93,10 @@ const builder = dotnet
   // for French news, changelog and wiki. Picking a language in the game's settings still overrides it.
   .withApplicationCulture('en')
   .withConfig({ pthreadPoolInitialSize: options.workers, pthreadPoolUnusedSize: options.iosCompat ? 0 : Math.min(4, options.workers) })
-  .withResourceLoader((type, name, defaultUri) => BIG_ASSET.test(name) ? bigAsset(defaultUri) : defaultUri)
+  .withResourceLoader((type, name, defaultUri, integrity) => {
+    if (BIG_ASSET.test(name)) return bigAsset(defaultUri);
+    return cdnBase && /\.wasm(\?|$)/.test(defaultUri) ? engineFetch(defaultUri, integrity) : defaultUri;
+  })
   .withModuleConfig({ onDownloadResourceProgress: (loaded, total) => { dl.loaded = loaded; dl.total = total; emit(); } });
 
 const dlStart = performance.now();

@@ -62,6 +62,12 @@ rsync -a --delete "${RESTORE_ARGS[@]}" "$SITE/" "$SNAPSHOT/"
 BACKUP_READY=1
 echo "Backup ready: $SNAPSHOT"
 
+# Engine .wasm files go to the CDN first (AOT only); the build falls back to the site if this does not complete.
+if [[ "$MODE" == aot ]]; then
+    python3 "$ROOT/tools/r2-sync.py" "$SRC" || echo "r2-sync crashed; the launcher falls back to the site per file" >&2
+else
+    python3 "$ROOT/tools/r2-sync.py" "$SRC" --off || true
+fi
 python3 "$ROOT/tools/stamp.py" "$SRC"
 rsync -a --delete-delay --delay-updates "${RESTORE_ARGS[@]}" "$SRC/" "$SITE/"
 

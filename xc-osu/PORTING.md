@@ -291,3 +291,33 @@ runtime used to take the browser's culture, which made a French browser run an E
 `Accept-Language: fr` and received the French changelog, news and wiki. `main.js` now starts the runtime with
 `.withApplicationCulture('en')`: the game language defaults to English and the server content follows it. A language
 picked explicitly in the game's settings is still sent as is.
+
+## Engine .wasm files on a CDN (Cloudflare R2, 2026-11-12)
+
+The site sits behind Cloudflare but `.wasm` is not cached there by default, so every first visit pulled ~230 MB
+(gzip on the fly) through the VPS. The engine `.wasm` files of the AOT build now live in an R2 bucket (`xc-osu`,
+keys `_framework/<fingerprinted name>`) served by `https://cdn.xcsoftworks.com/`.
+
+- **Upload**: `tools/r2-sync.py <wwwroot>` lists the bucket, uploads only the files that are not there yet
+  (fingerprinted names: same name = same content), compressed with `brotli -q 9` and stored with
+  `Content-Encoding: br`, `Content-Type: application/wasm`, `Cache-Control: immutable`. Cloudflare serves them as
+  stored and decodes them itself for a client that does not accept brotli. 230 MB become 134 MB (the resources
+  assembly is mostly already-compressed data: 135 → 108 MB; the runtime: 57 → 13 MB). A full upload takes ~4 min,
+  a later build only sends what changed. Nothing is ever deleted from the bucket.
+- **Switch**: only when every `.wasm` of the build is verified on the bucket does the script write
+  `const cdnBase = 'https://cdn.xcsoftworks.com/';` into that build's `main.js`. Any failure, or no credentials,
+  leaves `cdnBase` empty and the build loads from the site as before; the script never fails a deployment.
+  `r2-sync.py <wwwroot> --off` switches a build back. It runs before `stamp.py` in `deploy.sh` /
+  `deploy-guarded.sh` (AOT only; the interpreter build stays on the site).
+- **Loader** (`main.js`, `engineFetch`): with `cdnBase` set, each `.wasm` is fetched from the CDN (`cors`, no
+  credentials, same integrity hash as the runtime would use) and falls back to the site copy on any error, file by
+  file. `dotnet.js`, the workers and every other file stay same-origin, as cross-origin isolation requires. The
+  Cache Storage key of the resources assembly stays the site URL, so the move did not make anyone download it again.
+- **Cloudflare side** (zone rules on the `cdn` host only): a cache rule making everything eligible for the edge
+  cache, and a response-header rule setting `Access-Control-Allow-Origin` and `Timing-Allow-Origin` to the game's
+  origin (the launcher's download readout needs the sizes) and `Cross-Origin-Resource-Policy: cross-origin`. The
+  bucket also has a CORS policy for the same origin.
+- **Credentials**: `~/.config/xc-osu/cloudflare.env` (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`), outside the
+  repository. A token limited to *Account → Workers R2 Storage → Edit* is enough for deployments.
+- Checked in headless Chromium: 181 engine files from the CDN and a normal boot; with the CDN host blocked, 181
+  fallbacks and the same boot.

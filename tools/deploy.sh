@@ -11,6 +11,8 @@ if [ -z "${XC_DEPLOY_SSH:-}" ] && [ "${2:-}" != "test" ]; then
 fi
 src="$ROOT/out/${1:-dev}/wwwroot"
 [ -f "$src/index.html" ] || { echo "no build at $src"; exit 1; }
+# engine .wasm files go to the CDN first (AOT only); see tools/r2-sync.py
+if [ "${1:-dev}" = "aot" ]; then python3 "$ROOT/tools/r2-sync.py" "$src" || true; else python3 "$ROOT/tools/r2-sync.py" "$src" --off || true; fi
 python3 "$ROOT/tools/stamp.py" "$src"
 SITE=${XC_SITE_DIR:-/var/www/osu/site}
 if [ -n "$XC_DEPLOY_SSH" ]; then dst="$XC_DEPLOY_SSH:$SITE"; else dst="$SITE"; fi
