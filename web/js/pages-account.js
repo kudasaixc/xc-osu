@@ -1,5 +1,5 @@
 // xc-osu! web — sign in, registration, account settings. xc softworks (kudasaixc)
-import { L, state, t, esc, num, countryName, MODES, modeName, api, signIn, signOut, loadMe, signedIn, requireSignIn, renderUserText, act, userLink, ApiError } from './core.js';
+import { L, state, t, esc, num, countryName, MODES, modeName, api, signIn, signOut, loadMe, signedIn, requireSignIn, renderUserText, act, userLink, avatarUrl, ApiError } from './core.js';
 
 /** Only follow "next" back to a page of this site. */
 const nextPath = (query) => { const n = query.get('next') || ''; return n.startsWith('/') && !n.startsWith('//') && !n.startsWith('/login') ? n : '/'; };
@@ -61,20 +61,26 @@ export function passwordReset() {
   return {
     title: t('Forgotten password', 'Mot de passe oublié'),
     html: `<section class="panel narrow"><h1>${t('Forgotten password', 'Mot de passe oublié')}</h1>
-      <p>${t('xc-osu! does not send e-mails, so a password cannot be reset automatically. Ask an xc softworks admin in the game chat or on Discord: they can set a new one for you.', 'xc-osu! n’envoie pas d’e-mails, donc un mot de passe ne peut pas être réinitialisé automatiquement. Demande à un admin xc softworks dans le chat du jeu ou sur Discord : il peut t’en définir un nouveau.')}</p>
-      <p>${t('If you still know your password, you can change it from your settings.', 'Si tu connais encore ton mot de passe, tu peux le changer depuis tes réglages.')}</p>
-      <p><a class="btn" href="${L('/home/account/edit')}#password">${t('Open my settings', 'Ouvrir mes réglages')}</a> <a class="btn ghost" href="${L('/login')}">${t('Sign in', 'Connexion')}</a></p></section>`,
+      <p>${t('Enter your verified email address. If you have not verified it, contact an administrator.', 'Saisis ton adresse email confirmée. Si tu ne l’as pas confirmée, contacte un administrateur.')}</p>
+      <form id="reset-request" class="form"><label>Email<input type="email" name="email" maxlength="254" required></label><button class="btn">Envoyer</button><span class="msg" role="alert"></span></form></section>`,
+    mount(view) {
+      const form = view.querySelector('#reset-request');
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        await act(form.querySelector('button'), form.querySelector('.msg'),
+          () => api('/api/xc/account/email/request-reset', { method: 'POST', json: { email: form.email.value } }),
+          t('If this address is eligible, a link will be sent.', 'Si cette adresse est éligible, un lien sera envoyé.'));
+      });
+    },
   };
 }
 
-const COUNTRIES = 'AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW'.split(' ');
 
 export async function settings({ go, refreshShell, hash }) {
   requireSignIn();
   const acct = await api('/api/xc/account');
   const pr = acct.profile || {};
   const field = (key, label, max = 100) => `<label>${esc(label)}<input name="${key}" value="${esc(pr[key] || '')}" maxlength="${max}"></label>`;
-  const countries = COUNTRIES.map((c) => [c, countryName(c)]).sort((a, b) => a[1].localeCompare(b[1], state.lang));
   const styles = [['mouse', t('Mouse', 'Souris')], ['keyboard', t('Keyboard', 'Clavier')], ['tablet', t('Tablet', 'Tablette')], ['touch', t('Touch screen', 'Écran tactile')]];
 
   return {
@@ -82,9 +88,10 @@ export async function settings({ go, refreshShell, hash }) {
     html: `<h1 class="page-title">${t('Settings', 'Réglages')}</h1>
       <p class="muted">${t('Signed in as', 'Connecté en tant que')} <a href="${L('/users/' + acct.id)}"><b>${esc(acct.username)}</b></a> · ${esc(acct.email)}</p>
 
+      <section class="panel"><button class="btn ghost" id="verify-email">Confirmer mon adresse email</button><span id="verify-email-msg" role="alert"></span></section>
       <section class="panel" id="images"><h2>${t('Avatar and cover', 'Avatar et bannière')}</h2>
         <div class="images">
-          <div><img id="avatar-img" class="avatar" src="${esc(acct.avatar_url)}" width="120" height="120" alt="${t('Current avatar', 'Avatar actuel')}">
+          <div><img id="avatar-img" class="avatar" src="${esc(avatarUrl(acct))}" width="120" height="120" alt="${t('Current avatar', 'Avatar actuel')}">
             <label class="btn ghost file">${t('Change avatar', 'Changer l’avatar')}<input type="file" id="avatar-file" accept="image/png,image/jpeg,image/gif,image/webp"></label></div>
           <div class="grow"><img id="cover-img" class="cover-preview" src="${esc(acct.cover_url)}" alt="${t('Current cover', 'Bannière actuelle')}">
             <label class="btn ghost file">${t('Change cover', 'Changer la bannière')}<input type="file" id="cover-file" accept="image/png,image/jpeg,image/gif,image/webp"></label>
@@ -96,7 +103,7 @@ export async function settings({ go, refreshShell, hash }) {
 
       <form class="panel form" id="profile"><h2>${t('Profile', 'Profil')}</h2>
         <div class="form-grid">
-          <label>${t('Country', 'Pays')}<select name="country"><option value="XX">${t('Not shown', 'Non affiché')}</option>${countries.map(([c, name]) => `<option value="${c}"${c === acct.country ? ' selected' : ''}>${esc(name)}</option>`).join('')}</select></label>
+          <label>${t('Country', 'Pays')}<input value="${esc(acct.country && acct.country !== 'XX' ? countryName(acct.country) : t('Unknown', 'Inconnu'))}" disabled title="${t('Set from your connection when the account was created.', 'Défini d’après ta connexion à la création du compte.')}"></label>
           <label>${t('Default game mode', 'Mode de jeu par défaut')}<select name="playmode">${MODES.map((m) => `<option value="${m}"${m === acct.playmode ? ' selected' : ''}>${modeName(m)}</option>`).join('')}</select></label>
           ${field('location', t('Location', 'Lieu'))}${field('interests', t('Interests', 'Centres d’intérêt'))}${field('occupation', t('Occupation', 'Occupation'))}
           ${field('website', t('Website', 'Site web'))}${field('discord', 'Discord')}${field('twitter', 'Twitter')}
@@ -107,7 +114,7 @@ export async function settings({ go, refreshShell, hash }) {
         <fieldset><legend>${t('I play with', 'Je joue avec')}</legend>${styles.map(([v, label]) => `<label class="check"><input type="checkbox" name="playstyle" value="${v}"${(pr.playstyle || []).includes(v) ? ' checked' : ''}> ${esc(label)}</label>`).join('')}</fieldset>
         <label class="check"><input type="checkbox" name="pm_friends_only"${pr.pm_friends_only ? ' checked' : ''}> ${t('Only my friends can send me private messages', 'Seuls mes amis peuvent m’envoyer des messages privés')}</label>
         <label>${t('About me (shown on my profile)', 'À propos de moi (affiché sur mon profil)')}
-          <textarea name="page" rows="8" maxlength="60000" placeholder="${t('# Title, **bold**, *italic*, > quote, - list, links and [img]https://…[/img]', '# Titre, **gras**, *italique*, > citation, - liste, liens et [img]https://…[/img]')}">${esc(pr.page || '')}</textarea></label>
+          <textarea name="page" rows="8" maxlength="60000" placeholder="${t('osu! BBCode: [b]bold[/b], [centre]…[/centre], [size=150]…[/size], [color=#ff66aa]…[/color], [url=https://…]link[/url], [img]https://…[/img], [box=Title]…[/box], [notice]…[/notice]', 'BBCode osu! : [b]gras[/b], [centre]…[/centre], [size=150]…[/size], [color=#ff66aa]…[/color], [url=https://…]lien[/url], [img]https://…[/img], [box=Titre]…[/box], [notice]…[/notice]')}">${esc(pr.page || '')}</textarea></label>
         <details class="preview"><summary>${t('Preview', 'Aperçu')}</summary><div class="user-text" id="page-preview"></div></details>
         <div><button class="btn" type="submit">${t('Save profile', 'Enregistrer le profil')}</button> <span class="msg" role="status"></span></div>
       </form>
@@ -134,7 +141,7 @@ export async function settings({ go, refreshShell, hash }) {
         const file = e.target.files[0];
         if (!file) return;
         if (await act(null, imgMsg, () => api('/api/xc/account/' + kind, { method: 'POST', file }), okText)) {
-          view.querySelector(imgId).src = bust(kind === 'avatar' ? acct.avatar_url : `/api/xc/cover/${acct.id}`);
+          view.querySelector(imgId).src = bust(kind === 'avatar' ? avatarUrl(acct) : `/api/xc/cover/${acct.id}`);
           await loadMe(); refreshShell();
         }
         e.target.value = '';
@@ -146,6 +153,11 @@ export async function settings({ go, refreshShell, hash }) {
         if (await act(reset, imgMsg, () => api('/api/xc/account/cover', { method: 'DELETE' }), t('Default cover restored.', 'Bannière par défaut rétablie.'))) view.querySelector('#cover-img').src = bust('/api/xc/cover/default');
       });
 
+      view.querySelector('#verify-email')?.addEventListener('click', async (e) => {
+        await act(e.currentTarget, view.querySelector('#verify-email-msg'),
+          () => api('/api/xc/account/email/request-verification', { method: 'POST' }),
+          t('Confirmation email requested.', 'Email de confirmation demandé.'));
+      });
       // ---- profile
       const form = view.querySelector('#profile');
       const swatch = () => { view.querySelector('#hue-swatch').style.background = form.hue_default.checked ? 'var(--pink)' : `hsl(${form.hue.value} 90% 68%)`; form.hue.disabled = form.hue_default.checked; };
@@ -155,7 +167,7 @@ export async function settings({ go, refreshShell, hash }) {
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const body = {
-          country: form.country.value, playmode: form.playmode.value, pm_friends_only: form.pm_friends_only.checked,
+          playmode: form.playmode.value, pm_friends_only: form.pm_friends_only.checked,
           profile_hue: form.hue_default.checked ? null : Number(form.hue.value),
           playstyle: [...form.querySelectorAll('[name=playstyle]:checked')].map((c) => c.value), page: form.page.value,
         };
@@ -167,7 +179,7 @@ export async function settings({ go, refreshShell, hash }) {
       const pw = view.querySelector('#password');
       pw.addEventListener('submit', async (e) => {
         e.preventDefault();
-        if (await act(pw.querySelector('button'), pw.querySelector('.msg'), () => api('/api/xc/account/password', { method: 'POST', json: { current_password: pw.current.value, new_password: pw.next.value } }), t('Password changed.', 'Mot de passe changé.'))) pw.reset();
+        if (await act(pw.querySelector('button'), pw.querySelector('.msg'), () => api('/api/xc/account/password', { method: 'POST', json: { current_password: pw.current.value, new_password: pw.next.value } }), t('Password changed.', 'Mot de passe changé.'))) { await signOut(); location.assign(L("/login")); }
       });
 
       view.querySelector('#logout').addEventListener('click', async () => { await signOut(); refreshShell(); go('/'); });

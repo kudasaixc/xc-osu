@@ -76,8 +76,16 @@ namespace XcOsu.Server.Api
                 var body = await Json.Body<JObject>(ctx.Request);
                 if (body == null) return Json.Error("invalid room");
 
-                long id = store.AllocateRoomId(u, "normal", "playlists");
+                if (body["playlist"] is not JArray input || input.Count is < 1 or > 100
+                    || (body.Value<string>("description")?.Length ?? 0) > 4000)
+                    return Json.Error("Invalid playlist or description size.", 422);
                 int duration = body.Value<int?>("duration") ?? 60 * 24;
+                if (duration is < 1 or > 43200) return Json.Error("Duration must be 1–43200 minutes.", 422);
+                foreach (var entry in input)
+                    if (entry is not JObject || entry["required_mods"] is JArray required && required.Count > 32
+                        || entry["allowed_mods"] is JArray allowed && allowed.Count > 64
+                        || Performance.Ruleset(entry.Value<int?>("ruleset_id") ?? 0) == null)
+                        return Json.Error("Invalid playlist item", 422);
                 var host = accounts.Get(u)!;
 
                 var playlist = new JArray();
@@ -85,7 +93,7 @@ namespace XcOsu.Server.Api
                 foreach (var item in body["playlist"] as JArray ?? new JArray())
                 {
                     int beatmapId = item.Value<int?>("beatmap_id") ?? item["beatmap"]?.Value<int?>("id") ?? 0;
-                    playlist.Add(await store.PlaylistItemJson(store.NextPlaylistItemId(), u, beatmapId, item.Value<int?>("ruleset_id") ?? 0,
+                    playlist.Add(await store.PlaylistItemJson(0, u, beatmapId, item.Value<int?>("ruleset_id") ?? 0,
                         item["required_mods"]?.ToObject<APIMod[]>() ?? Array.Empty<APIMod>(), item["allowed_mods"]?.ToObject<APIMod[]>() ?? Array.Empty<APIMod>(),
                         false, order++, null, item.Value<bool?>("freestyle") ?? false));
                 }
@@ -93,13 +101,9 @@ namespace XcOsu.Server.Api
                 if (playlist.Count == 0) return Json.Error("A playlist needs at least one item.", 422);
                 if (playlist.Any(p => p["beatmap"]?["checksum"] == null)) return Json.Error("One of the beatmaps couldn't be found on the mirrors.", 422);
                 string name = body.Value<string>("name") is { Length: > 0 } n ? (n.Length > 100 ? n[..100] : n) : $"{host.Username}'s playlist";
-                int channelId = chat.CreateRoomChannel(id, name);
-                await chat.JoinAndNotify(channelId, u);
-                foreach (var item in playlist) item["room_id"] = id;
-
                 var json = new JObject
                 {
-                    ["id"] = id,
+                    ["id"] = 0,
                     ["name"] = name,
                     ["description"] = body.Value<string>("description"),
                     ["category"] = "normal",
@@ -113,7 +117,7 @@ namespace XcOsu.Server.Api
                     ["recent_participants"] = new JArray(),
                     ["playlist"] = playlist,
                     ["current_playlist_item"] = playlist[0],
-                    ["channel_id"] = channelId,
+                    ["channel_id"] = 0,
                     ["status"] = "idle",
                     ["has_password"] = false,
                     ["queue_mode"] = "host_only",
@@ -125,10 +129,8 @@ namespace XcOsu.Server.Api
                     },
                 };
 
-                var room = new ServerRoom { Id = id, Json = json, ChannelId = channelId };
-                store.Rooms[id] = room;
-                store.Persist(room);
-                foreach (var item in playlist) persistItem(ctx, item, id);
+                var room = store.CreatePlaylistRoom(u, json);
+                await chat.JoinAndNotify(room.ChannelId, u);
                 return Json.Ok(json);
             });
 
@@ -224,7 +226,7 @@ namespace XcOsu.Server.Api
                 if (score == null) return Json.Error("invalid score");
                 int beatmapId;
                 using (var c = db.Open())
-                    beatmapId = (int)(c.Scalar<long?>("SELECT beatmap_id FROM score_tokens WHERE id = $t", ("$t", token)) ?? 0);
+                    beatmapId = (int)(c.Scalar<long?>("SELECT beatmap_id FROM score_tokens WHERE id = $t AND room_id = $r AND playlist_item_id = $p", ("$t", token), ("$r", id), ("$p", item)) ?? 0);
                 SoloScoreInfo? stored;
                 try
                 {
@@ -246,6 +248,9 @@ namespace XcOsu.Server.Api
             api.MapGet("/rooms/{id:long}/playlist/{item:long}/scores", (long id, long item, HttpContext ctx, Db db, Accounts accounts, UsersService users) =>
             {
                 int limit = Math.Clamp(int.TryParse(ctx.Request.Query["limit"], out int l) ? l : 50, 1, 100);
+                using (var check = db.Open())
+                    if (check.Scalar<long>("SELECT COUNT(*) FROM playlist_items WHERE id = $i AND room_id = $r", ("$i", item), ("$r", id)) != 1)
+                        return Json.Error("Playlist item not found", 404);
                 var all = playlistBest(db, item, accounts, users);
                 int? me = uid(ctx);
                 int mine = all.FindIndex(s => s.UserID == me);
@@ -261,11 +266,16 @@ namespace XcOsu.Server.Api
 
             api.MapGet("/rooms/{id:long}/playlist/{item:long}/scores/{scoreId:long}", (long id, long item, long scoreId, Db db, Accounts accounts, UsersService users) =>
             {
+                using (var check = db.Open())
+                    if (check.Scalar<long>("SELECT COUNT(*) FROM playlist_items WHERE id = $i AND room_id = $r", ("$i", item), ("$r", id)) != 1)
+                        return Json.Error("Playlist item not found", 404);
                 var all = playlistBest(db, item, accounts, users);
                 int idx = all.FindIndex(s => (long)(s.ID ?? 0) == scoreId);
                 if (idx < 0)
                 {
                     using var c = db.Open();
+                    if (c.Scalar<long>("SELECT COUNT(*) FROM scores WHERE id = $s AND playlist_item_id = $p", ("$s", scoreId), ("$p", item)) != 1)
+                        return Json.Error("Score not found", 404);
                     var s = Scores.Load(c, new[] { scoreId }, accounts, users, withBeatmap: false).FirstOrDefault();
                     return s == null ? Json.Error("Score not found", 404) : Json.Ok(withPosition(s, null, id, item));
                 }
@@ -275,6 +285,9 @@ namespace XcOsu.Server.Api
 
             api.MapGet("/rooms/{id:long}/playlist/{item:long}/scores/users/{user:int}", (long id, long item, int user, Db db, Accounts accounts, UsersService users) =>
             {
+                using (var check = db.Open())
+                    if (check.Scalar<long>("SELECT COUNT(*) FROM playlist_items WHERE id = $i AND room_id = $r", ("$i", item), ("$r", id)) != 1)
+                        return Json.Error("Playlist item not found", 404);
                 var all = playlistBest(db, item, accounts, users);
                 int idx = all.FindIndex(s => s.UserID == user);
                 return idx < 0 ? Json.Error("Score not found", 404) : Json.Ok(withPosition(all[idx], idx + 1, id, item, around: all));
@@ -347,7 +360,7 @@ namespace XcOsu.Server.Api
             }
 
             using var c = db.Open();
-            string? json = c.Scalar<string>("SELECT json FROM playlist_items WHERE id = $i", ("$i", itemId));
+            string? json = c.Scalar<string>("SELECT json FROM playlist_items WHERE id = $i AND room_id = $r", ("$i", itemId), ("$r", roomId));
             return json == null ? null : JObject.Parse(json).Value<int?>("beatmap_id");
         }
 

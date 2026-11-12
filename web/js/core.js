@@ -1,4 +1,5 @@
 // xc-osu! web — shared plumbing: language, session, API calls, formatting, safe HTML. xc softworks (kudasaixc)
+import { renderBBCode, looksLikeBBCode } from './bbcode.js';
 
 export const WEB = '/web';
 export const L = (path = '/') => WEB + (path.startsWith('/') ? path : '/' + path);
@@ -62,19 +63,19 @@ export class NeedSignIn extends Error { }
 
 const AUTH_KEY = 'xc.web.auth';
 let auth = store.get(AUTH_KEY);
-export const signedIn = () => !!auth?.access;
+export const signedIn = () => !!(auth?.access || auth?.session);
 function setAuth(next) { auth = next; store.set(AUTH_KEY, next); }
 
 async function tokenRequest(fields) {
-  const r = await fetch('/oauth/token', { method: 'POST', body: new URLSearchParams({ client_id: '5', client_secret: 'xc', scope: '*', ...fields }) });
+  const r = await fetch('/oauth/token', { method: 'POST', body: new URLSearchParams({ client_id: '5', client_secret: 'xc', scope: '*', browser_session: '1', ...fields }) });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok || !data.access_token) throw new ApiError(r.status, data.message || data.error_description || t('Incorrect sign in', 'Identifiants incorrects'), data);
-  setAuth({ access: data.access_token, refresh: data.refresh_token });
+  if (!r.ok || (!data.access_token && !data.browser_session)) throw new ApiError(r.status, data.message || data.error_description || t('Incorrect sign in', 'Identifiants incorrects'), data);
+  setAuth(data.browser_session ? { session: true } : { access: data.access_token, refresh: data.refresh_token });
 }
 let refreshing = null;
 function refresh() {
-  if (!auth?.refresh) return Promise.reject(new NeedSignIn());
-  refreshing ||= tokenRequest({ grant_type: 'refresh_token', refresh_token: auth.refresh })
+  if (!auth?.refresh && !auth?.session) return Promise.reject(new NeedSignIn());
+  refreshing ||= tokenRequest({ grant_type: 'refresh_token', refresh_token: auth.refresh || '' })
     .catch(() => { setAuth(null); state.me = null; state.friends = null; throw new NeedSignIn(); })
     .finally(() => { refreshing = null; });
   return refreshing;
@@ -93,7 +94,7 @@ export async function api(path, { method = 'GET', json, form, file, retry = true
   let r;
   try { r = await fetch(path, init); }
   catch { throw new ApiError(0, t('The server cannot be reached. Check your connection and try again.', 'Serveur injoignable. Vérifie ta connexion et réessaie.')); }
-  if (r.status === 401 && auth?.access && retry) { await refresh(); return api(path, { method, json, form, file, retry: false }); }
+  if (r.status === 401 && signedIn() && retry) { await refresh(); return api(path, { method, json, form, file, retry: false }); }
   const text = await r.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { }
@@ -120,6 +121,7 @@ export const requireSignIn = () => { if (!signedIn()) throw new NeedSignIn(); };
 export async function loadMe() {
   if (!signedIn()) { state.me = null; state.friends = null; return null; }
   try {
+    if (auth?.access && auth?.refresh) await refresh(); // Move legacy browser tokens into HttpOnly cookies.
     state.me = await v2('/me');
     state.friends = new Set((await v2('/friends')).map((f) => f.target_id));
   } catch (e) { if (!(e instanceof NeedSignIn)) throw e; state.me = null; state.friends = null; }
@@ -130,7 +132,7 @@ export async function signIn(username, password) {
   return loadMe();
 }
 export async function signOut() {
-  try { if (auth?.access) await fetch('/api/v2/oauth/tokens/current', { method: 'DELETE', headers: { Authorization: 'Bearer ' + auth.access } }); } catch { }
+  try { if (signedIn()) await fetch('/api/v2/oauth/tokens/current', { method: 'DELETE', headers: auth?.access ? { Authorization: 'Bearer ' + auth.access } : {} }); } catch { }
   setAuth(null); state.me = null; state.friends = null;
 }
 /** Fetch a protected file (replay, beatmap archive) with the session token and hand it to the browser as a download. */
@@ -171,6 +173,7 @@ export function sanitize(html) {
 
 /** Player-written text (me! page): escaped first, then a small set of Markdown and BBCode marks is turned into tags. */
 export function renderUserText(raw) {
+  if (looksLikeBBCode(raw || '')) return renderBBCode(raw);
   const inline = (s) => esc(s)
     .replace(/\[img\](https?:\/\/[^\s\[\]"']+)\[\/img\]/gi, '<img src="$1" loading="lazy" referrerpolicy="no-referrer" alt="">')
     .replace(/!\[[^\]]*\]\((https?:\/\/[^\s)"']+)\)/g, '<img src="$1" loading="lazy" referrerpolicy="no-referrer" alt="">')
@@ -207,7 +210,14 @@ export function renderUserText(raw) {
 }
 
 // ---------------------------------------------------------------- shared fragments
-export const avatar = (user, size = 40) => `<img class="avatar" src="${esc(user?.avatar_url || '/api/xc/avatar/default')}" width="${size}" height="${size}" alt="" loading="lazy">`;
+export function avatarUrl(user) {
+  const path = '/api/xc/avatar/' + (Number.isSafeInteger(user?.id) && user.id > 1 ? user.id : 'default');
+  try {
+    const supplied = new URL(user?.avatar_url, location.origin);
+    return path + (supplied.origin === location.origin && supplied.pathname === path ? supplied.search : '');
+  } catch { return path; }
+}
+export const avatar = (user, size = 40) => `<img class="avatar" src="${esc(avatarUrl(user))}" width="${size}" height="${size}" alt="" loading="lazy">`;
 export const teamTag = (team) => (team?.id ? `<a class="team-tag" href="${L('/teams/' + team.id)}" title="${esc(team.name)}">${esc(team.short_name)}</a>` : '');
 export const userLink = (user, { withAvatar = true, size = 28 } = {}) => (user
   ? `<span class="user-link">${withAvatar ? avatar(user, size) : ''}${countryChip(user.country_code)}${teamTag(user.team)}<a href="${L('/users/' + user.id)}">${esc(user.username)}</a></span>`

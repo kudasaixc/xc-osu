@@ -86,11 +86,27 @@ namespace XcOsu.Server.Hubs
 
         public async Task<MultiplayerPlaylistItemStats[]> BeginWatchingMultiplayerRoom(long id)
         {
+            using (var c = db.Open())
+            {
+                string? json = c.Scalar<string>("SELECT json FROM rooms WHERE id = $i", ("$i", id));
+                if (json == null) throw new HubException("Room not found.");
+                var room = Newtonsoft.Json.Linq.JObject.Parse(json);
+                if ((room.Value<bool?>("has_password") == true || room.Value<string>("category") == "matchmaking")
+                    && MultiplayerHub.RoomOf(me) != id) throw new HubException("Room is private.");
+            }
+            var watched = Context.Items.TryGetValue("watched-rooms", out var value) ? (HashSet<long>)value! : new HashSet<long>();
+            if (!watched.Contains(id) && watched.Count >= 16) throw new HubException("Too many watched rooms.");
+            watched.Add(id);
+            Context.Items["watched-rooms"] = watched;
             await Groups.AddToGroupAsync(Context.ConnectionId, DailyChallenge.RoomWatchGroup(id));
             return daily.RoomStats(id);
         }
 
-        public Task EndWatchingMultiplayerRoom(long id) => Groups.RemoveFromGroupAsync(Context.ConnectionId, DailyChallenge.RoomWatchGroup(id));
+        public Task EndWatchingMultiplayerRoom(long id)
+        {
+            if (Context.Items.TryGetValue("watched-rooms", out var value)) ((HashSet<long>)value!).Remove(id);
+            return Groups.RemoveFromGroupAsync(Context.ConnectionId, DailyChallenge.RoomWatchGroup(id));
+        }
 
         public async Task RefreshFriends()
         {
@@ -99,6 +115,13 @@ namespace XcOsu.Server.Hubs
             using (var c = db.Open())
                 friends = c.Query("SELECT target_id FROM friends WHERE user_id = $u", r => r.GetInt32(0), ("$u", u));
 
+            var previous = Context.Items.TryGetValue("friends", out var old) ? (HashSet<int>)old! : new HashSet<int>();
+            foreach (int removed in previous.Except(friends))
+            {
+                await Groups.RemoveFromGroupAsync(Context.ConnectionId, friendsOf(removed));
+                await Clients.Caller.FriendPresenceUpdated(removed, null);
+            }
+            Context.Items["friends"] = friends.ToHashSet();
             foreach (int f in friends)
             {
                 await Groups.AddToGroupAsync(Context.ConnectionId, friendsOf(f));

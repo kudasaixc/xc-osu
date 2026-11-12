@@ -22,14 +22,16 @@ namespace XcOsu.Server.Hubs
         private sealed class Session
         {
             public long? Token;
+            public int UserId;
             public SpectatorState State = new SpectatorState();
             public readonly List<LegacyReplayFrame> Frames = new List<LegacyReplayFrame>();
         }
 
-        private static readonly ConcurrentDictionary<int, Session> sessions = new ConcurrentDictionary<int, Session>();
+        private static readonly ConcurrentDictionary<int, string> owners = new();
+        private static readonly ConcurrentDictionary<string, Session> sessions = new ConcurrentDictionary<string, Session>();
 
         /// <summary>watcher user id → watched user ids</summary>
-        private static readonly ConcurrentDictionary<int, ConcurrentDictionary<int, byte>> watching = new ConcurrentDictionary<int, ConcurrentDictionary<int, byte>>();
+        private static readonly ConcurrentDictionary<string, ConcurrentDictionary<int, byte>> watching = new ConcurrentDictionary<string, ConcurrentDictionary<int, byte>>();
 
         private readonly Accounts accounts;
         private readonly Db db;
@@ -55,13 +57,14 @@ namespace XcOsu.Server.Hubs
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
             int u = me;
-            if (sessions.TryRemove(u, out var s))
+            if (sessions.TryRemove(Context.ConnectionId, out var s))
             {
+                ((ICollection<KeyValuePair<int, string>>)owners).Remove(new(u, Context.ConnectionId));
                 s.State.State = SpectatedUserState.Quit;
                 await Clients.Group(watchers(u)).UserFinishedPlaying(u, s.State);
             }
 
-            if (watching.TryRemove(u, out var list))
+            if (watching.TryRemove(Context.ConnectionId, out var list))
                 foreach (int target in list.Keys)
                     await notifyEndWatching(u, target);
 
@@ -73,7 +76,19 @@ namespace XcOsu.Server.Hubs
         public async Task BeginPlaySessionV2(long? scoreToken, SpectatorState state)
         {
             int u = me;
-            sessions[u] = new Session { Token = scoreToken, State = state };
+            if (state.Mods.Count() > 32 || state.MaximumStatistics.Count > 64)
+                throw new HubException("Invalid spectator state.");
+            if (scoreToken is long token)
+            {
+                using var c = db.Open();
+                if (c.Scalar<long>("SELECT COUNT(*) FROM score_tokens WHERE id = $t AND user_id = $u AND beatmap_id = $b AND ruleset_id = $r AND created_at > $at",
+                    ("$t", token), ("$u", u), ("$b", state.BeatmapID), ("$r", state.RulesetID),
+                    ("$at", DateTimeOffset.UtcNow.AddHours(-24).ToUnixTimeSeconds())) != 1)
+                    throw new HubException("Invalid score token.");
+            }
+            if (!owners.TryAdd(u, Context.ConnectionId) && owners.GetValueOrDefault(u) != Context.ConnectionId)
+                throw new HubException("Another connection already owns the play session.");
+            sessions[Context.ConnectionId] = new Session { UserId = u, Token = scoreToken, State = state };
             await Clients.Group(watchers(u)).UserBeganPlaying(u, state);
         }
 
@@ -81,12 +96,17 @@ namespace XcOsu.Server.Hubs
 
         public async Task SendFrameDataV2(long? scoreToken, FrameDataBundle data)
         {
+            if (data.Frames.Count > 4096) throw new HubException("Replay packet too large.");
             int u = me;
-            if (sessions.TryGetValue(u, out var s))
+            if (sessions.TryGetValue(Context.ConnectionId, out var s))
             {
+                if (scoreToken != null && scoreToken != s.Token) throw new HubException("Invalid score token.");
                 lock (s.Frames)
-                    if (s.Frames.Count < 200_000)
-                        s.Frames.AddRange(data.Frames);
+                {
+                    if (data.Frames.Count > 4096 || data.Frames.Count > 200_000 - s.Frames.Count)
+                        throw new HubException("Replay frame limit exceeded.");
+                    s.Frames.AddRange(data.Frames);
+                }
             }
 
             await Clients.Group(watchers(u)).UserSentFrames(u, data);
@@ -97,7 +117,10 @@ namespace XcOsu.Server.Hubs
         public async Task EndPlaySessionV2(long? scoreToken, SpectatedUserState finalState)
         {
             int u = me;
-            if (!sessions.TryRemove(u, out var s)) return;
+            if (sessions.TryGetValue(Context.ConnectionId, out var active) && scoreToken != null && active.Token != scoreToken)
+                throw new HubException("Invalid score token.");
+            if (!sessions.TryRemove(Context.ConnectionId, out var s)) return;
+            ((ICollection<KeyValuePair<int, string>>)owners).Remove(new(u, Context.ConnectionId));
 
             s.State.State = finalState;
             await Clients.Group(watchers(u)).UserFinishedPlaying(u, s.State);
@@ -158,10 +181,14 @@ namespace XcOsu.Server.Hubs
         public async Task StartWatchingUser(int userId)
         {
             int u = me;
-            watching.GetOrAdd(u, _ => new ConcurrentDictionary<int, byte>())[userId] = 0;
+            if (!AbuseGuard.Allow("spectator-watch:" + Context.ConnectionId, 30, TimeSpan.FromMinutes(1)))
+                throw new HubException("Too many watch requests.");
+            var targets = watching.GetOrAdd(Context.ConnectionId, _ => new ConcurrentDictionary<int, byte>());
+            if (targets.Count >= 16 && !targets.ContainsKey(userId)) throw new HubException("Too many watched users.");
+            targets[userId] = 0;
             await Groups.AddToGroupAsync(Context.ConnectionId, watchers(userId));
 
-            if (sessions.TryGetValue(userId, out var s))
+            if (sessions.Values.FirstOrDefault(s => s.UserId == userId) is { } s)
                 await Clients.Caller.UserBeganPlaying(userId, s.State);
 
             var row = accounts.Get(u);
@@ -171,7 +198,7 @@ namespace XcOsu.Server.Hubs
         public async Task EndWatchingUser(int userId)
         {
             int u = me;
-            if (watching.TryGetValue(u, out var list)) list.TryRemove(userId, out _);
+            if (watching.TryGetValue(Context.ConnectionId, out var list)) list.TryRemove(userId, out _);
             await Groups.RemoveFromGroupAsync(Context.ConnectionId, watchers(userId));
             await notifyEndWatching(u, userId);
         }

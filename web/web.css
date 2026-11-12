@@ -255,3 +255,25 @@ h2.diff-name { font-size: 20px; align-items: center; }
   .hero-art .approach { animation: approach 2.6s cubic-bezier(.3, 0, .7, 1) infinite; }
   @keyframes approach { 0% { transform: scale(2.3); opacity: 0; } 12% { opacity: 1; } 78% { transform: scale(1); opacity: 1; } 100% { transform: scale(1); opacity: 0; } }
 }
+
+/* osu! BBCode on "me!" pages, styled like osu-web's .bbcode */
+.user-text .bb-centre { text-align: center; }
+.user-text .bb-notice { margin: 10px 0; padding: 12px 16px; background: var(--b5); border: 1px solid var(--b3); border-radius: 6px; }
+.user-text .bb-box { margin: 6px 0; }
+.user-text .bb-box > summary { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 700; color: var(--ink); list-style: none; }
+.user-text .bb-box > summary::-webkit-details-marker { display: none; }
+.user-text .bb-box > summary::before { content: "▸"; color: var(--hl); transition: transform .15s; }
+.user-text .bb-box[open] > summary::before { transform: rotate(90deg); }
+.user-text .bb-box-body { margin: 6px 0 0; padding: 10px 14px; background: var(--b4); border-radius: 4px; }
+.user-text .bb-heading { font-size: 18px; margin: 12px 0 6px; }
+.user-text .bb-quote { margin: 8px 0; } .user-text .bb-quote h4 { margin: 0 0 4px; font-size: 13px; color: var(--ink-3); }
+.user-text .bb-list { margin: 4px 0; padding-left: 24px; }
+.user-text .bb-code { margin: 8px 0; padding: 10px 14px; background: var(--deep); border-radius: 4px; font: 13px/1.45 var(--mono); white-space: pre-wrap; overflow-x: auto; }
+.user-text code { padding: 1px 5px; background: var(--deep); border-radius: 3px; font: 13px var(--mono); }
+.user-text .bb-spoiler { background: var(--ink-3); color: transparent; border-radius: 2px; cursor: pointer; } .user-text .bb-spoiler:hover, .user-text .bb-spoiler:focus { background: none; color: inherit; }
+.user-text .bb-spoiler * { color: inherit !important; }
+.user-text .bb-img, .user-text .bb-imagemap img { max-width: 100%; height: auto; vertical-align: middle; }
+.user-text .bb-imagemap { position: relative; display: inline-block; max-width: 100%; } .user-text .bb-area { position: absolute; display: block; } .user-text a.bb-area:hover { background: hsl(0 0% 100% / .15); }
+.user-text .bb-video { position: relative; max-width: 640px; aspect-ratio: 16 / 9; margin: 8px auto; } .user-text .bb-video iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.user-text .bb-audio { max-width: 100%; }
+.user-text del { opacity: .8; }

@@ -88,8 +88,20 @@ namespace XcOsu.Server.Hubs
 
         // ------------------------------------------------------------------ lounge
 
+        private static void validateSettings(MultiplayerRoomSettings settings)
+        {
+            if (string.IsNullOrWhiteSpace(settings.Name) || settings.Name.Length > 100 || (settings.Password?.Length ?? 0) > 128
+                || settings.MaxParticipants is 0 || !Enum.IsDefined(settings.MatchType) || !Enum.IsDefined(settings.QueueMode)
+                || settings.AutoStartDuration < TimeSpan.Zero || settings.AutoStartDuration > TimeSpan.FromHours(1))
+                throw new HubException("Invalid room settings.");
+        }
+
         public async Task<MultiplayerRoom> CreateRoom(MultiplayerRoom room)
         {
+            validateSettings(room.Settings);
+            if (room.Playlist.Count is < 1 or > 100) throw new HubException("A room needs 1 to 100 playlist items.");
+            if (room.Settings.MatchType.IsMatchmakingType()) throw new HubException("Quick play and ranked play rooms are created by the matchmaker.");
+            foreach (var item in room.Playlist) await fillStarRating(item);
             int u = me;
             await leave(u, false);
 
@@ -111,7 +123,6 @@ namespace XcOsu.Server.Hubs
                 item.Expired = false;
                 item.PlayedAt = null;
                 item.PlaylistOrder = order++;
-                await fillStarRating(item);
                 live.Playlist.Add(item);
             }
 
@@ -143,6 +154,8 @@ namespace XcOsu.Server.Hubs
 
         public async Task<MultiplayerRoom> JoinRoomWithPassword(long roomId, string password)
         {
+            if (!AbuseGuard.Allow($"room-password:{me}:{roomId}", 10, TimeSpan.FromMinutes(1)))
+                throw new HubException("Too many join attempts.");
             if (!store.Rooms.TryGetValue(roomId, out var room) || room.Live == null)
                 throw new HubException("This room no longer exists.");
             await leave(me, false);
@@ -215,9 +228,16 @@ namespace XcOsu.Server.Hubs
 
         public Task LeaveRoom() => leave(me, false);
 
-        private async Task leave(int u, bool kicked)
+        private async Task leave(int u, bool kicked, long? expectedRoom = null)
         {
-            if (!user_rooms.TryRemove(u, out long id) || !store.Rooms.TryGetValue(id, out var room) || room.Live == null)
+            long id;
+            if (expectedRoom is long expected)
+            {
+                if (!((ICollection<KeyValuePair<int, long>>)user_rooms).Remove(new(u, expected))) return;
+                id = expected;
+            }
+            else if (!user_rooms.TryRemove(u, out id)) return;
+            if (!store.Rooms.TryGetValue(id, out var room) || room.Live == null)
                 return;
 
             MultiplayerRoomUser? user;
@@ -280,14 +300,17 @@ namespace XcOsu.Server.Hubs
 
         public async Task KickUser(int userId)
         {
-            var (_, live, user) = currentAsHost();
+            var (room, live, user) = currentAsHost();
             if (live.Settings.MatchType.IsMatchmakingType()) throw new InvalidStateException("Not available in this room.");
             if (userId == user.UserID) throw new HubException("Can't kick yourself.");
-            await leave(userId, kicked: true);
+            if (!user_rooms.TryGetValue(userId, out var targetRoom) || targetRoom != room.Id)
+                throw new HubException("User not in room.");
+            await leave(userId, kicked: true, expectedRoom: room.Id);
         }
 
         public async Task ChangeSettings(MultiplayerRoomSettings settings)
         {
+            validateSettings(settings);
             var (room, live, _) = currentAsHost();
             if (live.State != MultiplayerRoomState.Open) throw new InvalidStateException("Can't change settings while a match is in progress.");
             if (live.Settings.MatchType.IsMatchmakingType() || settings.MatchType.IsMatchmakingType()) throw new InvalidStateException("Not available in this room.");
@@ -705,7 +728,10 @@ namespace XcOsu.Server.Hubs
 
         private async Task fillStarRating(MultiplayerPlaylistItem item)
         {
-            var map = await mirrors.GetBeatmap(item.BeatmapID, null, null, CancellationToken.None);
+            if (item.BeatmapID <= 0 || Performance.Ruleset(item.RulesetID) == null
+                || item.BeatmapChecksum.Length > 128 || item.RequiredMods.Take(33).Count() > 32 || item.AllowedMods.Take(65).Count() > 64)
+                throw new HubException("Invalid playlist item.");
+            var map = await mirrors.GetBeatmap(item.BeatmapID, null, null, Context.ConnectionAborted);
             if (map == null) throw new HubException("Beatmap not found on the mirrors.");
             item.StarRating = map.Value<double?>("difficulty_rating") ?? 0;
             if (string.IsNullOrEmpty(item.BeatmapChecksum)) item.BeatmapChecksum = map.Value<string>("checksum") ?? "";
@@ -724,9 +750,13 @@ namespace XcOsu.Server.Hubs
             if (live.Playlist.Count(p => !p.Expired && p.OwnerID == user.UserID) >= 3 && live.Host?.UserID != user.UserID)
                 throw new InvalidStateException("You can only queue three items at a time.");
 
+            if (live.Playlist.Count(p => !p.Expired) >= 100) throw new HubException("Playlist too large.");
             await fillStarRating(item);
             lock (room.Lock)
             {
+                if (live.Playlist.Count(p => !p.Expired) >= 100) throw new HubException("Playlist too large.");
+                if (live.Host?.UserID != user.UserID && live.Playlist.Count(p => !p.Expired && p.OwnerID == user.UserID) >= 3)
+                    throw new InvalidStateException("You can only queue three items at a time.");
                 item.ID = store.NextPlaylistItemId();
                 item.OwnerID = user.UserID;
                 item.Expired = false;

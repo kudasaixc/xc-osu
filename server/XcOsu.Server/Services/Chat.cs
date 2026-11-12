@@ -106,12 +106,21 @@ namespace XcOsu.Server.Services
             return row == null ? null : toChannel(row, viewer, c);
         }
 
-        public Channel? Join(int channelId, int userId)
+        public Channel? Join(int channelId, int userId, bool roomAuthorized = false)
         {
             using var c = db.Open();
             var row = c.Query("SELECT id, name, description, type, pm_user_a, pm_user_b FROM chat_channels WHERE id = $i", mapChannel, ("$i", channelId)).FirstOrDefault();
             if (row == null) return null;
             if (row.Type == "PM" && row.A != userId && row.B != userId) return null;
+            if (row.Type == "MULTIPLAYER" && !roomAuthorized)
+            {
+                long? roomId = c.Scalar<long?>("SELECT room_id FROM chat_channels WHERE id = $c", ("$c", channelId));
+                if (roomId == null) return null;
+                string? category = c.Scalar<string>("SELECT category FROM rooms WHERE id = $r", ("$r", roomId));
+                if (category == "realtime" ? Hubs.MultiplayerHub.RoomOf(userId) != roomId :
+                    c.Scalar<long>("SELECT COUNT(*) FROM chat_members WHERE channel_id = $c AND user_id = $u", ("$c", channelId), ("$u", userId)) == 0)
+                    return null;
+            }
             c.Exec("INSERT OR IGNORE INTO chat_members (channel_id, user_id) VALUES ($c, $u)", ("$c", channelId), ("$u", userId));
             return toChannel(row, userId, c);
         }
@@ -131,6 +140,8 @@ namespace XcOsu.Server.Services
         public bool CanRead(int channelId, int userId)
         {
             using var c = db.Open();
+            long? realtimeRoom = c.Scalar<long?>("SELECT ch.room_id FROM chat_channels ch JOIN rooms r ON r.id = ch.room_id WHERE ch.id = $c AND ch.type = 'MULTIPLAYER' AND r.category = 'realtime'", ("$c", channelId));
+            if (realtimeRoom != null && Hubs.MultiplayerHub.RoomOf(userId) != realtimeRoom) return false;
             return c.Scalar<long>("""
                 SELECT COUNT(*) FROM chat_channels WHERE id = $c AND (type = 'PUBLIC' OR pm_user_a = $u OR pm_user_b = $u
                     OR EXISTS (SELECT 1 FROM chat_members WHERE channel_id = $c AND user_id = $u))
@@ -195,6 +206,7 @@ namespace XcOsu.Server.Services
             }
 
             var msg = toMessage((id, channelId, senderId, content, isAction, ts, uuid ?? ""), new Dictionary<int, APIUser>());
+            recipients.RemoveAll(recipient => !CanRead(channelId, recipient));
             _ = broadcast(recipients, "chat.message.new", new { messages = ToJson(new[] { msg }), users = new[] { msg.Sender } });
             return msg;
         }
@@ -202,6 +214,9 @@ namespace XcOsu.Server.Services
         /// <summary>Why a user may not post right now (silence / restriction / PM rules), or null if they can.</summary>
         public string? PostRestriction(int channelId, int senderId)
         {
+            if (!CanRead(channelId, senderId)) return "You cannot access this channel.";
+            if (!AbuseGuard.Allow($"chat-channel:{senderId}:{channelId}", 20, TimeSpan.FromSeconds(10)))
+                return "Too many messages. Please wait.";
             var sender = accounts.Get(senderId);
             if (sender == null) return "unknown user";
             if (sender.Restricted) return "Your account is restricted.";
@@ -252,7 +267,7 @@ namespace XcOsu.Server.Services
         /// <summary>Joins a user to a channel and tells their clients (chat.channel.join), like osu-web does for multiplayer rooms.</summary>
         public async Task JoinAndNotify(int channelId, int userId)
         {
-            var ch = Join(channelId, userId);
+            var ch = Join(channelId, userId, roomAuthorized: true);
             if (ch != null) await broadcast(new[] { userId }, "chat.channel.join", ToJson(ch));
         }
 
@@ -287,7 +302,11 @@ namespace XcOsu.Server.Services
         public async Task Serve(WebSocket ws, int userId, CancellationToken ct)
         {
             var set = sockets.GetOrAdd(userId, _ => new ConcurrentDictionary<WebSocket, SemaphoreSlim>());
-            set[ws] = new SemaphoreSlim(1, 1);
+            lock (set)
+            {
+                if (set.Count >= 5) { ws.Abort(); return; }
+                set[ws] = new SemaphoreSlim(1, 1);
+            }
             var buffer = new byte[4096];
             try
             {
@@ -303,7 +322,12 @@ namespace XcOsu.Server.Services
             {
                 set.TryRemove(ws, out _);
                 if (ws.State == WebSocketState.Open)
-                    try { await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None); } catch { }
+                    try
+                    {
+                        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                        await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, null, timeout.Token);
+                    }
+                    catch { ws.Abort(); }
             }
         }
 
@@ -319,12 +343,14 @@ namespace XcOsu.Server.Services
                 {
                     try
                     {
-                        await gate.WaitAsync();
-                        try { await ws.SendAsync(payload, WebSocketMessageType.Text, true, CancellationToken.None); }
+                        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                        await gate.WaitAsync(timeout.Token);
+                        try { await ws.SendAsync(payload, WebSocketMessageType.Text, true, timeout.Token); }
                         finally { gate.Release(); }
                     }
-                    catch (Exception e) when (e is WebSocketException or ObjectDisposedException or InvalidOperationException)
+                    catch (Exception e) when (e is WebSocketException or ObjectDisposedException or InvalidOperationException or OperationCanceledException)
                     {
+                        ws.Abort();
                         set.TryRemove(ws, out _);
                     }
                 }

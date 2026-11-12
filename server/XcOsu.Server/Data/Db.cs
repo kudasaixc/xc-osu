@@ -296,6 +296,21 @@ namespace XcOsu.Server.Data
                 CREATE INDEX IF NOT EXISTS ix_scores_playlist ON scores(playlist_item_id, user_id);
                 """);
 
+            addColumn(c, "users", "email_verified INTEGER NOT NULL DEFAULT 0");
+            exec(c, "CREATE TABLE IF NOT EXISTS account_challenges (token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, purpose TEXT NOT NULL, expires_at INTEGER NOT NULL)");
+            addColumn(c, "tokens", "refresh_expires_at INTEGER NOT NULL DEFAULT 0");
+            addColumn(c, "tokens", "session_expires_at INTEGER NOT NULL DEFAULT 0");
+            // Preserve existing sessions while migrating usable secrets to digests.
+            using (var tx = c.BeginTransaction())
+            {
+                foreach (var token in c.Query("SELECT access_token, refresh_token, expires_at FROM tokens WHERE length(access_token) = 64",
+                    r => (access: r.GetString(0), refresh: r.GetString(1), expires: r.GetInt64(2))))
+                    c.Exec("UPDATE tokens SET access_token = $a, refresh_token = $r, refresh_expires_at = $e, session_expires_at = $e WHERE access_token = $old",
+                        ("$a", Services.Accounts.TokenHash(token.access)), ("$r", Services.Accounts.TokenHash(token.refresh)),
+                        ("$e", token.expires + 30L * 86400), ("$old", token.access));
+                tx.Commit();
+            }
+
             addColumn(c, "users", "avatar_version INTEGER NOT NULL DEFAULT 0");
             addColumn(c, "users", "cover_version INTEGER NOT NULL DEFAULT 0");
             addColumn(c, "users", "silenced_until TEXT");

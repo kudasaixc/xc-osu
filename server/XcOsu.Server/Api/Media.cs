@@ -107,8 +107,6 @@ namespace XcOsu.Server.Api
                 c.Exec("UPDATE users SET profile_json = $p WHERE id = $u", ("$p", profile.ToString(Formatting.None)), ("$u", u));
                 if (body.Value<string>("playmode") is "osu" or "taiko" or "fruits" or "mania")
                     c.Exec("UPDATE users SET playmode = $m WHERE id = $u", ("$m", body.Value<string>("playmode")), ("$u", u));
-                if (body.Value<string>("country") is { Length: 2 } cc && cc.All(char.IsLetter))
-                    c.Exec("UPDATE users SET country = $c WHERE id = $u", ("$c", cc.ToUpperInvariant()), ("$u", u));
                 return Results.NoContent();
             });
 
@@ -118,9 +116,13 @@ namespace XcOsu.Server.Api
                 var p = await Json.Params(ctx.Request);
                 if (!Accounts.VerifyPassword(p("current_password") ?? "", row.PasswordHash)) return Json.Error("Current password is incorrect.", 403);
                 string next = p("new_password") ?? "";
-                if (next.Length < 8) return Json.Error("New password must be at least 8 characters.", 422);
+                if (next.Length < 8 || next.Length > 256) return Json.Error("New password must be at least 8 characters.", 422);
                 using var c = db.Open();
+                c.Exec("BEGIN IMMEDIATE");
                 c.Exec("UPDATE users SET password_hash = $h WHERE id = $u", ("$h", Accounts.HashPassword(next)), ("$u", u));
+                c.Exec("DELETE FROM tokens WHERE user_id = $u", ("$u", u));
+                c.Exec("DELETE FROM account_challenges WHERE user_id = $u AND purpose = 'reset'", ("$u", u));
+                c.Exec("COMMIT");
                 return Results.NoContent();
             });
         }
@@ -136,12 +138,12 @@ namespace XcOsu.Server.Api
 
             using var ms = new MemoryStream();
             await file.CopyToAsync(ms);
-            var bytes = ms.ToArray();
+            var bytes = await SafeImages.Reencode(ms.ToArray(), false, ctx.RequestAborted);
             if (imageType(bytes) == null) return Json.Error("Only PNG, JPEG, GIF or WebP images.", 415);
 
             string dir = Path.Combine(db.DataDirectory, folder);
             Directory.CreateDirectory(dir);
-            string tmp = Path.Combine(dir, $"{u}.tmp");
+            string tmp = Path.Combine(dir, $"{u}.{Guid.NewGuid():N}.tmp");
             await File.WriteAllBytesAsync(tmp, bytes);
             File.Move(tmp, Path.Combine(dir, u.ToString()), true);
 

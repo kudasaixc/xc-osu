@@ -24,6 +24,8 @@ namespace XcOsu.Server.Services
         private readonly string connectionString;
         private readonly ILogger<Telemetry> log;
         private readonly object writeLock = new object();
+        private readonly System.Threading.Channels.Channel<(string Body, TaskCompletionSource<long?> Result)> ingestQueue =
+            System.Threading.Channels.Channel.CreateBounded<(string, TaskCompletionSource<long?>)>(32);
         private readonly Timer purgeTimer;
 
         private long dayBytes;
@@ -32,6 +34,14 @@ namespace XcOsu.Server.Services
         public Telemetry(Db db, ILogger<Telemetry> log)
         {
             this.log = log;
+            _ = Task.Run(async () =>
+            {
+                await foreach (var request in ingestQueue.Reader.ReadAllAsync())
+                {
+                    try { request.Result.TrySetResult(Ingest(request.Body)); }
+                    catch (Exception e) { request.Result.TrySetException(e); }
+                }
+            });
             connectionString = new SqliteConnectionStringBuilder
             {
                 DataSource = Path.Combine(db.DataDirectory, "telemetry.db"),
@@ -120,6 +130,13 @@ namespace XcOsu.Server.Services
         private static double? num(JToken? t) => t != null && t.Type is JTokenType.Integer or JTokenType.Float ? t!.Value<double>() : null;
 
         /// <summary>Stores one batch. Returns the highest sequence number stored for the session (what the page may forget), or null when refused.</summary>
+        public async Task<long?> IngestAsync(string body, CancellationToken ct)
+        {
+            var result = new TaskCompletionSource<long?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (!ingestQueue.Writer.TryWrite((body, result))) throw new BadHttpRequestException("Telemetry busy", 429);
+            return await result.Task.WaitAsync(ct);
+        }
+
         public long? Ingest(string body)
         {
             JObject root;
@@ -296,6 +313,6 @@ namespace XcOsu.Server.Services
             }
         }
 
-        public void Dispose() => purgeTimer.Dispose();
+        public void Dispose() { ingestQueue.Writer.TryComplete(); purgeTimer.Dispose(); }
     }
 }

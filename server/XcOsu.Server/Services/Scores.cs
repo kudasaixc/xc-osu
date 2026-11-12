@@ -64,17 +64,26 @@ namespace XcOsu.Server.Services
             if (row.Restricted) throw new SubmitException("Your account is restricted.", 403);
             if (Performance.Ruleset(rulesetId) == null) throw new SubmitException("This ruleset isn't available on xc-osu!.");
 
+            if (!AbuseGuard.Allow("score-token:" + userId, 30, TimeSpan.FromMinutes(1))) throw new SubmitException("Too many score tokens", 429);
             using var c = db.Open();
+            using var tokenTransaction = c.BeginTransaction();
             c.Exec("DELETE FROM score_tokens WHERE score_id IS NULL AND created_at < $t", ("$t", DateTimeOffset.UtcNow.AddHours(-TOKEN_LIFETIME_HOURS).ToUnixTimeSeconds()));
-            return c.Insert("""
+            if (c.Scalar<long>("SELECT COUNT(*) FROM score_tokens WHERE user_id = $u AND score_id IS NULL", ("$u", userId)) >= 100)
+                throw new SubmitException("Too many outstanding score tokens", 429);
+            long tokenId = c.Insert("""
                 INSERT INTO score_tokens (user_id, beatmap_id, ruleset_id, playlist_item_id, room_id, beatmap_hash, created_at) VALUES ($u, $b, $r, $p, $rm, $h, $t)
                 """, ("$u", userId), ("$b", beatmapId), ("$r", rulesetId), ("$p", playlistItemId), ("$rm", roomId), ("$h", beatmapHash),
                 ("$t", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+            tokenTransaction.Commit();
+            return tokenId;
         }
 
         /// <summary>Finalises a score against its token. Returns the stored score, or null if the token is not valid for this user.</summary>
         public async Task<SoloScoreInfo?> Submit(int userId, int beatmapId, long token, long? playlistItemId, SoloScoreInfo score, CancellationToken ct)
         {
+            if (accounts.Get(userId) is not { Restricted: false }) throw new SubmitException("Account unavailable", 403);
+            if (score.Mods.Length > 32 || score.MaximumStatistics.Count > 64 || score.MaximumStatistics.Any(x => x.Value < 0 || x.Value > 1_000_000) || score.Statistics.Count > 64 || score.Statistics.Any(x => x.Value < 0 || x.Value > 1_000_000))
+                throw new SubmitException("Invalid score statistics");
             string? tokenHash;
             long? roomId;
             using (var c = db.Open())
@@ -86,6 +95,10 @@ namespace XcOsu.Server.Services
                 if (t.s != null)
                     return Load(c, new[] { t.s.Value }, accounts, users, withBeatmap: false).FirstOrDefault();
                 if (DateTimeOffset.FromUnixTimeSeconds(t.at) < DateTimeOffset.UtcNow.AddHours(-TOKEN_LIFETIME_HOURS)) return null;
+                if (score.EndedAt != default && (score.EndedAt < DateTimeOffset.FromUnixTimeSeconds(t.at).AddMinutes(-5)
+                    || score.EndedAt > DateTimeOffset.UtcNow.AddMinutes(5)
+                    || (score.StartedAt is DateTimeOffset start && (start > score.EndedAt || start < DateTimeOffset.FromUnixTimeSeconds(t.at).AddMinutes(-5)))))
+                    throw new SubmitException("Invalid play timestamps");
                 score.RulesetID = t.rs;
                 tokenHash = t.h;
                 roomId = t.room;
@@ -110,8 +123,8 @@ namespace XcOsu.Server.Services
             });
 
             bool plausible = score.TotalScore <= max_plausible_score && (mapMaxCombo == null || score.MaxCombo <= mapMaxCombo + 1);
-            bool hashMatches = tokenHash == null || onlineHash == null || string.Equals(tokenHash, onlineHash, StringComparison.OrdinalIgnoreCase);
-            bool ranked = Users.PP_STATUSES.Contains(status) && modsRanked && plausible && hashMatches && playlistItemId == null;
+            bool hashMatches = !string.IsNullOrEmpty(tokenHash) && !string.IsNullOrEmpty(onlineHash) && string.Equals(tokenHash, onlineHash, StringComparison.OrdinalIgnoreCase);
+            bool ranked = Eligible(score, map, tokenHash) && playlistItemId == null;
             if (!plausible) log.LogWarning("implausible score from user {User} on {Beatmap}: {Score} x{Combo}", userId, beatmapId, score.TotalScore, score.MaxCombo);
 
             Performance.ScoreCalculation? calc = null;
@@ -132,6 +145,10 @@ namespace XcOsu.Server.Services
             using (var c = db.Open())
             using (var tx = c.BeginTransaction())
             {
+                long? alreadyStored = c.Scalar<long?>("SELECT score_id FROM score_tokens WHERE id = $t", ("$t", token));
+                if (alreadyStored != null) return Load(c, new[] { alreadyStored.Value }, accounts, users, false).FirstOrDefault();
+                if (c.Scalar<long>("SELECT COUNT(*) FROM users WHERE id = $u AND restricted = 0", ("$u", userId)) != 1)
+                    throw new SubmitException("Account unavailable", 403);
                 id = c.Insert("""
                     INSERT INTO scores (user_id, beatmap_id, ruleset_id, playlist_item_id, total_score, accuracy, max_combo, rank, passed, pp, ranked, mods, data, ended_at, started_at,
                                         has_replay, total_hits, play_seconds, legacy_total_score)
@@ -235,6 +252,18 @@ namespace XcOsu.Server.Services
                 """, ("$u", owner), ("$m", DateTime.UtcNow.ToString("yyyy-MM")));
         }
 
+        private static bool Eligible(SoloScoreInfo score, JObject? map, string? tokenHash)
+        {
+            var ruleset = Performance.Ruleset(score.RulesetID);
+            string? onlineHash = map?.Value<string>("checksum");
+            int? maxCombo = map?.Value<int?>("max_combo");
+            if (ruleset == null || !Users.PP_STATUSES.Contains(BeatmapStatus(map)) || score.TotalScore > max_plausible_score
+                || score.TotalScore < 0 || score.MaxCombo < 0 || (maxCombo != null && score.MaxCombo > maxCombo + 1)
+                || string.IsNullOrEmpty(tokenHash) || string.IsNullOrEmpty(onlineHash)
+                || !string.Equals(tokenHash, onlineHash, StringComparison.OrdinalIgnoreCase)) return false;
+            return score.Mods.All(m => { try { return m.ToMod(ruleset).Ranked; } catch { return false; } });
+        }
+
         /// <summary>Recomputes pp / ranked flags for a beatmap whose status changed on the mirrors.</summary>
         public async Task ReprocessBeatmap(int beatmapId, CancellationToken ct)
         {
@@ -250,7 +279,9 @@ namespace XcOsu.Server.Services
                 var ruleset = Performance.Ruleset(s.RulesetID);
                 if (ruleset == null) continue;
                 bool modsRanked = s.Mods.All(m => { try { return m.ToMod(ruleset).Ranked; } catch { return false; } });
-                bool ranked = Users.PP_STATUSES.Contains(status) && modsRanked && s.TotalScore <= max_plausible_score;
+                string? checksum;
+                using (var source = db.Open()) checksum = source.Scalar<string>("SELECT beatmap_hash FROM score_tokens WHERE score_id = $s LIMIT 1", ("$s", id));
+                bool ranked = Eligible(s, map, checksum);
                 double? pp = ranked && status is 1 or 2 or 3 && s.Passed ? await performance.CalculatePp(beatmapId, s, ct) : null;
                 using var c = db.Open();
                 c.Exec("UPDATE scores SET ranked = $r, pp = $p WHERE id = $i", ("$r", ranked ? 1 : 0), ("$p", pp), ("$i", id));

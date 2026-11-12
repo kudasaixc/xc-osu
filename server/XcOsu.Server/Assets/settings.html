@@ -71,7 +71,7 @@
         <div><label for="discord">Discord</label><input id="discord"></div>
         <div><label for="playmode">Default mode</label>
           <select id="playmode"><option value="osu">osu!</option><option value="taiko">osu!taiko</option><option value="fruits">osu!catch</option><option value="mania">osu!mania</option></select></div>
-        <div><label for="country">Country code (2 letters)</label><input id="country" maxlength="2"></div>
+        <div><label for="country">Country</label><input id="country" disabled></div>
         <div><label for="hue">Profile hue (0–360, empty = default)</label><input id="hue" type="number" min="0" max="360"></div>
       </div>
       <label for="page">me! page (Markdown, shown on your profile)</label>
@@ -161,7 +161,7 @@ async function load() {
   $("avatarImg").src = me.avatar_url; $("coverImg").src = me.cover_url;
   const pr = me.profile || {};
   for (const k of ["location", "interests", "occupation", "website", "twitter", "discord"]) $(k).value = pr[k] || "";
-  $("playmode").value = me.playmode || "osu"; $("country").value = me.country || "";
+  $("playmode").value = me.playmode || "osu"; $("country").value = me.country && me.country !== "XX" ? me.country : "Unknown";
   $("hue").value = pr.profile_hue ?? "";
   $("page").value = pr.page || "";
   $("pmFriends").checked = !!pr.pm_friends_only;
@@ -214,7 +214,7 @@ $("avatarFile").onchange = () => uploadImage("avatar", $("avatarFile"));
 $("coverFile").onchange = () => uploadImage("cover", $("coverFile"));
 $("coverReset").onclick = async () => { try { await api("DELETE", "/api/xc/account/cover"); await load(); } catch (e) { msg("imgMsg", e.message); } };
 $("saveProfile").onclick = async () => {
-  const body = { playmode: $("playmode").value, country: $("country").value, pm_friends_only: $("pmFriends").checked,
+  const body = { playmode: $("playmode").value, pm_friends_only: $("pmFriends").checked,
     profile_hue: $("hue").value === "" ? null : Number($("hue").value),
     playstyle: [...$("styles").querySelectorAll("input:checked")].map(c => c.value) };
   for (const k of ["location", "interests", "occupation", "website", "twitter", "discord"]) body[k] = $(k).value;

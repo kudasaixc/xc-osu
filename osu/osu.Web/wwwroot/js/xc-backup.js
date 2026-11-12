@@ -1,3 +1,4 @@
+import { encryptBackupStream, decryptBackupStream } from './xc-backup-crypto.js';
 // xc-osu! — export / import of everything this browser stores for the game, as one .xcbak file. xc softworks (kudasaixc)
 //
 // What is saved: the whole persistent file system (the IDBFS mount at /xc, i.e. the IndexedDB database "/xc": realm
@@ -6,8 +7,9 @@
 //
 // The .xcbak container (all integers little endian):
 //   "XCOSUBAK"  8 bytes   magic
-//   u8          version   (1)
-//   u8          flags     bit 0: the rest of the file is one gzip stream
+//   u8          version   1 (plain) or 2 (password encrypted)
+//   u8          flags     bit 0: gzip; bit 1: authenticated encryption (v2)
+//   v2 adds a 16-byte salt and 8-byte nonce prefix; see xc-backup-crypto.js.
 //   body:
 //     u32 n, n bytes      header, UTF-8 JSON: { app, version, created, build, entries, localStorage: { key: value } }
 //     per entry:
@@ -23,6 +25,7 @@
 const DB_NAME = '/xc', DB_STORE = 'FILE_DATA', DB_VERSION = 21; // must match emscripten's IDBFS
 const MAGIC = 'XCOSUBAK', VERSION = 1, FLAG_GZIP = 1;
 const SETTINGS_KEYS = ['xc.launcher.v1'];
+const MAX_ENTRIES = 1000000, MAX_FILE_BYTES = 2 * 1024 ** 3, MAX_TOTAL_BYTES = 100 * 1024 ** 3;
 const MAX_NAME = 1 << 16, MAX_HEADER = 1 << 24;
 
 export const BACKUP_EXTENSION = '.xcbak';
@@ -70,7 +73,8 @@ const isFile = (mode) => (mode & 0o170000) === 0o100000;
  * straight to disk, elsewhere the file is assembled and handed to the download manager.
  * `onProgress(doneEntries, totalEntries, bytes)`. Resolves to { entries, bytes, name }.
  */
-export async function exportBackup({ build = '', onProgress } = {}) {
+export async function exportBackup({ build = '', password = '', onProgress } = {}) {
+  if (!window.confirm('Cette sauvegarde contient les données du jeu et peut contenir des identifiants de connexion. Conservez-la dans un emplacement privé et ne la partagez pas. Continuer ?')) throw new BackupError('aborted');
   if (typeof CompressionStream === 'undefined') throw new BackupError('unsupported');
   const d = new Date(), p2 = (n) => String(n).padStart(2, '0');
   const name = `xc-osu-${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${BACKUP_EXTENSION}`;
@@ -96,16 +100,18 @@ export async function exportBackup({ build = '', onProgress } = {}) {
     const enc = new TextEncoder();
     const header = enc.encode(JSON.stringify({ app: 'xc-osu!', version: VERSION, created: d.toISOString(), build, entries: keys.length, localStorage: settings }));
 
-    const preamble = new Uint8Array(10);
+    let preamble = new Uint8Array(10);
     preamble.set(enc.encode(MAGIC)); preamble[8] = VERSION; preamble[9] = FLAG_GZIP;
     const gz = new CompressionStream('gzip'), w = gz.writable.getWriter();
+    let output = gz.readable;
+    if (password) { const encrypted = await encryptBackupStream(output, password, preamble); preamble = encrypted.header; output = encrypted.stream; }
     const parts = [preamble];
     let bytes = preamble.length, sink;
     if (file) {
       await file.write(preamble);
-      sink = gz.readable.pipeTo(new WritableStream({ write: (c) => { bytes += c.length; return file.write(c); } }));
+      sink = output.pipeTo(new WritableStream({ write: (c) => { bytes += c.length; return file.write(c); } }));
     } else {
-      sink = gz.readable.pipeTo(new WritableStream({ write: (c) => { bytes += c.length; parts.push(c); } }));
+      sink = output.pipeTo(new WritableStream({ write: (c) => { bytes += c.length; parts.push(c); } }));
     }
     sink.catch(() => { }); // reported through the awaits below
 
@@ -188,11 +194,12 @@ class Reader {
 }
 
 // Walks a backup; `entry(e)` receives { path, mode, timestamp, contents? } (contents only when `withContents`).
-async function walk(file, withContents, entry) {
+async function walk(file, withContents, entry, password = '') {
   const head = new Uint8Array(await file.slice(0, 10).arrayBuffer());
   if (head.length < 10 || new TextDecoder().decode(head.subarray(0, 8)) !== MAGIC) throw new BackupError('format');
-  if (head[8] !== VERSION) throw new BackupError('version');
-  let stream = file.slice(10).stream();
+  if (head[8] !== VERSION && head[8] !== 2) throw new BackupError('version');
+  if (head[9] & ~3 || (head[8] === 2) !== !!(head[9] & 2)) throw new BackupError('format');
+  let stream = head[8] === 2 ? await decryptBackupStream(file, password) : file.slice(10).stream();
   if (head[9] & FLAG_GZIP) {
     if (typeof DecompressionStream === 'undefined') throw new BackupError('unsupported');
     stream = stream.pipeThrough(new DecompressionStream('gzip'));
@@ -203,20 +210,24 @@ async function walk(file, withContents, entry) {
     if (!hl || hl > MAX_HEADER) throw new BackupError('format');
     const header = JSON.parse(dec.decode(await r.read(hl)));
     if (header?.app !== 'xc-osu!') throw new BackupError('format');
-    let count = 0;
+    let count = 0, totalBytes = 0, nameBytes = 0;
+    const paths = new Set();
     for (;;) {
       const pl = await r.u32();
       if (!pl) break;
-      if (pl > MAX_NAME) throw new BackupError('format');
+      if (pl > MAX_NAME || (nameBytes += pl) > 32 * 1024 * 1024) throw new BackupError('format');
+      if (count >= MAX_ENTRIES) throw new BackupError('format', 'Too many backup entries');
       const path = dec.decode(await r.read(pl));
+      if (paths.has(path) || path.includes('\0')) throw new BackupError('format');
+      paths.add(path);
       // only the game's own mount, and nothing that climbs out of it
-      if (!path.startsWith(DB_NAME + '/') || path.split('/').includes('..')) throw new BackupError('format');
+      if (!path.startsWith(DB_NAME + '/') || path.slice(1).split('/').some(part => part === '..' || part === '.' || part === '') || path.includes('\\')) throw new BackupError('format');
       const mode = await r.u32(), timestamp = await r.f64(), kind = (await r.read(1))[0];
-      if (kind > 1 || (kind ? !isFile(mode) : !isDir(mode))) throw new BackupError('format');
+      if (!Number.isFinite(timestamp) || Math.abs(timestamp) > 8640000000000000 || kind > 1 || (kind ? !isFile(mode) : !isDir(mode))) throw new BackupError('format');
       const e = { path, mode, timestamp: new Date(timestamp) };
       if (kind) {
         const size = await r.f64();
-        if (!Number.isSafeInteger(size) || size < 0) throw new BackupError('format');
+        if (!Number.isSafeInteger(size) || size < 0 || size > MAX_FILE_BYTES || (totalBytes += size) > MAX_TOTAL_BYTES) throw new BackupError('format');
         if (withContents) e.contents = await r.read(size); else await r.skip(size);
         e.size = size;
       }
@@ -224,7 +235,7 @@ async function walk(file, withContents, entry) {
     }
     if (await r.u32() !== count) throw new BackupError('format');
     await r.end();
-    return { header, count };
+    return { header, count, totalBytes };
   } catch (e) {
     try { await r.r.cancel(); } catch { }
     if (e instanceof BackupError) throw e;
@@ -237,9 +248,12 @@ async function walk(file, withContents, entry) {
  * anything is erased. `onProgress(phase, done, total)` with phase 'check' | 'write'.
  * Resolves to { entries, created, build }; the caller reloads the page.
  */
-export async function importBackup(file, { onProgress } = {}) {
-  const { header, count } = await walk(file, false, (e, n, h) => { if (n % 64 === 0) onProgress?.('check', n, h.entries || 0); });
+export async function importBackup(file, { onProgress, password = '' } = {}) {
+  const { header, count, totalBytes } = await walk(file, false, (e, n, h) => { if (n % 64 === 0) onProgress?.('check', n, h.entries || 0); }, password);
 
+  // Reject an archive that cannot fit before deleting any existing game data.
+  const estimate = await globalThis.navigator?.storage?.estimate?.();
+  if (estimate?.quota && totalBytes > estimate.quota * 0.9) throw new BackupError('format', 'Backup exceeds browser storage capacity');
   await drop();
   const { db } = await open(true);
   try {
@@ -254,7 +268,7 @@ export async function importBackup(file, { onProgress } = {}) {
     await walk(file, true, async (e, n) => {
       batch.push(e); size += e.size || 0;
       if (batch.length >= 256 || size >= 32 << 20) { await commit(); onProgress?.('write', n, count); }
-    });
+    }, password);
     await commit();
     onProgress?.('write', count, count);
   } catch (e) {

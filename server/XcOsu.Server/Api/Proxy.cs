@@ -9,13 +9,13 @@ namespace XcOsu.Server.Api
     {
         private static readonly HashSet<string> allowed_hosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "assets.ppy.sh", "a.ppy.sh", "b.ppy.sh", "i.ppy.sh", "s.ppy.sh", "osu.ppy.sh",
+            "assets.ppy.sh", "b.ppy.sh", "i.ppy.sh", "s.ppy.sh", "osu.ppy.sh",
             "catboy.best", "central.catboy.best", "api.nerinyan.moe", "osu.direct",
         };
 
         private const long max_bytes = 256L * 1024 * 1024;
 
-        private static readonly ConcurrentDictionary<string, SemaphoreSlim> cache_locks = new ConcurrentDictionary<string, SemaphoreSlim>();
+        internal static readonly SemaphoreSlim cache_gate = new(1, 1);
 
         public static void Map(WebApplication app)
         {
@@ -27,27 +27,44 @@ namespace XcOsu.Server.Api
                 if (!Uri.TryCreate(u, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps || !allowed_hosts.Contains(uri.Host) || !uri.IsDefaultPort)
                     return Results.StatusCode(403);
 
-                var http = factory.CreateClient("mirrors");
+                var http = factory.CreateClient("proxy");
 
                 // large, versioned client resources (online.db etc.) are cached on disk.
                 if (uri.Host == "assets.ppy.sh" && uri.AbsolutePath.StartsWith("/client-resources/", StringComparison.Ordinal))
                 {
-                    string name = string.Concat(uri.AbsolutePath.Split('/').Last().Where(c => char.IsLetterOrDigit(c) || c is '.' or '-' or '_'));
+                    string name = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(uri.AbsoluteUri)));
                     string file = Path.Combine(cacheDir, name);
-                    var gate = cache_locks.GetOrAdd(file, _ => new SemaphoreSlim(1, 1));
+                    var gate = cache_gate;
                     await gate.WaitAsync(ctx.RequestAborted);
 
+                    FileStream cachedStream;
                     try
                     {
                         if (!File.Exists(file) || File.GetLastWriteTimeUtc(file) < DateTime.UtcNow.AddDays(-1))
                         {
-                            using var resp = await http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ctx.RequestAborted);
+                            using var resp = await fetch(http, uri, ctx.RequestAborted);
                             if (!resp.IsSuccessStatusCode) return Results.StatusCode((int)resp.StatusCode);
-                            string tmp = file + ".tmp";
-                            await using (var fs = File.Create(tmp))
-                                await copyCapped(await resp.Content.ReadAsStreamAsync(ctx.RequestAborted), fs, ctx.RequestAborted);
-                            File.Move(tmp, file, true);
+                            var files = new DirectoryInfo(cacheDir).GetFiles().OrderBy(f => f.LastAccessTimeUtc).ToArray();
+                            long size = files.Sum(f => f.Length);
+                            foreach (var old in files)
+                            {
+                                if (size <= 2L * 1024 * 1024 * 1024 - max_bytes) break;
+                                long length = old.Length;
+                                old.Delete();
+                                size -= length;
+                            }
+                            string tmp = file + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                            try
+                            {
+                                await using (var fs = File.Create(tmp))
+                                await using (var source = await resp.Content.ReadAsStreamAsync(ctx.RequestAborted))
+                                    await copyCapped(source, fs, ctx.RequestAborted);
+                                File.Move(tmp, file, true);
+                            }
+                            finally { if (File.Exists(tmp)) File.Delete(tmp); }
                         }
+                        cachedStream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+                        File.SetLastAccessTimeUtc(file, DateTime.UtcNow);
                     }
                     finally
                     {
@@ -55,10 +72,10 @@ namespace XcOsu.Server.Api
                     }
 
                     ctx.Response.Headers.CacheControl = "public, max-age=3600";
-                    return Results.File(file, "application/octet-stream", enableRangeProcessing: true);
+                    return Results.Stream(cachedStream, "application/octet-stream", enableRangeProcessing: true);
                 }
 
-                var upstream = await http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ctx.RequestAborted);
+                var upstream = await fetch(http, uri, ctx.RequestAborted);
                 if (!upstream.IsSuccessStatusCode)
                 {
                     upstream.Dispose();
@@ -73,9 +90,36 @@ namespace XcOsu.Server.Api
 
                 ctx.Response.RegisterForDispose(upstream);
                 ctx.Response.Headers.CacheControl = "public, max-age=86400";
-                string type = upstream.Content.Headers.ContentType?.ToString() ?? "application/octet-stream";
-                return Results.Stream(await upstream.Content.ReadAsStreamAsync(ctx.RequestAborted), type);
+                string type = upstream.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+                if (type is not ("image/png" or "image/jpeg" or "image/gif" or "image/webp" or "audio/mpeg" or "audio/ogg" or "application/octet-stream" or "application/zip"))
+                {
+                    type = "application/octet-stream";
+                    ctx.Response.Headers.ContentDisposition = "attachment";
+                }
+                ctx.Response.Headers.XContentTypeOptions = "nosniff";
+                ctx.Response.Headers.ContentSecurityPolicy = "sandbox; default-src 'none'";
+                return Results.Stream(async output =>
+                {
+                    using var source = await upstream.Content.ReadAsStreamAsync(ctx.RequestAborted);
+                    await copyCapped(source, output, ctx.RequestAborted);
+                }, type);
             });
+        }
+
+        private static async Task<HttpResponseMessage> fetch(HttpClient http, Uri uri, CancellationToken ct)
+        {
+            for (int redirects = 0; redirects < 5; redirects++)
+            {
+                if (uri.Scheme != "https" || !uri.IsDefaultPort || !allowed_hosts.Contains(uri.Host) || uri.UserInfo.Length != 0)
+                    throw new BadHttpRequestException("Invalid upstream", 403);
+                var response = await http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ct);
+                if ((int)response.StatusCode is not (301 or 302 or 303 or 307 or 308)) return response;
+                var location = response.Headers.Location;
+                response.Dispose();
+                if (location == null) throw new BadHttpRequestException("Invalid redirect", 502);
+                uri = new Uri(uri, location);
+            }
+            throw new BadHttpRequestException("Too many redirects", 502);
         }
 
         private static async Task copyCapped(Stream from, Stream to, CancellationToken ct)

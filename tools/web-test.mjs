@@ -68,13 +68,22 @@ try {
     await page.click('#register button');
     await page.waitForFunction(() => document.querySelector('#register .msg.bad')?.textContent);
     await page.fill('[name=email]', `${alice}@example.test`); await page.fill('[name=password]', password);
+    await page.setExtraHTTPHeaders({ 'CF-IPCountry': 'FR' }); // the country comes from the connection, as behind Cloudflare
     await page.click('#register button');
     await page.waitForURL(/\/web\/home\/account\/edit/);
     await page.waitForSelector('#profile');
     assert.match(await text(page, '.me-menu summary'), new RegExp(alice)); step('registration signs in and opens the settings');
 
     await page.fill('#profile [name=location]', 'Lyon <b>x</b>');
-    await page.selectOption('#profile [name=country]', 'FR');
+    await page.setExtraHTTPHeaders({});
+    assert.equal(await page.locator('#profile select[name=country], #profile input[name=country]').count(), 0, 'no country field to submit');
+    assert.match(await page.locator('#profile input[disabled]').first().inputValue(), /France/);
+    assert.equal(await page.evaluate(async () => {
+      const h = { Authorization: 'Bearer ' + JSON.parse(localStorage.getItem('xc.web.auth')).access };
+      await fetch('/api/xc/account', { method: 'PUT', headers: { ...h, 'Content-Type': 'application/json' }, body: JSON.stringify({ country: 'US' }) });
+      return (await (await fetch('/api/xc/account', { headers: h })).json()).country;
+    }), 'FR', 'the API ignores a country change');
+    step('country is set at registration and cannot be changed');
     await page.check('#profile [name=playstyle][value=tablet]');
     await page.fill('#profile [name=page]', '# Salut\n**gras** et <img src=x onerror="window.pwned=1">\n- un\n- deux\n[lien](javascript:alert(1)) [ok](https://example.org/a)');
     await page.click('#profile [type=submit]');
@@ -112,6 +121,19 @@ try {
     assert.equal(await page.evaluate(() => window.pwned), undefined);
     assert.match(page.url(), new RegExp('/web/users/' + alice + '$'));
     assert.match(await text(page, '.profile-actions'), /Modifier mon profil/); step('own profile shows saved fields, formatted page, no injected HTML');
+
+    await page.evaluate(async () => {
+      const h = { Authorization: 'Bearer ' + JSON.parse(localStorage.getItem('xc.web.auth')).access, 'Content-Type': 'application/json' };
+      await fetch('/api/xc/account', { method: 'PUT', headers: h, body: JSON.stringify({ page: '[notice]\n[centre][b][size=150]GOALS[/size][/b][/centre]\n[box=Goal 1]\n[s]5 digits[/s] [url=javascript:alert(1)]bad[/url] [url=https://osu.ppy.sh/users/2]peppy[/url]\n[/box]\n[/notice]' }) });
+    });
+    await visit('/users/' + alice);
+    assert.equal(await page.locator('.user-text .bb-notice .bb-centre strong span[style="font-size:150%"]').innerText(), 'GOALS');
+    assert.equal(await page.locator('.user-text details.bb-box summary').innerText(), 'Goal 1');
+    await page.click('.user-text details.bb-box summary');
+    assert.equal(await page.locator('.user-text .bb-box del').innerText(), '5 digits');
+    assert.equal(await page.locator('.user-text a[href^="javascript"]').count(), 0);
+    assert.equal(await page.locator('.user-text a[href="https://osu.ppy.sh/users/2"]').innerText(), 'peppy');
+    step('osu! BBCode on the me! page (notice, centre, size, box, links)');
 
     // sign out, second player
     await page.click('.me-menu summary'); await page.click('#sign-out');

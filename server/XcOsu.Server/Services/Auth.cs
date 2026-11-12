@@ -19,6 +19,7 @@ namespace XcOsu.Server.Services
         public const int TOKEN_LIFETIME_SECONDS = 60 * 60 * 24;
 
         private readonly Db db;
+        private static readonly SemaphoreSlim passwordSlots = new(4, 4);
 
         public Accounts(Db db) => this.db = db;
 
@@ -63,86 +64,107 @@ namespace XcOsu.Server.Services
             username = username.Trim();
             if (!usernameRegex().IsMatch(username) || username.Contains("  ") || username.StartsWith(' ') || username.EndsWith(' '))
                 add("username", "Username must be 3-15 characters: letters, numbers, spaces, [ ] _ -");
-            if (!email.Contains('@') || email.Length > 254)
+            if (email.Length > 254 || email.Contains('\r') || email.Contains('\n') || !System.Net.Mail.MailAddress.TryCreate(email, out var parsedEmail) || parsedEmail.Address != email)
                 add("user_email", "Please enter a valid email address.");
-            if (password.Length < 8)
+            if (password.Length < 8 || password.Length > 256)
                 add("password", "New password must be at least 8 characters.");
             else if (password.Contains(username, StringComparison.OrdinalIgnoreCase))
                 add("password", "Password may not contain username.");
 
             using var c = db.Open();
             if (c.Scalar<long>("SELECT COUNT(*) FROM users WHERE username = $u", ("$u", username)) > 0)
-                add("username", "Username is already in use!");
+                add("username", "Registration cannot be completed with these details.");
             if (c.Scalar<long>("SELECT COUNT(*) FROM users WHERE email = $e", ("$e", email)) > 0)
-                add("user_email", "Email address already used.");
+                add("user_email", "Registration cannot be completed with these details.");
 
             if (errors.Count > 0)
                 return errors.ToDictionary(e => e.Key, e => e.Value.ToArray());
 
-            bool first = c.Scalar<long>("SELECT COUNT(*) FROM users") == 0;
             c.Exec("INSERT INTO users (username, email, password_hash, country, join_date, is_admin) VALUES ($u, $e, $p, $c, $d, $a)",
-                ("$u", username), ("$e", email), ("$p", HashPassword(password)), ("$c", country), ("$d", DateTimeOffset.UtcNow.ToString("O")), ("$a", first ? 1 : 0));
+                ("$u", username), ("$e", email), ("$p", HashPassword(password)), ("$c", country), ("$d", DateTimeOffset.UtcNow.ToString("O")), ("$a", 0));
             return null;
         }
 
         public AccountRow? Verify(string username, string password)
         {
+            if (username.Length > 254 || password.Length > 256) return null;
+            string accountKey = TokenHash(username.Trim().ToUpperInvariant());
+            if (!LoginAttempts.CanTry(accountKey) || !AbuseGuard.Allow("login-account:" + accountKey, 10, TimeSpan.FromMinutes(1))) return null;
             using var c = db.Open();
             var user = c.Query($"SELECT {COLUMNS} FROM users WHERE username = $n OR email = $n", Map, ("$n", username.Trim())).FirstOrDefault();
-            return user != null && !user.Restricted && VerifyPassword(password, user.PasswordHash) ? user : null;
+            bool valid = user != null && !user.Restricted && VerifyPassword(password, user.PasswordHash);
+            LoginAttempts.Record(accountKey, valid);
+            return valid ? user : null;
         }
 
-        public (string access, string refresh) IssueToken(int userId)
+        public (string access, string refresh) IssueToken(int userId, long? sessionExpiresAt = null)
         {
             string access = randomToken(), refresh = randomToken();
             using var c = db.Open();
-            c.Exec("DELETE FROM tokens WHERE expires_at < $now", ("$now", DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 30L * 24 * 3600));
-            c.Exec("INSERT INTO tokens (access_token, refresh_token, user_id, expires_at) VALUES ($a, $r, $u, $e)",
-                ("$a", access), ("$r", refresh), ("$u", userId), ("$e", DateTimeOffset.UtcNow.ToUnixTimeSeconds() + TOKEN_LIFETIME_SECONDS));
+            c.Exec("DELETE FROM tokens WHERE refresh_expires_at < $now", ("$now", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+            c.Exec("INSERT INTO tokens (access_token, refresh_token, user_id, expires_at, refresh_expires_at, session_expires_at) VALUES ($a, $r, $u, $e, $re, $se)",
+                ("$a", TokenHash(access)), ("$r", TokenHash(refresh)), ("$u", userId), ("$e", DateTimeOffset.UtcNow.ToUnixTimeSeconds() + TOKEN_LIFETIME_SECONDS),
+                ("$re", Math.Min(DateTimeOffset.UtcNow.AddDays(30).ToUnixTimeSeconds(), sessionExpiresAt ?? long.MaxValue)),
+                ("$se", sessionExpiresAt ?? DateTimeOffset.UtcNow.AddDays(90).ToUnixTimeSeconds()));
             c.Exec("UPDATE users SET last_visit = $t WHERE id = $u", ("$t", DateTimeOffset.UtcNow.ToString("O")), ("$u", userId));
             return (access, refresh);
         }
 
-        public int? Refresh(string refreshToken)
+        public (int UserId, long SessionExpiresAt)? Refresh(string refreshToken)
         {
+            if (refreshToken.Length != 64) return null;
             using var c = db.Open();
-            long? user = c.Scalar<long?>("SELECT user_id FROM tokens WHERE refresh_token = $r", ("$r", refreshToken));
-            if (user == null) return null;
-            c.Exec("DELETE FROM tokens WHERE refresh_token = $r", ("$r", refreshToken));
-            return (int)user;
+            var rows = c.Query("DELETE FROM tokens WHERE refresh_token = $r AND refresh_expires_at > $now AND session_expires_at > $now AND user_id IN (SELECT id FROM users WHERE restricted = 0) RETURNING user_id, session_expires_at",
+                r => (UserId: r.GetInt32(0), SessionExpiresAt: r.GetInt64(1)),
+                ("$r", TokenHash(refreshToken)), ("$now", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+            return rows.Count == 1 ? rows[0] : null;
         }
+
+        public static string TokenHash(string token) => "sha256:" + Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(token)));
 
         public int? ValidateAccessToken(string token)
         {
             using var c = db.Open();
-            return (int?)c.Scalar<long?>("SELECT user_id FROM tokens WHERE access_token = $a AND expires_at > $now",
-                ("$a", token), ("$now", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+            return (int?)c.Scalar<long?>("SELECT user_id FROM tokens WHERE access_token = $a AND expires_at > $now AND user_id IN (SELECT id FROM users WHERE restricted = 0)",
+                ("$a", TokenHash(token)), ("$now", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
         }
 
         public void Revoke(string token)
         {
             using var c = db.Open();
-            c.Exec("DELETE FROM tokens WHERE access_token = $a", ("$a", token));
+            c.Exec("DELETE FROM tokens WHERE access_token = $a", ("$a", TokenHash(token)));
         }
 
         private static string randomToken() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
 
         public static string HashPassword(string password)
         {
-            byte[] salt = RandomNumberGenerator.GetBytes(16);
-            byte[] hash = Rfc2898DeriveBytes.Pbkdf2(password, salt, 210_000, HashAlgorithmName.SHA512, 32);
-            return $"pbkdf2-sha512$210000${Convert.ToBase64String(salt)}${Convert.ToBase64String(hash)}";
+            if (password.Length is < 8 or > 256) throw new ArgumentException("Invalid password length.");
+            if (!passwordSlots.Wait(0)) throw new BadHttpRequestException("Password service busy. Please retry.", 429);
+            try
+            {
+                byte[] salt = RandomNumberGenerator.GetBytes(16);
+                byte[] hash = Rfc2898DeriveBytes.Pbkdf2(password, salt, 210_000, HashAlgorithmName.SHA512, 32);
+                return $"pbkdf2-sha512$210000${Convert.ToBase64String(salt)}${Convert.ToBase64String(hash)}";
+            }
+            finally { passwordSlots.Release(); }
         }
 
         public static bool VerifyPassword(string password, string stored)
         {
+            if (password.Length > 256) return false;
             string[] parts = stored.Split('$');
             if (parts.Length != 4 || parts[0] != "pbkdf2-sha512") return false;
             int iterations = int.Parse(parts[1]);
             byte[] salt = Convert.FromBase64String(parts[2]);
             byte[] expected = Convert.FromBase64String(parts[3]);
-            byte[] actual = Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, HashAlgorithmName.SHA512, expected.Length);
-            return CryptographicOperations.FixedTimeEquals(actual, expected);
+            if (!passwordSlots.Wait(0)) return false;
+            try
+            {
+                byte[] actual = Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, HashAlgorithmName.SHA512, expected.Length);
+                return CryptographicOperations.FixedTimeEquals(actual, expected);
+            }
+            finally { passwordSlots.Release(); }
         }
     }
 
@@ -167,8 +189,12 @@ namespace XcOsu.Server.Services
             string auth = Request.Headers.Authorization.ToString();
             if (auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
                 token = auth[7..].Trim();
-            else if (Request.Query.TryGetValue("access_token", out var q))
+            else if ((Request.Path == "/signalr/spectator" || Request.Path == "/signalr/multiplayer" || Request.Path == "/signalr/metadata" || (Request.Path == "/notifications" && Context.WebSockets.IsWebSocketRequest)) && Request.Query.TryGetValue("access_token", out var q))
                 token = q.ToString();
+
+            if (token == null && Request.Cookies.TryGetValue(BrowserSession.AccessCookie, out var cookie)
+                && (BrowserSession.SameOrigin(Request) || (!Context.WebSockets.IsWebSocketRequest && (HttpMethods.IsGet(Request.Method) || HttpMethods.IsHead(Request.Method)))))
+                token = cookie;
 
             if (string.IsNullOrEmpty(token))
                 return Task.FromResult(AuthenticateResult.NoResult());
