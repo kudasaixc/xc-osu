@@ -1,5 +1,20 @@
 [
  {
+  "version": "2026.1113.4",
+  "stream": "nanbeige",
+  "date": "2026-11-13T18:25:00Z",
+  "entries": [
+   {
+    "category": "Website",
+    "category_fr": "Site web",
+    "type": "fix",
+    "title": "Website links opened from the game (news posts, profiles, account pages) land on the right page instead of a 404, and so does any site link opened directly in a new tab",
+    "title_fr": "Les liens du site ouverts depuis le jeu (actus, profils, pages de compte) arrivent sur la bonne page au lieu d’une 404, et de même pour tout lien du site ouvert directement dans un nouvel onglet",
+    "major": false
+   }
+  ]
+ },
+ {
   "version": "2026.1113.3",
   "stream": "nanbeige",
   "date": "2026-11-13T17:00:00Z",
