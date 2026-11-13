@@ -1,5 +1,5 @@
 #!/bin/bash
-# xc-osu! — deploy a build to the live site (root + /dev/). xc softworks (kudasaixc)
+# xc-osu!: deploy a build to the live site (root + /dev/). xc softworks (kudasaixc)
 # usage: tools/deploy.sh [dev|aot] [test]
 #   "test" only updates /aot/ (https://osu.xcsoftworks.com/aot/) and leaves the live site alone.
 #   on the VPS: copies locally. Elsewhere (e.g. a dev PC): set XC_DEPLOY_SSH=user@host to rsync over SSH.

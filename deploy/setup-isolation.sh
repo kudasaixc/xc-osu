@@ -64,7 +64,7 @@ if [ "${1:-}" = --switch ] || [ "$(stat -c %U "$DATA" 2>/dev/null)" = "$SVC_USER
         chown -R "$SVC_USER:$SVC_USER" "$DATA/.home/.aspnet"; chmod -R go-rwx "$DATA/.home/.aspnet"
     fi
 else
-    echo "data: still owned by $(stat -c %U "$DATA" 2>/dev/null || echo '?') — left alone until --switch"
+    echo "data: still owned by $(stat -c %U "$DATA" 2>/dev/null || echo '?'): left alone until --switch"
 fi
 
 if [ "${1:-}" = --switch ]; then

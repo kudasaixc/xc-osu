@@ -1,4 +1,4 @@
-// xc-osu! test helper — a throwaway PostgreSQL database per suite, so a test run can never touch the live one.
+// xc-osu! test helper: a throwaway PostgreSQL database per suite, so a test run can never touch the live one.
 
 using Npgsql;
 

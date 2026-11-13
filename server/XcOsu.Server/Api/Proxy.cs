@@ -1,4 +1,4 @@
-// xc-osu! server — same-origin proxy for the web client's cross-origin assets (CORS / COEP). xc softworks (kudasaixc)
+// xc-osu! server: same-origin proxy for the web client's cross-origin assets (CORS / COEP). xc softworks (kudasaixc)
 // Only allow-listed hosts are reachable; no client headers (auth, cookies) are forwarded.
 
 using System.Collections.Concurrent;

@@ -1,4 +1,4 @@
-// xc-osu! web — beatmap listing, beatmap page, comments. xc softworks (kudasaixc)
+// xc-osu! web: beatmap listing, beatmap page, comments. xc softworks (kudasaixc)
 import { L, WEB, state, t, esc, num, clock, dateText, timeTag, MODES, modeName, v2, userLink, avatar, stars, statusChip, scoreRow, sanitize, empty, act, signedIn, NeedSignIn } from './core.js';
 
 const cover = (set, kind = 'card') => esc(set?.covers?.[kind] || set?.covers?.cover || '');
@@ -129,7 +129,7 @@ export async function beatmapset({ params: [id], hash }) {
           <dl class="stat-grid">
             <div><dt>${t('Length', 'Durée')}</dt><dd>${clock(map.total_length)}</dd></div>
             <div><dt>BPM</dt><dd>${num(map.bpm ?? set.bpm, 1)}</dd></div>
-            <div><dt>${t('Max combo', 'Combo max')}</dt><dd>${map.max_combo ? num(map.max_combo) + 'x' : '—'}</dd></div>
+            <div><dt>${t('Max combo', 'Combo max')}</dt><dd>${map.max_combo ? num(map.max_combo) + 'x' : '-'}</dd></div>
             <div><dt>${t('Objects', 'Objets')}</dt><dd>${num((map.count_circles || 0) + (map.count_sliders || 0) + (map.count_spinners || 0))}</dd></div>
             <div><dt>CS</dt><dd>${num(map.cs, 1)}</dd></div><div><dt>AR</dt><dd>${num(map.ar, 1)}</dd></div>
             <div><dt>OD</dt><dd>${num(map.accuracy, 1)}</dd></div><div><dt>HP</dt><dd>${num(map.drain, 1)}</dd></div>

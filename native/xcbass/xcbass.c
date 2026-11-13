@@ -1,4 +1,4 @@
-// xc-osu! xcbass — a BASS / BASS_FX / BASSmix compatible audio engine for WebAssembly.
+// xc-osu! xcbass: a BASS / BASS_FX / BASSmix compatible audio engine for WebAssembly.
 // xc softworks (kudasaixc). Lets osu-framework's unmodified BASS audio stack (ManagedBass bindings) run in the browser.
 //
 // Graph: device <- [non-decode channels, e.g. global mixer] <- mixers <- channels (decoder / tempo / reverse / sample channel)

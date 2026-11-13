@@ -1,4 +1,4 @@
-// xc-osu! UI thread bridge — xc softworks (kudasaixc)
+// xc-osu! UI thread bridge: xc softworks (kudasaixc)
 // Owns the DOM: captures input at full device rate and writes it into a shared-memory ring that the
 // osu-framework input thread drains every frame. Never calls into .NET synchronously.
 import { XC_KEY_CODES } from './keys.js';

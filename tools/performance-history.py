@@ -52,7 +52,7 @@ def collect(db):
     return result
 
 def bound(value):
-    if not value:return '—'
+    if not value:return '-'
     return f"({value['lower']}, {value['upper']}]" if value['upper'] is not None else f"> {value['lower']}"
 
 def markdown(report):

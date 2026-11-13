@@ -1,4 +1,4 @@
-# xc-osu! — Deployment & Operations
+# xc-osu!: Deployment & Operations
 
 ## Repository ownership
 Canonical repository: `kudasaixc/xc-osu`. The SSH-authenticated checkout is `/home/admin/xc-osu-repo`. The production worktree `/var/www/osu` is **not** a Git repository; `osu/` and `osu-framework/` contain independent upstream Git histories. Never push their upstream `origin` remotes to publish xc-osu!.
@@ -41,7 +41,7 @@ of `*.db` paths) with the service stopped. It replaces every matching table insi
 row counts, so a failed import leaves the database untouched. Keep the SQLite files until the import has been
 validated, then remove them from backups deliberately.
 
-## Known limits — November 10, 2026
+## Known limits: November 10, 2026
 - Root disk is about 93% full; inspect generated output and caches carefully. Never delete live data or rollback snapshots to make room without a retention plan.
 - A WebAssembly update-pacing assertion targeting ~240 Hz failed during the earlier Codex run. Browser validation is pending at the owner's request.
 - Delayed rsync reduces inconsistency but is **not atomic**. A future versioned-release layout and Apache document-root migration should be designed, tested and rolled back independently.

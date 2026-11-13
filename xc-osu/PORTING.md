@@ -1,4 +1,4 @@
-# xc-osu! — port web d'osu!lazer (code original) — notes de travail
+# xc-osu! port web d'osu!lazer (code original): notes de travail
 
 Sources: /var/www/osu/osu (lazer bb37f05418), /var/www/osu/osu-framework (tag 2026.1030.0)
 Toolchain: ~/.dotnet (SDK 10.0.403, workloads wasm-tools, wasm-experimental). env: DOTNET_ROOT=$HOME/.dotnet PATH=$HOME/.dotnet:$PATH
@@ -42,18 +42,18 @@ Test harness: /var/www/osu/tools/shot.mjs (playwright + chromium-1248 swiftshade
 - Test E2E isolé : instance sur 127.0.0.1:5081 avec DataDirectory dans un dossier temporaire, scripts HTTP python + client SignalR C# (MessagePack + SignalRUnionWorkaroundResolver) qui joue quick/ranked play.
 - Le JSON serveur ignore les ShouldSerialize* de SoloScoreInfo (id, user, pp...) via Api/Json.cs ServerContractResolver.
 - Déploiement: `dotnet publish -c Release -o /var/www/osu/server/publish` puis `sudo systemctl restart xc-osu-server` (port 127.0.0.1:5080).
-- Apache: /etc/apache2/sites-available/osu-le-ssl.conf — DocumentRoot /var/www/osu/site (le jeu publié), COOP/COEP, fichiers .br/.gz pré-compressés, proxy /api /oauth /users /notifications /signalr (upgrade=websocket).
+- Apache (`/etc/apache2/sites-available/osu-le-ssl.conf`) : DocumentRoot /var/www/osu/site (le jeu publié), COOP/COEP, fichiers .br/.gz pré-compressés, proxy /api /oauth /users /notifications /signalr (upgrade=websocket).
 
 ## Launcher (wwwroot/main.js + js/xc-*.js, 2026-11-10)
 - main.js : `dotnet.download()` dès l'ouverture (assets seulement), launcher pendant ce temps, puis `withConfig/withEnvironmentVariable` + `create()` au clic sur Lancer (vérifié : aucun asset retéléchargé, pthreadPoolInitialSize pris après download).
 - Options -> mécanismes réels : XC_FRAMESYNC / XC_MAX_DRAW_HZ / XC_MAX_UPDATE_HZ / XC_INACTIVE_HZ (WebGameHost.SetupConfig + GameHost.AdjustFrameLimits), DOTNET_PROCESSOR_COUNT, XC_THREADPOOL_MAX (Program.applyLaunchOptions), MONO_GC_PARAMS soft-heap-limit / max-heap-size / nursery-size, pthreadPoolInitialSize, globalThis.xcGlAttributes (xcweb.c, envoyé au worker avec l'OffscreenCanvas), globalThis.xcRenderScale (xc-ui.js), latencyHint AudioContext.
 - Logs : XC_LOG=boot|verbose|quiet (boot = verbeux jusqu'à « entered Intro/MainMenu », ligne toujours émise, + « [launch] boot complete »). XC_REALM_TRACE séparé. ?log = ancien comportement (tout).
 - Écran de boot (xc-boot.js) : étapes pilotées par les vrais logs (regex dans STAGES) ; console en jeu Ctrl+Alt+L, graphiques perf Ctrl+Alt+P (xc-perf.js, parse les lignes [perf] de Program.cs, XC_PERF_MS).
-- Contenu : wwwroot/launcher/news.json (posts, progress, issues — à éditer à la main) ; launcher/build.json généré par tools/portstats.py (appelé par devpub/aotpub : version lazer via git describe, % de code upstream gardé via git diff --numstat, third_party exclu).
+- Contenu : wwwroot/launcher/news.json (posts, progress, issues, à éditer à la main) ; launcher/build.json généré par tools/portstats.py (appelé par devpub/aotpub : version lazer via git describe, % de code upstream gardé via git diff --numstat, third_party exclu).
 - ?launcher force le launcher (si « passer le launcher » est coché), ?launch / ?play le saute.
 - stamp.py est générique : stampe aussi les imports entre js/*.js (xc-boot -> xc-log) ; même ?v= partout = même instance de module.
 
-## Frame pacing (2026-11-10) — ne pas régresser
+## Frame pacing (2026-11-10) : ne pas régresser
 Symptôme : saccades / micro-retours en arrière dans les overlays en ligne (listing, profil) surtout au scroll, absents de l'ancien build /aot du 9 nov. Les correctifs de ce build n'étaient plus dans les sources ; réintégrés :
 - Draw worker : pump rAF direct (`xcRafLoop` dans xcweb.c -> `WebNative.RequestAnimationFrameLoop`, callback synchrone dans l'animation frame). L'ancien `await xcRaf()` (promise -> Task -> sync context par image) reste derrière XC_DRAW_LEGACY=1.
 - `GameHost.DrawReadTimeout` (virtuel) : 0 sur le web. Le TripleBuffer d'origine fait un spin jusqu'à 100 ms en attendant une frame update, ce qui fait rater des rafraîchissements au worker. XC_DRAW_WAIT=1 = comportement d'origine.
@@ -75,7 +75,7 @@ Le build /aot du 9 nov. (22:42) contenait des correctifs de pacing dont les sour
 - **Nursery GC 32 Mo par défaut** (launcher) : la nursery Mono de 4 Mo se remplit plusieurs fois par seconde, chaque collection mineure arrête tous les threads (draw worker compris).
 - Options launcher sauvegardées avant ce correctif : `rev` 2 dans `xc.launcher.v1` remet une fois `nursery` et `lowLatency` aux nouveaux défauts.
 - Stats de pacing dans la ligne `[perf]` : `raf=N avg= max= late= presented= empty= work=` (`WebDrawWorker.TakeStats`).
-- Non retrouvé : le plafond d'update (`XC_UPDATE_UNCAPPED` dans l'ancien binaire) — valeur inconnue, non réimplémenté ; `XC_MAX_UPDATE_HZ` (launcher) reste disponible.
+- Le plafond d'update (`XC_UPDATE_UNCAPPED` dans l'ancien binaire) n'a pas été retrouvé : valeur inconnue, non réimplémenté ; `XC_MAX_UPDATE_HZ` (launcher) reste disponible.
 
 ## Build AOT (tools/aotpub.sh)
 - Étapes AOT en parallèle, bornées par la RAM via `DOTNET_PROCESSOR_COUNT` (3 jobs sous 15 Go ; `XC_AOT_JOBS=n` pour forcer).
@@ -84,7 +84,7 @@ Le build /aot du 9 nov. (22:42) contenait des correctifs de pacing dont les sour
 - `tools/prune-framework.py` supprime les anciens fichiers fingerprintés de out/aot (252 Mo au premier passage).
 - `tools/bench.mjs` : pilote Chromium avec des options launcher injectées (`XC_OPTS`), pour mesurer `[perf]` sur un build servi en local avec un serveur isolé.
 
-### Suite (2026-11-10) — crash de la pompe rAF directe, cache du gros asset
+### Suite (2026-11-10) : crash de la pompe rAF directe, cache du gros asset
 - La pompe rAF directe plantait juste après l'intro (`JSWebWorker was disposed while running` → FailFast) : la `TaskCompletionSource` qui garde `loop()` en attente n'était référencée par rien, le premier GC finalisait le JSWebWorker. Corrigé : `keepAlive` / `workerTask` statiques dans `WebDrawWorker`.
 - `main.js` force `XC_DRAW_LEGACY=1` par défaut (boucle rAF attendue, état validé en jeu). `XC_DRAW_LEGACY=0` active la pompe directe (non validée sur un vrai GPU).
 - `osu.Game.Resources` (135 Mo) dépasse la taille max d'une entrée du cache HTTP de Chrome : `main.js` le garde dans Cache Storage (`xc-big-assets-v1`) via `withResourceLoader`.
@@ -261,7 +261,7 @@ press (up to ~165 ms after a few underruns), of which only ~50 ms is the browser
 - Sources : `web/` (SPA en modules ES sans build : `index.html`, `web.css`, `js/*.js`, `data/medals.json`, `fonts/`). Routage History sous `/web`, textes `t(en, fr)`, jeton dans `localStorage` (`xc.web.auth`).
 - Déploiement : `tools/deploy-web.sh` → `site/web/a/<hash du contenu>/` + `site/web/index.html` (`__A__` remplacé). `tools/deploy.sh` exclut `/web/`.
 - Tests : `node tools/web-test.mjs` (serveur isolé sur `XC_WEB_API`, défaut `http://127.0.0.1:5081`) ; `XC_WEB_READONLY=http://127.0.0.1:5080 XC_SHOT_DIR=…` ajoute une passe en lecture seule sur les vraies données avec captures desktop + mobile et contrôle de débordement.
-- Apache (`/etc/apache2/sites-enabled/osu-le-ssl.conf`, fichier réel — la copie dans `sites-available` est périmée) : GET/HEAD sur `/users|u|beatmapsets|beatmaps|b|s|scores|teams|rankings|multiplayer|home|wiki|community|comments|news|changelog|help|legal|store|p` → 302 vers `/web$0` ; `POST /users` (inscription du jeu) reste proxifié vers le serveur ; repli SPA `^/web/` (hors `/web/a/`) → `/web/index.html` ; COEP/COOP retirés sur `/web` seulement ; `/web/a/` en cache immuable.
+- Apache (`/etc/apache2/sites-enabled/osu-le-ssl.conf`, fichier réel, la copie dans `sites-available` est périmée) : GET/HEAD sur `/users|u|beatmapsets|beatmaps|b|s|scores|teams|rankings|multiplayer|home|wiki|community|comments|news|changelog|help|legal|store|p` → 302 vers `/web$0` ; `POST /users` (inscription du jeu) reste proxifié vers le serveur ; repli SPA `^/web/` (hors `/web/a/`) → `/web/index.html` ; COEP/COOP retirés sur `/web` seulement ; `/web/a/` en cache immuable.
 - Liens du jeu : `ExternalLinkOpener` réécrit `https://osu.ppy.sh…` vers `api.Endpoints.WebsiteUrl` ; `xc-ui.js` fait de même côté navigateur. Les sections qui n'existent pas (forums, boutique, tournois) tombent sur une page qui l'explique ; « report an issue » (`/community/forums/topics/create`) mène à `/web/wiki/Reporting_a_problem`.
 - Visuel : toute la palette dérive d'une teinte `--h` (une par section, posée par `main.js` ; un profil applique la teinte du joueur). Colonne de 1000 px, blocs à plat séparés de 2 px, bandeau de titre pleine largeur, lignes de score avec bloc pp en biais. Police Nunito auto-hébergée (`web/fonts/`), aucune requête vers un tiers pour le style.
 

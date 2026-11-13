@@ -1,4 +1,4 @@
-// xc-osu! server — user beatmap tag catalog (osu-web's tag list, voted on by players who passed the map). xc softworks (kudasaixc)
+// xc-osu! server: user beatmap tag catalog (osu-web's tag list, voted on by players who passed the map). xc softworks (kudasaixc)
 
 using osu.Game.Online.API.Requests.Responses;
 

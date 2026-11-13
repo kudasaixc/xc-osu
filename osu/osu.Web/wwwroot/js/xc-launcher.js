@@ -1,4 +1,4 @@
-// xc-osu! launcher — xc softworks (kudasaixc)
+// xc-osu! launcher: xc softworks (kudasaixc)
 // Game-launcher layout: icon rail (Play / News / Status / Options), one tab at a time, bottom bar with download + Play.
 // The background is a canvas of approach circles closing onto hit circles to a slow beat.
 // Each option maps to a real mechanism (runtime config, environment variable read by the engine, WebGL context
@@ -162,7 +162,7 @@ export class Launcher {
       const rows = (history.rows || []).slice().sort((a,b) => (b.last || 0) - (a.last || 0));
       const builds = [...new Set(rows.map(r => r.build))];
       const shortGpu = gpu => String(gpu || 'GPU').replace(/^ANGLE \([^,]+,\s*/, '').replace(/\s*\(0x[^)]*\)/g, '').replace(/\s*(Direct3D.*|OpenGL.*|\/PCIe.*)$/, '').replace(/,? or similar.*$/, '').replace(/[, )]+$/, '');
-      const num = n => Number.isFinite(Number(n)) ? Number(n).toLocaleString(fr ? 'fr-FR' : 'en-US', {maximumFractionDigits: 1}) : '—';
+      const num = n => Number.isFinite(Number(n)) ? Number(n).toLocaleString(fr ? 'fr-FR' : 'en-US', {maximumFractionDigits: 1}) : '-';
       host.innerHTML = `<p class="muted small">${esc(this.t('history.updated'))} ${esc(new Date(history.updated).toLocaleString(fr ? 'fr-FR' : 'en-US'))}</p>
         <label class="perf-filter">${label('Version à afficher','Show version')} <select id="perf-version">${builds.map((b,i) => `<option value="${esc(b)}">${i === 0 ? label('Dernière activité · ','Latest activity · ') : ''}${esc(b.split(':')[1] || b)}</option>`).join('')}<option value="all">${label('Toutes les versions','All versions')}</option></select></label>
         <p class="muted small">${label('FPS ≈ 1 000 / temps moyen d’une image. Le P99 décrit les images les plus lentes : plus il est bas, mieux c’est. Les sessions courtes incluent le chargement et ne suffisent pas à juger le jeu.','FPS ≈ 1,000 / average frame time. P99 describes the slowest frames: lower is better. Short sessions include loading and cannot establish gameplay performance.')}</p><div id="perf-results" class="perf-results"></div>`;
@@ -171,11 +171,11 @@ export class Launcher {
         const filtered = rows.filter(r => selected === 'all' || r.build === selected);
         host.querySelector('#perf-results').innerHTML = filtered.map(row => {
           const s = row.setup || {}, p = row.p99;
-          const range = p ? (p.upper == null ? '> ' + num(p.lower) : num(p.lower) + '–' + num(p.upper)) + ' ms' : '—';
-          return `<article class="perf-card"><header><h3>${esc(shortGpu(row.gpu))}</h3><span class="tag">${esc(s.browser || '—')}</span></header>
+          const range = p ? (p.upper == null ? '> ' + num(p.lower) : num(p.lower) + '–' + num(p.upper)) + ' ms' : '-';
+          return `<article class="perf-card"><header><h3>${esc(shortGpu(row.gpu))}</h3><span class="tag">${esc(s.browser || '-')}</span></header>
           <p class="muted small">${esc(s.width)} × ${esc(s.height)} · ${esc(s.refreshHz)} Hz · ${num(row.seconds)} s ${label('observées','observed')} · ${num(row.sessions)} session(s)</p>
-          ${row.seconds < 60 ? `<p class="perf-caution">${label('Échantillon court — résultat indicatif','Short sample — indicative result')}</p>` : ''}
-          <dl class="perf-metrics"><div><dt>${label('FPS moyens estimés','Estimated average FPS')}</dt><dd>${row.meanMs > 0 ? num(1000 / row.meanMs) : '—'}</dd></div><div><dt>${label('Temps par image','Average frame time')}</dt><dd>${num(row.meanMs)} <small>ms</small></dd></div><div><dt>${label('Images lentes · P99','Slow frames · P99')}</dt><dd>${range}</dd></div></dl>
+          ${row.seconds < 60 ? `<p class="perf-caution">${label('Échantillon court: résultat indicatif','Short sample: indicative result')}</p>` : ''}
+          <dl class="perf-metrics"><div><dt>${label('FPS moyens estimés','Estimated average FPS')}</dt><dd>${row.meanMs > 0 ? num(1000 / row.meanMs) : '-'}</dd></div><div><dt>${label('Temps par image','Average frame time')}</dt><dd>${num(row.meanMs)} <small>ms</small></dd></div><div><dt>${label('Images lentes · P99','Slow frames · P99')}</dt><dd>${range}</dd></div></dl>
           <details><summary>${label('Détails de la mesure','Measurement details')}</summary><p>${label('Pire image','Worst frame')}: ${num(row.maxMs)} ms · ${label('Images en retard','Late frames')}: ${num(row.latePercent)} % · ${num(row.frames)} frames</p><p>${label('Échelle','Scale')}: ${esc(s.renderScale)} % · Workers: ${esc(s.workers)} · Update: ${esc(s.maxUpdateHz || 'auto')}</p><p class="muted small">${esc(row.build)}<br>${esc(row.gpu)}</p></details></article>`;
         }).join('') || `<p>${esc(this.t('history.empty'))}</p>`;
       };
@@ -706,7 +706,7 @@ export class Launcher {
   // ----------------------------------------------------------------- machine info (all read from the browser)
   async systemInfo() {
     const t = this.t, rows = [];
-    let gpu = '—';
+    let gpu = '-';
     try {
       const c = document.createElement('canvas');
       const gl = c.getContext('webgl2');

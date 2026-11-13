@@ -1,5 +1,5 @@
 #!/bin/bash
-# xc-osu! xcbass build — produces Native/bass.a (+ module-name stubs) for osu.Web. xc softworks (kudasaixc)
+# xc-osu! xcbass build: produces Native/bass.a (+ module-name stubs) for osu.Web. xc softworks (kudasaixc)
 set -e
 cd "$(dirname "$0")"
 source ../emenv.sh  # relative to this directory (cd above), so the script works from anywhere

@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
-  <!-- xc-osu! server — osu!lazer-compatible API v2 + SignalR (spectator / multiplayer / metadata). xc softworks (kudasaixc) -->
+  <!-- xc-osu! server: osu!lazer-compatible API v2 + SignalR (spectator / multiplayer / metadata). xc softworks (kudasaixc) -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>

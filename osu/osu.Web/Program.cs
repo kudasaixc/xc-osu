@@ -1,4 +1,4 @@
-// xc-osu! — osu!lazer running natively in the browser.
+// xc-osu!: osu!lazer running natively in the browser.
 // Web port by xc softworks (kudasaixc). osu!lazer by ppy Pty Ltd, MIT licence.
 
 using System;
@@ -16,7 +16,7 @@ namespace osu.Web
 
         public static void Main(string[] args)
         {
-            Console.WriteLine("xc-osu! by xc softworks (kudasaixc) — booting osu!lazer on WebAssembly");
+            Console.WriteLine("xc-osu! by xc softworks (kudasaixc): booting osu!lazer on WebAssembly");
 
             // Main runs on the .NET deputy thread; the game host (input thread) gets its own pthread so that
             // blocking waits never touch the browser UI thread.

@@ -1,4 +1,4 @@
-// xc-osu! server — chat channels, messages and the notification websocket. xc softworks (kudasaixc)
+// xc-osu! server: chat channels, messages and the notification websocket. xc softworks (kudasaixc)
 
 using System.Collections.Concurrent;
 using System.Net.WebSockets;
@@ -315,7 +315,7 @@ namespace XcOsu.Server.Services
                 {
                     var r = await ws.ReceiveAsync(buffer, ct);
                     if (r.MessageType == WebSocketMessageType.Close) break;
-                    // chat.start / chat.end — nothing to do: every connected socket receives its user's chat events.
+                    // chat.start / chat.end do nothing: every connected socket receives its user's chat events.
                 }
             }
             catch (Exception e) when (e is WebSocketException or OperationCanceledException) { }

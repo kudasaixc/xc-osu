@@ -1,4 +1,4 @@
-// xc-osu! performance overlay (Ctrl+Alt+P) — xc softworks (kudasaixc)
+// xc-osu! performance overlay (Ctrl+Alt+P): xc softworks (kudasaixc)
 // Sources, all live: the [perf] probe printed by Program.cs (per-thread fps / frame time, GC, managed heap),
 // the UI thread's own requestAnimationFrame cadence, the wasm linear memory size, Chromium's JS heap,
 // and the xcbass ring buffer state (xcAudioDebug).

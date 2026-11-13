@@ -1,4 +1,4 @@
-// xc-osu! — runtime self-test for the browser threading primitives (enable with ?diag). xc softworks (kudasaixc)
+// xc-osu!: runtime self-test for the browser threading primitives (enable with ?diag). xc softworks (kudasaixc)
 
 using System;
 using System.Reflection;

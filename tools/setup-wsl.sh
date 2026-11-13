@@ -1,10 +1,10 @@
 #!/bin/bash
-# xc-osu! — one-shot build environment for a dev PC (WSL2 Ubuntu 22.04/24.04). xc softworks (kudasaixc)
+# xc-osu!: one-shot build environment for a dev PC (WSL2 Ubuntu 22.04/24.04). xc softworks (kudasaixc)
 #
 #   Windows:  wsl --install -d Ubuntu-24.04     (then open Ubuntu)
 #   Ubuntu:   git clone https://github.com/kudasaixc/xc-osu ~/xc-osu && bash ~/xc-osu/tools/setup-wsl.sh
 #
-# Keep the repo inside the Linux filesystem (~/), NOT under /mnt/c — builds are ~10x slower there.
+# Keep the repo inside the Linux filesystem (~/), NOT under /mnt/c: builds are ~10x slower there.
 # Afterwards:
 #   tools/devpub.sh                               # interpreter build  -> out/dev/wwwroot
 #   tools/aotpub.sh                               # mixed-AOT build    -> out/aot/wwwroot

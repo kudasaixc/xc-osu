@@ -1,4 +1,4 @@
-// xc-osu! server — the osu! API v2 surface used by the lazer client. xc softworks (kudasaixc)
+// xc-osu! server: the osu! API v2 surface used by the lazer client. xc softworks (kudasaixc)
 
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -361,7 +361,7 @@ namespace XcOsu.Server.Api
 
         /// <summary>
         /// Listing variant of <see cref="decorateSet"/>: same xc-osu! numbers, but batched queries and none of the per-set
-        /// extras (related tags, user tags) the cards never show — they made a 50-set page weigh ~1 MB.
+        /// extras (related tags, user tags) the cards never show: they made a 50-set page weigh ~1 MB.
         /// </summary>
         private static IEnumerable<JObject> decorateListing(List<JObject> sets, Npgsql.NpgsqlConnection c, int? viewer)
         {

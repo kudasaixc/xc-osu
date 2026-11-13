@@ -1,4 +1,4 @@
-// xc-osu! server — realtime multiplayer hub (lazer protocol). xc softworks (kudasaixc)
+// xc-osu! server: realtime multiplayer hub (lazer protocol). xc softworks (kudasaixc)
 
 using System.Collections.Concurrent;
 using Microsoft.AspNetCore.Authorization;
@@ -404,7 +404,7 @@ namespace XcOsu.Server.Hubs
         /// <summary>Advances WaitingForLoad → Playing → Results as users progress.</summary>
         /// <remarks>
         /// The decision and the state change happen atomically under the room lock: several users change state at the same moment,
-        /// and each of those calls lands here — only one of them may start (or finish) the gameplay.
+        /// and each of those calls lands here: only one of them may start (or finish) the gameplay.
         /// </remarks>
         internal async Task updateGameplayProgress(ServerRoom room)
         {

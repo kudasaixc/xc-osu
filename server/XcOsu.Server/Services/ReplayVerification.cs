@@ -1,4 +1,4 @@
-// xc-osu! server — independent replay simulation for ranked scores. xc softworks (kudasaixc)
+// xc-osu! server: independent replay simulation for ranked scores. xc softworks (kudasaixc)
 
 using System.Diagnostics;
 using System.Threading.Channels;

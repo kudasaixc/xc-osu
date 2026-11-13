@@ -1,5 +1,5 @@
 [Unit]
-Description=xc-osu! server (API v2 + spectator/multiplayer/metadata) — xc softworks
+Description=xc-osu! server (API v2 + spectator/multiplayer/metadata): xc softworks
 # the server opens PostgreSQL over the local Unix socket (peer auth as the xc-osu role).
 After=network-online.target postgresql.service
 Wants=network-online.target postgresql.service

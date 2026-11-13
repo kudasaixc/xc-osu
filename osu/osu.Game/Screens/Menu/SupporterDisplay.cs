@@ -108,7 +108,7 @@ namespace osu.Game.Screens.Menu
             supportFlow.Clear();
 
             // xc-osu!: credit the team instead of the osu! supporter pitch.
-            supportFlow.AddText(@"xc-osu! — made by xc softworks (kudasaixc)", formatSemiBold);
+            supportFlow.AddText(@"xc-osu!: made by xc softworks (kudasaixc)", formatSemiBold);
             backgroundBox.FadeColour(user.IsSupporter ? colours.Pink : colours.Pink4, 250);
 
             supportFlow.AddIcon(FontAwesome.Solid.Heart, t =>

@@ -1,4 +1,4 @@
-// xc-osu! server — client telemetry (frame pacing, stutters, hardware, boot timings, errors). xc softworks (kudasaixc)
+// xc-osu! server: client telemetry (frame pacing, stutters, hardware, boot timings, errors). xc softworks (kudasaixc)
 //
 // Anonymous by construction: a session is a random id made by the page, an install is a random id kept in the browser's
 // localStorage. The request's address is never read, nothing here is tied to an account. Kept in its own tm_* tables

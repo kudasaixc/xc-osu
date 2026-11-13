@@ -26,7 +26,7 @@ export function showLocalTelemetry(t) {
   for (const session of sessions) {
     const section = el('section');
     el('h3', new Date(session.started).toLocaleString(), section);
-    el('p', `${session.meta?.build || '—'} · ${session.meta?.hw?.gpu || '—'} · ${session.items.length} ${t('tm.records')}`, section);
+    el('p', `${session.meta?.build || '-'} · ${session.meta?.hw?.gpu || '-'} · ${session.items.length} ${t('tm.records')}`, section);
     if (session.dropped) el('p', `${t('tm.trimmed')} ${session.dropped}`, section);
     const flights = new Map();
     for (const item of session.items) {
@@ -40,7 +40,7 @@ export function showLocalTelemetry(t) {
       const frames = parts.flatMap(p => p.frames || []).sort((a,b) => a[0] - b[0]);
       const complete = parts.length > 0 && new Set(parts.map(p=>p.part)).size === parts[0].parts && !parts.some(p=>p.dropped);
       const detail = el('details', null, section);
-      el('summary', `${new Date(at).toLocaleTimeString()} · ${parts[0]?.scr || '—'} · ${complete ? t('tm.complete') : t('tm.partial')} · ${Math.max(0, ...frames.map(f => Number(f[1]) || 0)).toFixed(1)} ms`, detail);
+      el('summary', `${new Date(at).toLocaleTimeString()} · ${parts[0]?.scr || '-'} · ${complete ? t('tm.complete') : t('tm.partial')} · ${Math.max(0, ...frames.map(f => Number(f[1]) || 0)).toFixed(1)} ms`, detail);
       if (frames.length) {
         const canvas = el('canvas', null, detail); canvas.width = 820; canvas.height = 220;
         canvas.style.cssText = 'width:100%;height:auto;background:#15111e;margin-top:12px';

@@ -1,4 +1,4 @@
-// xc-osu! server — multiplayer & playlists rooms. xc softworks (kudasaixc)
+// xc-osu! server: multiplayer & playlists rooms. xc softworks (kudasaixc)
 
 using System.Collections.Concurrent;
 using Newtonsoft.Json;

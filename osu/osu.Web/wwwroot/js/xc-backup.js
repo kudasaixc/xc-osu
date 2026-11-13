@@ -1,5 +1,5 @@
 import { encryptBackupStream, decryptBackupStream } from './xc-backup-crypto.js';
-// xc-osu! — export / import of everything this browser stores for the game, as one .xcbak file. xc softworks (kudasaixc)
+// xc-osu!: export / import of everything this browser stores for the game, as one .xcbak file. xc softworks (kudasaixc)
 //
 // What is saved: the whole persistent file system (the IDBFS mount at /xc, i.e. the IndexedDB database "/xc": realm
 // database, beatmaps, skins, game settings, login) and the launcher options. Both run from the launcher, before the

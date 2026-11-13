@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# xc-osu! — cache-busting for the non-fingerprinted page scripts (a CDN in front may override no-cache).
+# xc-osu!: cache-busting for the non-fingerprinted page scripts (a CDN in front may override no-cache).
 # usage: stamp.py <wwwroot>   rewrites every ./x.js reference between js/*.js, main.js and index.html to ?v=<content hash>
 import hashlib, pathlib, re, sys
 

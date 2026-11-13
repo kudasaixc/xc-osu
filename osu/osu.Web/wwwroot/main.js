@@ -1,4 +1,4 @@
-// xc-osu! bootstrap — xc softworks (kudasaixc)
+// xc-osu! bootstrap: xc softworks (kudasaixc)
 // 1. the engine starts downloading immediately (dotnet.download(): assets only, no runtime yet)
 // 2. the launcher shows while it downloads; launch options are applied when the runtime is created
 // 3. the launch screen follows the real boot (loader events + the engine's own log lines) until the intro

@@ -1,5 +1,5 @@
 #!/bin/bash
-# xc-osu! — dev publish (interpreter, no trimming, no compression). Output: out/dev/wwwroot
+# xc-osu! dev publish (interpreter, no trimming, no compression). Output: out/dev/wwwroot
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 export DOTNET_ROOT=${DOTNET_ROOT:-$HOME/.dotnet} PATH=$HOME/.dotnet:$PATH DOTNET_NOLOGO=1
 cd "$ROOT/osu/osu.Web"

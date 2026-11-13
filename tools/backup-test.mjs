@@ -1,4 +1,4 @@
-// xc-osu! — launcher export / import round trip (.xcbak). xc softworks (kudasaixc)
+// xc-osu!: launcher export / import round trip (.xcbak). xc softworks (kudasaixc)
 // usage: node tools/backup-test.mjs <base url>
 // Seeds the IDBFS database, exports from the launcher, wipes, imports the file back and compares every record; then
 // checks that a damaged backup is refused without touching the data. Exit code 0 when everything matches.

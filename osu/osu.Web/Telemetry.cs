@@ -1,4 +1,4 @@
-// xc-osu! telemetry collector — xc softworks (kudasaixc)
+// xc-osu! telemetry collector: xc softworks (kudasaixc)
 //
 // Measures every frame of every game thread and reports, through "[tm] {json}" console lines that the page intercepts
 // (js/xc-telemetry.js, never shown in the console):
@@ -113,7 +113,7 @@ namespace osu.Web
             GameThread.FrameObserver = onThreadFrame;
 
             new Thread(report) { IsBackground = true, Name = "xc telemetry" }.Start();
-            Console.WriteLine("[launch] telemetry on (frame timings, stutters, hardware — no IP, no account; turn it off in the launcher options)");
+            Console.WriteLine("[launch] telemetry on (frame timings, stutters, hardware: no IP, no account; turn it off in the launcher options)");
         }
 
         // ------------------------------------------------------------------ context

@@ -1,4 +1,4 @@
-// xc-osu! server — difficulty / pp using osu!'s own calculators. xc softworks (kudasaixc)
+// xc-osu! server: difficulty / pp using osu!'s own calculators. xc softworks (kudasaixc)
 
 using Microsoft.Extensions.Caching.Memory;
 using Newtonsoft.Json;

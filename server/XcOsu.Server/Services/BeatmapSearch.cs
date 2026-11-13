@@ -1,4 +1,4 @@
-// xc-osu! server — beatmap listing search with osu-web semantics on top of the mirrors. xc softworks (kudasaixc)
+// xc-osu! server: beatmap listing search with osu-web semantics on top of the mirrors. xc softworks (kudasaixc)
 //
 // osu.direct (Meilisearch) is the search engine: good relevance, real sorting, offset paging, but only one status and
 // one mode per query and no genre / language / extra / difficulty filters. Everything osu-web supports and the mirror

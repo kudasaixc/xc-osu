@@ -2,9 +2,9 @@
 
 ## The server database leaves SQLite
 
-All server state — accounts, scores, beatmaps, chat, teams, notifications, telemetry — used to live in two SQLite files. SQLite serialises writes at the file level: when hundreds of players play and submit scores at the same time, requests queue behind a single write lock. The database is now served by PostgreSQL 16 on the same machine, reached over the local Unix socket, with a role dedicated to the service account.
+All server state (accounts, scores, beatmaps, chat, teams, notifications, telemetry) used to live in two SQLite files. SQLite serialises writes at the file level: when hundreds of players play and submit scores at the same time, requests queue behind a single write lock. The database is now served by PostgreSQL 16 on the same machine, reached over the local Unix socket, with a role dedicated to the service account.
 
-The import ran in a single transaction: every existing table was replaced with its SQLite contents, and row counts were verified — 36 tables, including 11 accounts, 137 scores, 3,153 beatmapsets, 13,334 beatmaps and 181,083 telemetry events. The SQLite files are kept until the migration has been validated; the server no longer opens them.
+The import ran in a single transaction: every existing table was replaced with its SQLite contents, and row counts were verified: 36 tables, including 11 accounts, 137 scores, 3,153 beatmapsets, 13,334 beatmaps and 181,083 telemetry events. The SQLite files are kept until the migration has been validated; the server no longer opens them.
 
 ## What changed for performance
 

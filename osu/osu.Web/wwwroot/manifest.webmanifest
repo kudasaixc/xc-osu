@@ -1,7 +1,7 @@
 {
   "name": "xc-osu!",
   "short_name": "xc-osu!",
-  "description": "osu!lazer in your browser — web port by xc softworks (kudasaixc)",
+  "description": "osu!lazer in your browser: web port by xc softworks (kudasaixc)",
   "start_url": "./",
   "scope": "./",
   "display": "fullscreen",

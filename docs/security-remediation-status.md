@@ -1,4 +1,4 @@
-# État des corrections de sécurité — 13 novembre 2026
+# État des corrections de sécurité: 13 novembre 2026
 
 Ce document décrit ce qui est corrigé, ce qui est vérifié par des tests, et ce qui ne l'est pas. Il ne constitue pas une certification.
 
@@ -15,14 +15,14 @@ Toutes les suites tournent sur un serveur et une base temporaires ; aucun mail r
 
 ## Points de la revue post-fusion
 
-- **A — Révocation WebSocket.** Chaque connexion SignalR est liée à sa session (`SessionConnections`). Révoquer une session, changer ou réinitialiser le mot de passe, ou restreindre le compte coupe les connexions correspondantes. Une rotation autorisée du refresh token transfère la liaison : la connexion en cours continue.
-- **B — Endpoints de vérification.** `/api/v2/session/verify`, `/reissue` et `/mail-fallback` répondent 501 : le serveur n'a pas de second facteur et ne prétend plus en avoir.
-- **C — Mot de passe.** 8 à 256 caractères partout : formulaires, endpoints, service (`Accounts.PASSWORD_MIN/MAX`).
-- **D — Limites par adresse.** Sur `/oauth/token`, les connexions par mot de passe (20/min par adresse) sont distinguées des renouvellements (600/min, 30 échecs/min). Une requête authentifiée dépense le budget de son compte ; l'adresse n'a qu'un plafond 24 fois plus large. Inscription, mot de passe et connexion restent strictement par adresse.
-- **E — DELETE.** Compté comme écriture. Les opérations qui touchent quelqu'un d'autre (amis, blocages, suppression de messages ou de commentaires, exclusion d'un salon ou d'une équipe) ont leur propre budget, plus serré.
-- **F — Adresse confirmée.** `Accounts:RequireConfirmedEmail` (activé par défaut) réserve aux adresses confirmées les actions visibles par les autres ; la connexion du client natif et le jeu ne sont pas bloqués. La récupération du mot de passe n'exige pas une adresse confirmée : le lien n'arrive qu'à l'adresse du compte, donc son usage la confirme.
-- **G — Redirections du proxy.** Une redirection n'est suivie que vers un hôte autorisé ou de la même famille (`.ppy.sh`, `.catboy.best`, `.nerinyan.moe`, `.osu.direct`, plus `Proxy:RedirectHosts`), revalidé à chaque saut.
-- **H — Équipes.** La liste est paginée côté site (50 par page) ; plus aucune équipe n'est inaccessible.
+- **A: Révocation WebSocket.** Chaque connexion SignalR est liée à sa session (`SessionConnections`). Révoquer une session, changer ou réinitialiser le mot de passe, ou restreindre le compte coupe les connexions correspondantes. Une rotation autorisée du refresh token transfère la liaison : la connexion en cours continue.
+- **B: Endpoints de vérification.** `/api/v2/session/verify`, `/reissue` et `/mail-fallback` répondent 501 : le serveur n'a pas de second facteur et ne prétend plus en avoir.
+- **C: Mot de passe.** 8 à 256 caractères partout : formulaires, endpoints, service (`Accounts.PASSWORD_MIN/MAX`).
+- **D: Limites par adresse.** Sur `/oauth/token`, les connexions par mot de passe (20/min par adresse) sont distinguées des renouvellements (600/min, 30 échecs/min). Une requête authentifiée dépense le budget de son compte ; l'adresse n'a qu'un plafond 24 fois plus large. Inscription, mot de passe et connexion restent strictement par adresse.
+- **E: DELETE.** Compté comme écriture. Les opérations qui touchent quelqu'un d'autre (amis, blocages, suppression de messages ou de commentaires, exclusion d'un salon ou d'une équipe) ont leur propre budget, plus serré.
+- **F: Adresse confirmée.** `Accounts:RequireConfirmedEmail` (activé par défaut) réserve aux adresses confirmées les actions visibles par les autres ; la connexion du client natif et le jeu ne sont pas bloqués. La récupération du mot de passe n'exige pas une adresse confirmée : le lien n'arrive qu'à l'adresse du compte, donc son usage la confirme.
+- **G: Redirections du proxy.** Une redirection n'est suivie que vers un hôte autorisé ou de la même famille (`.ppy.sh`, `.catboy.best`, `.nerinyan.moe`, `.osu.direct`, plus `Proxy:RedirectHosts`), revalidé à chaque saut.
+- **H: Équipes.** La liste est paginée côté site (50 par page) ; plus aucune équipe n'est inaccessible.
 
 Aussi corrigé en passant : le pays, redevenu modifiable depuis le profil par un commit ultérieur, est à nouveau fixé à l'inscription (page et serveur).
 

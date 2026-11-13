@@ -1,4 +1,4 @@
-// xc-osu! console capture — xc softworks (kudasaixc)
+// xc-osu! console capture: xc softworks (kudasaixc)
 // Everything the page prints (the loader, the .NET runtime on every worker thread, the game's Logger, realm-core)
 // ends up in console.* on the UI thread. We keep a copy so the launch screen and the in-game log viewer can show the
 // real output, without changing what devtools sees.

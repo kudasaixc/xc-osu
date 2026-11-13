@@ -1,4 +1,4 @@
-// xc-osu! server — one-off import of the former SQLite files into PostgreSQL (operator command "import-sqlite"). xc softworks (kudasaixc)
+// xc-osu! server: one-off import of the former SQLite files into PostgreSQL (operator command "import-sqlite"). xc softworks (kudasaixc)
 
 using System.Globalization;
 using Microsoft.Data.Sqlite;

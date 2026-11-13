@@ -1,4 +1,4 @@
-// xc-osu! server — beatmap mirrors (catboy.best → osu.direct → nerinyan). xc softworks (kudasaixc)
+// xc-osu! server: beatmap mirrors (catboy.best → osu.direct → nerinyan). xc softworks (kudasaixc)
 
 using System.Net;
 using Newtonsoft.Json.Linq;

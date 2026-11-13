@@ -1,4 +1,4 @@
-// xc-osu! server — rooms API (lounge listing for multiplayer, full playlists support). xc softworks (kudasaixc)
+// xc-osu! server: rooms API (lounge listing for multiplayer, full playlists support). xc softworks (kudasaixc)
 
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;

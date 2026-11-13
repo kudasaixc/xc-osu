@@ -1,4 +1,4 @@
-// xc-osu! xcbass — time-stretch wrapper around Signalsmith Stretch (MIT). xc softworks (kudasaixc)
+// xc-osu! xcbass: time-stretch wrapper around Signalsmith Stretch (MIT). xc softworks (kudasaixc)
 #include "signalsmith-stretch/signalsmith-stretch.h"
 #include <vector>
 

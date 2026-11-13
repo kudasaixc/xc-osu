@@ -1,4 +1,4 @@
-// xc-osu! xcbass — single-file decoder implementations (public domain / MIT-0 libraries)
+// xc-osu! xcbass: single-file decoder implementations (public domain / MIT-0 libraries)
 #define DR_MP3_IMPLEMENTATION
 #define DR_MP3_NO_STDIO
 #include "third_party/dr_mp3.h"

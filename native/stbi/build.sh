@@ -1,5 +1,5 @@
 #!/bin/bash
-# xc-osu! — stb_image (StbiSharp's libstbi, tom94/stbi-sharp 8554ce8) compiled to wasm -> Native/stbi.a
+# xc-osu!: stb_image (StbiSharp's libstbi, tom94/stbi-sharp 8554ce8) compiled to wasm -> Native/stbi.a
 # Replaces the managed ImageSharp JPEG/PNG decoders, which are very slow and allocation-heavy under the wasm interpreter.
 # xc softworks (kudasaixc)
 set -e

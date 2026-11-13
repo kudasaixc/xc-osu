@@ -1,4 +1,4 @@
-// xc-osu! web — player profile. xc softworks (kudasaixc)
+// xc-osu! web: player profile. xc softworks (kudasaixc)
 import { L, ASSETS, state, t, esc, num, pct, rankText, duration, dateText, timeTag, countryChip, countryName, MODES, modeName, v2, api,
   avatar, teamTag, grade, stars, scoreRow, pagedList, renderUserText, empty, act, signedIn, NeedSignIn } from './core.js';
 import { setCard } from './pages-beatmap.js';

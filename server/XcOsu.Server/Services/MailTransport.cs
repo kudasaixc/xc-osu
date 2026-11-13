@@ -1,4 +1,4 @@
-// xc-osu! server — one way out for every account email. xc softworks (kudasaixc)
+// xc-osu! server: one way out for every account email. xc softworks (kudasaixc)
 
 using System.Diagnostics;
 using System.Net;

@@ -3,7 +3,7 @@
 set -euo pipefail
 ROOT=${XC_OSU_ROOT:-/var/www/osu}
 REPO=${XC_OSU_REPO:-/home/admin/xc-osu-repo}
-echo "xc-osu! operations snapshot — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "xc-osu! operations snapshot: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 if [[ ! -d "$ROOT/site" ]]; then echo "ERROR: site directory missing"; exit 2; fi
 df -h "$ROOT" | awk 'NR==2{print "Filesystem: "$1", used "$5", free "$4}'
 used=$(df -P "$ROOT" | awk 'NR==2{gsub("%","",$5);print $5}')

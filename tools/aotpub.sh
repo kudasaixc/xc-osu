@@ -1,5 +1,5 @@
 #!/bin/bash
-# xc-osu! — mixed-AOT release publish. Output: out/aot/wwwroot
+# xc-osu! mixed-AOT release publish. Output: out/aot/wwwroot
 # usage: tools/aotpub.sh [extra msbuild args]      env: XC_AOT_JOBS=n (parallel compiles), XC_SYMBOLS=1 (DWARF + names)
 # The AOT steps (IL -> bitcode -> wasm objects) run in parallel. Each LLVM job on a big assembly needs ~2 GB, so the job
 # count is capped by RAM: all cores from 15 GB up, 3 jobs below that (override with XC_AOT_JOBS).
@@ -24,7 +24,7 @@ python3 "$ROOT/tools/portstats.py" "$ROOT/osu/osu.Web/wwwroot/launcher/build.jso
 dotnet publish -c Release -o "$ROOT/out/aot" -p:XcAot=true -p:CompressionEnabled=false -p:WasmEmitSymbolMap=true -p:UseSharedCompilation=false $par "$@" > "$log" 2>&1
 rc=$?
 grep -E " error |error :|xc-osu! AOT|AOT'ing|Build succeeded|Time Elapsed" "$log" | sed 's/\[\/.*//' | sort -u | head -40
-if [ $rc -ne 0 ]; then echo "aotpub FAILED (rc=$rc) in $(( $(date +%s) - start ))s — see $log"; exit 1; fi
+if [ $rc -ne 0 ]; then echo "aotpub FAILED (rc=$rc) in $(( $(date +%s) - start ))s: see $log"; exit 1; fi
 cp "$ROOT"/osu/osu.Web/wwwroot/manifest.webmanifest "$ROOT"/osu/osu.Web/wwwroot/icon* "$ROOT/out/aot/wwwroot/" 2>/dev/null
 # drop superseded fingerprinted files from earlier publishes (they are never referenced again, only re-uploaded)
 python3 "$ROOT/tools/prune-framework.py" "$ROOT/out/aot/wwwroot" || true

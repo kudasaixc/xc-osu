@@ -1,4 +1,4 @@
-// xc-osu! server — avatars, covers, badges, screenshots and account settings. Served by xc-osu! itself, never by the official CDN. xc softworks (kudasaixc)
+// xc-osu! server: avatars, covers, badges, screenshots and account settings. Served by xc-osu! itself, never by the official CDN. xc softworks (kudasaixc)
 
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;

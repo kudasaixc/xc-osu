@@ -2,9 +2,9 @@
 
 ## La base du serveur quitte SQLite
 
-Tout l’état du serveur — comptes, scores, beatmaps, tchat, équipes, notifications, télémétrie — vivait jusqu’ici dans deux fichiers SQLite. SQLite sérialise les écritures au niveau du fichier : quand plusieurs centaines de joueurs jouent et envoient des scores en même temps, les requêtes font la queue derrière un seul verrou d’écriture. La base est maintenant servie par PostgreSQL 16 sur la machine, joignable par le socket local, avec un rôle dédié au compte de service.
+Tout l’état du serveur (comptes, scores, beatmaps, tchat, équipes, notifications, télémétrie) vivait jusqu’ici dans deux fichiers SQLite. SQLite sérialise les écritures au niveau du fichier : quand plusieurs centaines de joueurs jouent et envoient des scores en même temps, les requêtes font la queue derrière un seul verrou d’écriture. La base est maintenant servie par PostgreSQL 16 sur la machine, joignable par le socket local, avec un rôle dédié au compte de service.
 
-L’import a été fait en une seule transaction : chaque table existante a été remplacée par son contenu SQLite, et les nombres de lignes ont été vérifiés — 36 tables, dont 11 comptes, 137 scores, 3 153 beatmapsets, 13 334 beatmaps et 181 083 événements de télémétrie. Les fichiers SQLite sont conservés le temps de valider la migration ; le serveur ne les ouvre plus.
+L’import a été fait en une seule transaction : chaque table existante a été remplacée par son contenu SQLite, et les nombres de lignes ont été vérifiés : 36 tables, dont 11 comptes, 137 scores, 3 153 beatmapsets, 13 334 beatmaps et 181 083 événements de télémétrie. Les fichiers SQLite sont conservés le temps de valider la migration ; le serveur ne les ouvre plus.
 
 ## Ce qui a changé côté performance
 

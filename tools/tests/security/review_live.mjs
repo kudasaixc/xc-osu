@@ -72,7 +72,7 @@ try {
   const register = (name, mail) => req('/users', { body: { 'user[username]': name, 'user[user_email]': mail, 'user[password]': 'a-good-password-123' } });
   const login = async (name, password = 'a-good-password-123') => (await req('/oauth/token', { body: { grant_type: 'password', username: name, password } })).json;
 
-  // F — a new account plays straight away, but reaches other players only once its address is confirmed.
+  // F: a new account plays straight away, but reaches other players only once its address is confirmed.
   check((await register('ReviewPlayer', 'review@example.test')).status === 200, 'registration');
   let t = await login('ReviewPlayer');
   check(!!t?.access_token, 'unconfirmed account signs in (native client compatible)');
@@ -94,7 +94,7 @@ try {
   const team = await req('/api/xc/teams', { body: { name: 'Review Team', short_name: 'RVW' }, token: t.access_token });
   check(team.status === 200, 'confirmed account creates a team');
 
-  // H — every team stays reachable past the first page.
+  // H: every team stays reachable past the first page.
   const rows = Array.from({ length: 119 }, (_, i) => `('Filler ${i}', 'F${i}', 900000, '2026-01-01T00:00:00Z')`).join(',');
   execFileSync('psql', ['-q', '-d', database, '-c', `INSERT INTO teams (name, short_name, leader_id, created_at) VALUES ${rows}, ('Needle Squad', 'NDL', 900000, '2026-01-01T00:00:00Z');`]);
   const p1 = await req('/api/xc/teams'), p3 = await req('/api/xc/teams?page=3'), found = await req('/api/xc/teams?q=needle');
@@ -103,15 +103,15 @@ try {
   check(found.json.length === 1 && found.json[0].short_name === 'NDL' && found.headers.get('x-total-count') === '1', 'team search finds a team beyond the first page');
   check((await req('/api/xc/teams?q=' + encodeURIComponent('%'))).json.length === 0, 'search wildcard is literal');
 
-  // B — no pretend second factor.
+  // B: no pretend second factor.
   for (const path of ['/api/v2/session/verify', '/api/v2/session/verify/reissue', '/api/v2/session/verify/mail-fallback'])
     check((await req(path, { body: {}, token: t.access_token })).status === 501, path + ' answers 501');
 
-  // C — the same bounds at the door and in the service.
+  // C: the same bounds at the door and in the service.
   check((await req('/users', { body: { 'user[username]': 'TooLong', 'user[user_email]': 'long@example.test', 'user[password]': 'p'.repeat(257) } })).status !== 200, '257-character password refused at registration');
   check((await req('/api/xc/account/password', { body: { current_password: 'a-good-password-123', new_password: 'p'.repeat(257) }, token: t.access_token })).status !== 204, '257-character password refused at change');
 
-  // A — sockets live and die with their session.
+  // A: sockets live and die with their session.
   const other = await login('ReviewPlayer');
   const notif = await socket('/notifications', t.access_token);
   const meta = await hub('metadata', t.access_token), spectator = await hub('spectator', t.access_token), multiplayer = await hub('multiplayer', t.access_token);
@@ -131,7 +131,7 @@ try {
   check((await req('/api/xc/account/password', { body: { current_password: 'a-good-password-123', new_password: 'another-password-456' }, token: other.access_token })).status === 204, 'password change');
   check(await until(() => !otherNotif.open && !otherHub.open, 5000), 'password change closes every socket of the account');
 
-  // D — refreshing from a shared address is not throttled like password guessing.
+  // D: refreshing from a shared address is not throttled like password guessing.
   let last = await login('ReviewPlayer', 'another-password-456'), refreshed = 0;
   for (let i = 0; i < 60; i++) {
     const r = await req('/oauth/token', { body: { grant_type: 'refresh_token', refresh_token: last.refresh_token } });

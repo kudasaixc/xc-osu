@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# xc-osu! — removes superseded fingerprinted files from a publish folder (xc softworks / kudasaixc)
+# xc-osu!: removes superseded fingerprinted files from a publish folder (xc softworks / kudasaixc)
 # usage: prune-framework.py <wwwroot>
 # Every publish adds name.<hash>.ext files to _framework without removing the previous ones. A file is deleted only when
 # a newer sibling with the same name/extension exists AND nothing in the current boot files mentions it.

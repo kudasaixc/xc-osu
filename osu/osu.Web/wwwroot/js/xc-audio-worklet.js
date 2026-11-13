@@ -1,4 +1,4 @@
-// xc-osu! audio output worklet — xc softworks (kudasaixc)
+// xc-osu! audio output worklet: xc softworks (kudasaixc)
 // Two sources are mixed into every 128-frame block:
 //  - the xcbass mixer ring (shared wasm memory): music and everything that goes through effects. Its delay is known and
 //    compensated (positions are reported as heard).
@@ -103,7 +103,7 @@ class XcOutput extends AudioWorkletProcessor {
       Atomics.store(ctrl, 0, r);
       Atomics.notify(ctrl, 0);
     } else {
-      // underrun: silence from the ring, and don't advance — the audible clock pauses for this quantum, exactly like a
+      // underrun: silence from the ring, and don't advance: the audible clock pauses for this quantum, exactly like a
       // stalled device. Direct voices keep playing.
       L.fill(0); R.fill(0);
       if (this.primed) Atomics.add(ctrl, 5, 1);

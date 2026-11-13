@@ -20,7 +20,7 @@ public static class AccountEmail
             ctx.Response.Headers["Referrer-Policy"] = "no-referrer";
             ctx.Response.Headers.ContentSecurityPolicy = "default-src 'none'; form-action 'self'; frame-ancestors 'none'";
             string password = purpose == "reset" ? "<label>Nouveau mot de passe <input type=password name=password minlength=8 maxlength=256 required autocomplete=new-password></label>" : "";
-            return Results.Content("<!doctype html><html lang=fr><meta charset=utf-8><title>xc-osu! — Compte</title><h1>xc-osu!</h1><form method=post><input type=hidden name=token value=\"" + token + "\">" + password + "<button>Confirmer</button></form></html>", "text/html");
+            return Results.Content("<!doctype html><html lang=fr><meta charset=utf-8><title>xc-osu!: Compte</title><h1>xc-osu!</h1><form method=post><input type=hidden name=token value=\"" + token + "\">" + password + "<button>Confirmer</button></form></html>", "text/html");
         });
         app.MapPost("/api/xc/account/email/{purpose}", async (string purpose, HttpContext ctx, AccountMail mail) =>
         {

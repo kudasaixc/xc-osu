@@ -1,4 +1,4 @@
-// xc-osu! server — teams (create / join / leave / kick / flag). The client only displays teams, so management lives under /api/xc/teams. xc softworks (kudasaixc)
+// xc-osu! server: teams (create / join / leave / kick / flag). The client only displays teams, so management lives under /api/xc/teams. xc softworks (kudasaixc)
 
 using Newtonsoft.Json.Linq;
 using XcOsu.Server.Data;

@@ -1,4 +1,4 @@
-// xc-osu! — xc softworks (kudasaixc)
+// xc-osu!: xc softworks (kudasaixc)
 // Written content shipped with the server: news posts, wiki pages and the changelog (Content/ next to the binary).
 using System.Text.RegularExpressions;
 using Markdig;

@@ -1,4 +1,4 @@
-// xc-osu! server — Newtonsoft responses so osu!'s own models serialise exactly as the client expects. xc softworks (kudasaixc)
+// xc-osu! server: Newtonsoft responses so osu!'s own models serialise exactly as the client expects. xc softworks (kudasaixc)
 
 using System.Text;
 using Newtonsoft.Json;

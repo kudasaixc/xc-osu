@@ -1,4 +1,4 @@
-// xc-osu! server — daily challenge (one ranked map per UTC day as a playlists room), streak/placement statistics,
+// xc-osu! server: daily challenge (one ranked map per UTC day as a playlists room), streak/placement statistics,
 // live room score feed for the metadata hub, and the background maintenance loop. xc softworks (kudasaixc)
 
 using Microsoft.AspNetCore.SignalR;

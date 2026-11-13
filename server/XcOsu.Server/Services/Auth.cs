@@ -1,4 +1,4 @@
-// xc-osu! server — accounts and OAuth tokens. xc softworks (kudasaixc)
+// xc-osu! server: accounts and OAuth tokens. xc softworks (kudasaixc)
 
 using System.Security.Claims;
 using System.Security.Cryptography;

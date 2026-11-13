@@ -1,4 +1,4 @@
-// xc-osu! server — quick play (2-8 players, 5 rounds, points by placement) and ranked play (1v1 card duel), matchmaker queues, duels and ratings.
+// xc-osu! server: quick play (2-8 players, 5 rounds, points by placement) and ranked play (1v1 card duel), matchmaker queues, duels and ratings.
 // The stage machine mirrors the lazer client's expectations (MatchmakingStage / RankedPlayStage). xc softworks (kudasaixc)
 
 using System.Collections.Concurrent;

@@ -1,4 +1,4 @@
-// xc-osu! web — written content: news, wiki, changelog. xc softworks (kudasaixc)
+// xc-osu! web. Written content: news, wiki, changelog. xc softworks (kudasaixc)
 import { L, WEB, state, t, esc, dateText, v2, sanitize, ApiError, empty } from './core.js';
 
 const locale = () => 'locale=' + state.lang;

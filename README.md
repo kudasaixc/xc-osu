@@ -1,6 +1,6 @@
 # xc-osu!
 
-**osu!lazer's original C# code — osu!standard, menus, skins, replays, multiplayer — running natively in the browser on WebAssembly.**
+**osu!lazer's original C# code (osu!standard, menus, skins, replays, multiplayer) running natively in the browser on WebAssembly.**
 
 Web port by **xc softworks** (kudasaixc) · https://osu.xcsoftworks.com
 
@@ -11,18 +11,18 @@ Web port by **xc softworks** (kudasaixc) · https://osu.xcsoftworks.com
 
 | Path | What |
 |---|---|
-| `osu/` | osu!lazer source (fork) — browser guards, xc-osu! branding, `osu.Web` host project |
-| `osu-framework/` | osu-framework (fork) — `Platform/Web`: WebGL2 renderer on an OffscreenCanvas worker, web window/input, WebHID + Pointer Events tablet handler (area, rotation, pressure), managed MD5, same-origin proxying |
+| `osu/` | osu!lazer source (fork): browser guards, xc-osu! branding, `osu.Web` host project |
+| `osu-framework/` | osu-framework (fork): `Platform/Web` holds the WebGL2 renderer on an OffscreenCanvas worker, web window/input, WebHID + Pointer Events tablet handler (area, rotation, pressure), managed MD5, same-origin proxying |
 | `server/XcOsu.Server` | ASP.NET Core (net10) server: osu! API v2, OAuth, scores + pp (osu!'s own calculators), rankings, chat, rooms, SignalR spectator / multiplayer / metadata hubs, beatmap mirrors (catboy.best → osu.direct → nerinyan), asset proxy |
 | `native/xcbass` | BASS / BASS_FX / BASSmix API reimplemented in C → AudioWorklet |
 | `native/realm-dotnet` | Realm .NET wrappers + realm-core, patched for wasm (`util/xcvfs.*`: coherent in-memory file images, mmap, flock) |
 | `native/veldrid-spirv` | shaderc + SPIRV-Cross compiled to wasm for runtime shader translation |
 | `native/realm-test` | fast realm-core sanity test under node |
-| `web/` | the website served under `/web/` (profiles, account settings, rankings, beatmaps, teams, news, wiki, changelog) — plain ES modules, no build step; deploy with `tools/deploy-web.sh`, test with `tools/web-test.mjs` |
+| `web/` | the website served under `/web/` (profiles, account settings, rankings, beatmaps, teams, news, wiki, changelog): plain ES modules, no build step; deploy with `tools/deploy-web.sh`, test with `tools/web-test.mjs` |
 | `server/XcOsu.Server/Content` | written content: news posts, wiki pages (en/fr) and `changelog.json` |
 | `tools/` | dev and AOT publish (`devpub.sh`, `aotpub.sh`), deploy scripts, headless boot test (`shot.mjs`), telemetry tests, pinvoke struct-ABI fixer |
 | `deploy/` | Apache vhost (COOP/COEP, precompressed assets, reverse proxy) and systemd unit |
-| `xc-osu/PORTING.md` | porting notes — every non-obvious fix and why |
+| `xc-osu/PORTING.md` | porting notes: every non-obvious fix and why |
 
 ## Building
 
@@ -33,7 +33,7 @@ source native/emenv.sh
 native/xcbass/build.sh          # audio
 native/build-realm.sh           # realm (then: ninja realm-wrappers, emar -M < native/realm-merge.mri)
 tools/devpub.sh                 # publishes the client to out/dev/wwwroot
-tools/aotpub.sh                 # release build (mixed AOT) to out/aot/wwwroot — needs ~8 GB of free RAM, 15 GB+ to compile in parallel
+tools/aotpub.sh                 # release build (mixed AOT) to out/aot/wwwroot; needs ~8 GB of free RAM, 15 GB+ to compile in parallel
 cd server/XcOsu.Server && dotnet publish -c Release -o ../publish
 ```
 
@@ -49,4 +49,4 @@ pointed with `Database__ConnectionString`. The former SQLite files are loaded on
 
 ## Licence
 
-MIT — see `LICENSE`. Upstream components keep their own licences (`osu/LICENCE`, `osu-framework/LICENCE`, `native/realm-dotnet/LICENSE`, …).
+MIT, see `LICENSE`. Upstream components keep their own licences (`osu/LICENCE`, `osu-framework/LICENCE`, `native/realm-dotnet/LICENSE`, …).

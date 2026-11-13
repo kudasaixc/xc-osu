@@ -1,5 +1,5 @@
 #!/bin/bash
-# xc-osu! — fast native realm-core check under node (no .NET rebuild needed). xc softworks (kudasaixc)
+# xc-osu!: fast native realm-core check under node (no .NET rebuild needed). xc softworks (kudasaixc)
 set -e
 source "$(dirname "$0")/../emenv.sh" >/dev/null
 R=$(cd "$(dirname "$0")/.." && pwd); D=$(mktemp -d)

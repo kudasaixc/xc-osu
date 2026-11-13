@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.RateLimiting;
 using System.Threading.RateLimiting;
-// xc-osu! server — entry point. Same-origin with the web client (https://osu.xcsoftworks.com). xc softworks (kudasaixc)
+// xc-osu! server: entry point. Same-origin with the web client (https://osu.xcsoftworks.com). xc softworks (kudasaixc)
 
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.SignalR;

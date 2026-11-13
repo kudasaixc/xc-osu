@@ -1,4 +1,4 @@
-// xc-osu! server — medals (achievements) and private notifications. xc softworks (kudasaixc)
+// xc-osu! server: medals (achievements) and private notifications. xc softworks (kudasaixc)
 
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;

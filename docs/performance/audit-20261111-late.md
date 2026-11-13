@@ -1,4 +1,4 @@
-# Recent telemetry review — 11 November 2026
+# Recent telemetry review: 11 November 2026
 
 Read-only review of `/var/lib/xc-osu/telemetry.db`; primary interval 14:00–16:50:13 UTC (20 sessions with events), plus today's earlier mod-menu captures. Production was not deployed or restarted. Multiple engine fingerprints occur in this interval; these observations are not a before/after benchmark.
 

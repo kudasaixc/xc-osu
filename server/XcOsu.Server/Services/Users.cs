@@ -1,4 +1,4 @@
-// xc-osu! server — user profiles and statistics. xc softworks (kudasaixc)
+// xc-osu! server: user profiles and statistics. xc softworks (kudasaixc)
 
 using Newtonsoft.Json.Linq;
 using osu.Game.Online.API.Requests.Responses;

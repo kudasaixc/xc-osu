@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# xc-osu! load test — hundreds of simultaneous clients against the PostgreSQL-backed server.
+# xc-osu! load test: hundreds of simultaneous clients against the PostgreSQL-backed server.
 # Usage: load_test.py [--base http://127.0.0.1:5081] [--connections 300] [--seconds 30] [--mode read|write|mixed]
 import argparse, http.client, json, random, statistics, threading, time
 from urllib.parse import urlsplit

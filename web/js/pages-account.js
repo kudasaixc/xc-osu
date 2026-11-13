@@ -1,4 +1,4 @@
-// xc-osu! web — sign in, registration, account settings. xc softworks (kudasaixc)
+// xc-osu! web: sign in, registration, account settings. xc softworks (kudasaixc)
 import { L, state, t, esc, num, countryName, MODES, modeName, api, signIn, signOut, loadMe, signedIn, requireSignIn, renderUserText, act, userLink, avatarUrl, ApiError } from './core.js';
 
 /** Only follow "next" back to a page of this site. */

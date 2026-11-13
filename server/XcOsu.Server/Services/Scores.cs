@@ -1,4 +1,4 @@
-// xc-osu! server — score submission and lookup. xc softworks (kudasaixc)
+// xc-osu! server: score submission and lookup. xc softworks (kudasaixc)
 
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -141,7 +141,7 @@ namespace XcOsu.Server.Services
             if (score.Passed && map != null)
                 calc = await performance.Calculate(beatmapId, score, ct);
 
-            // pp is awarded on ranked/approved/qualified maps only; loved keeps a leaderboard without pp — like osu!.
+            // pp is awarded on ranked/approved/qualified maps only; loved keeps a leaderboard without pp, like osu!.
             double? pp = ranked && status is 1 or 2 or 3 && score.Passed ? calc?.Pp : null;
             if (playlistItemId != null && score.Passed) pp = calc?.Pp; // shown on playlist results, never counted towards profile pp (ranked = 0)
 

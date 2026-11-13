@@ -76,7 +76,7 @@ check(!BbCodeInlineParser.TryRead("[script]bad[/script]", 0, 20, out _, out _), 
 check(Markdown.Parse("**existing Markdown**", pipeline).OfType<ParagraphBlock>().Single().Inline!.FirstChild is EmphasisInline, "Markdown compatibility");
 var multiline = Markdown.Parse(BbCodeInlineParser.Prepare("[b]first\n\nsecond[/b]"), pipeline);
 check(multiline.OfType<ParagraphBlock>().Single().Inline!.FirstChild is BbCodeInline, "BBCode across blank lines");
-const string screenshotPage = "[centre]\n[heading]CURRENT GOALS[/heading]\n\n[box=GOAL 1 — SHORT-TERM]\n[centre][s]Reach 5 digits[/s]\n\n[b]ACHIEVED![/b]\n[The Big Black](https://example.com/map)[/centre]\n[/box]\n[/centre]";
+const string screenshotPage = "[centre]\n[heading]CURRENT GOALS[/heading]\n\n[box=GOAL 1: SHORT-TERM]\n[centre][s]Reach 5 digits[/s]\n\n[b]ACHIEVED![/b]\n[The Big Black](https://example.com/map)[/centre]\n[/box]\n[/centre]";
 var screenshotDocument = Markdown.Parse(BbCodeInlineParser.Prepare(screenshotPage), pipeline);
 check(screenshotDocument.OfType<ParagraphBlock>().Single().Inline!.FirstChild is BbCodeInline { Tag: "centre" }, "Screenshot multiline block remains whole");
 using (var centred = new ProfileBbCodeBlock(new BbCodeInline("centre", "", "[b]CURRENT GOALS[/b]")))
@@ -84,7 +84,7 @@ using (var centred = new ProfileBbCodeBlock(new BbCodeInline("centre", "", "[b]C
     check(centred.IsCentred && centred.Body.CreateTextFlow().TextAnchor == osu.Framework.Graphics.Anchor.TopCentre, "Centre block uses centred text layout");
     check(centred.Header == null, "Centred block has no spoiler header");
 }
-using (var box = new ProfileBbCodeBlock(new BbCodeInline("box", "GOAL 1 — SHORT-TERM", "[centre][b]ACHIEVED![/b][/centre]")))
+using (var box = new ProfileBbCodeBlock(new BbCodeInline("box", "GOAL 1: SHORT-TERM", "[centre][b]ACHIEVED![/b][/centre]")))
 {
     check(!box.IsCentred && box.Header != null && box.Body.Alpha == 0, "Box has a collapsed clickable header");
     box.Header!.Action();

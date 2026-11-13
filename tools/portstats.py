@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# xc-osu! — measures how much upstream code the port keeps, and which upstream versions it runs on.
+# xc-osu!: measures how much upstream code the port keeps, and which upstream versions it runs on.
 # usage: portstats.py <out.json>     (run by devpub.sh / aotpub.sh; shown on the launcher)
 #
 # For each upstream checkout: "upstream" = lines of shipped source files at the upstream commit (HEAD),

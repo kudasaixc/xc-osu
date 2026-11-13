@@ -1,4 +1,4 @@
-// xc-osu! load test — hundreds of simultaneous clients, each with its own forwarded address, against a running server.
+// xc-osu! load test: hundreds of simultaneous clients, each with its own forwarded address, against a running server.
 // Usage: xc-load-test [--base http://127.0.0.1:5081] [--connections 300] [--seconds 30] [--mode read|mixed] [--path /api/v2/...]
 using System.Collections.Concurrent;
 using System.Diagnostics;

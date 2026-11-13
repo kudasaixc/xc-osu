@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# xc-osu! (xc softworks, kudasaixc) — fixes .NET's generated native->managed callback thunks for struct-by-value args.
+# xc-osu! (xc softworks, kudasaixc): fixes .NET's generated native->managed callback thunks for struct-by-value args.
 # wasm32 C ABI passes multi-field structs indirectly (as a pointer to a copy); the generated thunk declares them as
 # `void * argN` but then hands the interpreter `&argN` (pointer to the pointer), so the managed side reads garbage.
 # The interpreter expects a pointer to the struct data, i.e. `argN` itself.

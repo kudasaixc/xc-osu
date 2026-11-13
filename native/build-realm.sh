@@ -1,5 +1,5 @@
 #!/bin/bash
-# xc-osu! — build the original Realm .NET wrappers (realm-core 20.1.0) for browser-wasm (pthreads). xc softworks (kudasaixc)
+# xc-osu!: build the original Realm .NET wrappers (realm-core 20.1.0) for browser-wasm (pthreads). xc softworks (kudasaixc)
 N=$(cd "$(dirname "$0")" && pwd)
 set -e
 source $N/emenv.sh

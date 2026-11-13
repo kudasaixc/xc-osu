@@ -1,4 +1,4 @@
-// xc-osu! web — shared plumbing: language, session, API calls, formatting, safe HTML. xc softworks (kudasaixc)
+// xc-osu! web. Shared plumbing: language, session, API calls, formatting, safe HTML. xc softworks (kudasaixc)
 import { renderBBCode, looksLikeBBCode } from './bbcode.js';
 
 export const WEB = '/web';
@@ -25,25 +25,25 @@ const locale = () => (state.lang === 'fr' ? 'fr-FR' : 'en-US');
 
 // ---------------------------------------------------------------- escaping / formatting
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-export const num = (n, digits = 0) => (n == null || !Number.isFinite(Number(n)) ? '—' : Number(n).toLocaleString(locale(), { maximumFractionDigits: digits, minimumFractionDigits: digits }));
-export const pct = (fraction, digits = 2) => (fraction == null ? '—' : num(fraction * 100, digits) + ' %');
-export const rankText = (n) => (n ? '#' + num(n) : '—');
+export const num = (n, digits = 0) => (n == null || !Number.isFinite(Number(n)) ? '-' : Number(n).toLocaleString(locale(), { maximumFractionDigits: digits, minimumFractionDigits: digits }));
+export const pct = (fraction, digits = 2) => (fraction == null ? '-' : num(fraction * 100, digits) + ' %');
+export const rankText = (n) => (n ? '#' + num(n) : '-');
 export function duration(seconds) {
-  if (seconds == null) return '—';
+  if (seconds == null) return '-';
   const s = Math.round(seconds), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
   return h ? `${num(h)} h ${m} min` : `${m} min ${s % 60} s`;
 }
 export const clock = (seconds) => { const s = Math.round(seconds || 0); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
-export const dateText = (d) => (d ? new Date(d).toLocaleDateString(locale(), { year: 'numeric', month: 'long', day: 'numeric' }) : '—');
-export const dateTimeText = (d) => (d ? new Date(d).toLocaleString(locale(), { dateStyle: 'medium', timeStyle: 'short' }) : '—');
+export const dateText = (d) => (d ? new Date(d).toLocaleDateString(locale(), { year: 'numeric', month: 'long', day: 'numeric' }) : '-');
+export const dateTimeText = (d) => (d ? new Date(d).toLocaleString(locale(), { dateStyle: 'medium', timeStyle: 'short' }) : '-');
 export function ago(d) {
-  if (!d) return '—';
+  if (!d) return '-';
   const diff = (new Date(d).getTime() - Date.now()) / 1000, rtf = new Intl.RelativeTimeFormat(locale(), { numeric: 'auto' });
   for (const [unit, size] of [['year', 31536000], ['month', 2592000], ['day', 86400], ['hour', 3600], ['minute', 60]])
     if (Math.abs(diff) >= size) return rtf.format(Math.round(diff / size), unit);
   return t('just now', 'à l’instant');
 }
-export const timeTag = (d) => (d ? `<time datetime="${esc(d)}" title="${esc(dateTimeText(d))}">${esc(ago(d))}</time>` : '—');
+export const timeTag = (d) => (d ? `<time datetime="${esc(d)}" title="${esc(dateTimeText(d))}">${esc(ago(d))}</time>` : '-');
 export function countryName(code) {
   if (!code || code === 'XX') return t('Unknown', 'Inconnu');
   try { return new Intl.DisplayNames([locale()], { type: 'region' }).of(code) || code; } catch { return code; }
@@ -241,7 +241,7 @@ export function scoreRow(score, { showUser = false, showMap = true, position = n
     <div class="score-main">${showUser ? userLink(score.user) : ''}${title}<span class="score-meta">${timeTag(score.ended_at)} · ${num(score.total_score)} · ${num(score.max_combo)}x</span></div>
     ${modsHtml(score.mods)}
     <span class="score-acc">${pct(score.accuracy)}</span>
-    <a class="score-pp" href="${L('/scores/' + score.id)}" title="${t('Score details', 'Détails du score')}">${score.pp != null ? num(score.pp) + '<small>pp</small>' : '—'}</a>
+    <a class="score-pp" href="${L('/scores/' + score.id)}" title="${t('Score details', 'Détails du score')}">${score.pp != null ? num(score.pp) + '<small>pp</small>' : '-'}</a>
   </li>`;
 }
 

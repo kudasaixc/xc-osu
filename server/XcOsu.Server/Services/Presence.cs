@@ -1,4 +1,4 @@
-// xc-osu! server — online presence (fed by the metadata hub). xc softworks (kudasaixc)
+// xc-osu! server: online presence (fed by the metadata hub). xc softworks (kudasaixc)
 
 using System.Collections.Concurrent;
 using osu.Game.Users;

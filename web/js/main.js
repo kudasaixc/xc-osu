@@ -1,4 +1,4 @@
-// xc-osu! web — page shell and router. xc softworks (kudasaixc)
+// xc-osu! web: page shell and router. xc softworks (kudasaixc)
 import { L, WEB, state, t, setLang, esc, avatar, loadMe, signOut, ApiError, NeedSignIn } from './core.js';
 import * as users from './pages-user.js';
 import * as maps from './pages-beatmap.js';
@@ -71,7 +71,7 @@ function shell() {
     </header>
     <main id="view" tabindex="-1"></main>
     <footer class="foot">
-      <span>xc-osu! — xc softworks</span>
+      <span>xc-osu!: xc softworks</span>
       <span class="foot-links">
         <a href="${L('/home/changelog')}">${t('Changelog', 'Journal des modifications')}</a>
         <a href="/">${t('Open the game', 'Ouvrir le jeu')}</a>

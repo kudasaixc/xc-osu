@@ -26,7 +26,7 @@
     <NativeFileReference Include="Native/bassmix.c" />
     <NativeFileReference Include="Native/basswasapi.c" />
     <NativeFileReference Include="Native/realm-wrappers.a" />
-    <!-- xc-osu!: stb_image (StbiSharp module "stbi") — native image decoding instead of managed ImageSharp. native/stbi/build.sh -->
+    <!-- xc-osu!: stb_image (StbiSharp module "stbi"): native image decoding instead of managed ImageSharp. native/stbi/build.sh -->
     <NativeFileReference Include="Native/stbi.a" />
     <EmccExportedRuntimeMethod Include="FS" />
     <EmccExportedRuntimeMethod Include="IDBFS" />

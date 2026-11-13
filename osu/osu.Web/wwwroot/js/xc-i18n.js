@@ -1,4 +1,4 @@
-// xc-osu! launcher strings (fr / en) — xc softworks (kudasaixc)
+// xc-osu! launcher strings (fr / en): xc softworks (kudasaixc)
 
 const S = {
   en: {
@@ -32,7 +32,7 @@ const S = {
     "tm.noEvents": "No browser context events saved.",
     "tm.frames": "Frame data (GC, textures, draw/update)",
     "tm.raw": "All session measurements (JSON)",
-    "tm.failed": "Unable to open history — try again",
+    "tm.failed": "Unable to open history: try again",
     'o.telemetry': 'Performance diagnostics', 'o.telemetry.h': 'Send hardware, frame timings, stutters, error messages and, after a crash, the last console lines (addresses, e-mails and tokens removed) to improve xc-osu!. A random installation id links your sessions; no IP or account collected. Disable to stop collection.',
     'build.title': 'Source code origins', 'build.none': 'Build info unavailable.', 'build.lazer': 'osu!lazer',
     'build.ahead': '+{0} commits', 'build.kept': 'of upstream code kept untouched ({0} lines of selected upstream sources)',
@@ -79,7 +79,7 @@ const S = {
     'launch.noisolation': 'This page needs cross-origin isolation (COOP/COEP headers) to run.',
     'gpuwarn.title': 'Your browser is not using your graphics card',
     'gpuwarn.body': 'Rendering is done on the CPU ({0}), so the game will run at a fraction of its normal frame rate. This is a browser or driver setting, not something the game options can fix.',
-    'gpuwarn.chromium': 'Open [[{0}]] in a new tab, turn on “Use graphics acceleration when available” and restart the browser. If it is already on, [[{1}]] lists why the graphics card was rejected under “Problems detected” — updating the graphics driver and rebooting usually clears it.',
+    'gpuwarn.chromium': 'Open [[{0}]] in a new tab, turn on “Use graphics acceleration when available” and restart the browser. If it is already on, [[{1}]] lists why the graphics card was rejected under “Problems detected”: updating the graphics driver and rebooting usually clears it.',
     'gpuwarn.firefox': 'Open [[about:support]] and look at the Graphics section for the reason; updating the graphics driver and restarting Firefox usually clears it.',
     'gpuwarn.other': 'Turn on hardware acceleration in the browser settings, update the graphics driver, then restart the browser.',
     'presets': 'Presets',
@@ -125,7 +125,7 @@ const S = {
     'o.cpuCount': 'Reported CPU cores', 'o.cpuCount.h': 'Environment.ProcessorCount seen by .NET (DOTNET_PROCESSOR_COUNT). Lower = smaller thread pools and parallel loads.',
     'o.threadPoolMax': 'Thread pool limit', 'o.threadPoolMax.h': 'Max .NET thread pool workers (must be ≥ reported cores).',
     'o.softHeap': 'RAM soft limit', 'o.softHeap.h': 'Above this managed heap size the GC collects aggressively instead of growing (MONO_GC_PARAMS soft-heap-limit).',
-    'o.hardHeap': 'RAM hard limit', 'o.hardHeap.h': 'Absolute managed heap cap (max-heap-size). The game crashes with OutOfMemory past it — use with care.',
+    'o.hardHeap': 'RAM hard limit', 'o.hardHeap.h': 'Absolute managed heap cap (max-heap-size). The game crashes with OutOfMemory past it: use with care.',
     'o.nursery': 'GC nursery size', 'o.nursery.h': 'Gen0 size. Smaller = more frequent but shorter pauses; bigger = fewer pauses.',
     'o.gpu': 'GPU preference', 'o.gpu.h': 'WebGL powerPreference: picks the discrete or integrated GPU on dual-GPU laptops.',
     'gpu.high-performance': 'High performance', 'gpu.default': 'Browser default', 'gpu.low-power': 'Low power',
@@ -192,7 +192,7 @@ const S = {
     "tm.noEvents": "Aucun événement de contexte navigateur conservé.",
     "tm.frames": "Données des images (GC, textures, rendu/update)",
     "tm.raw": "Toutes les mesures de la session (JSON)",
-    "tm.failed": "Impossible d’ouvrir l’historique — réessayer",
+    "tm.failed": "Impossible d’ouvrir l’historique: réessayer",
     'o.telemetry': 'Diagnostics de performance', 'o.telemetry.h': 'Envoie le matériel, les temps des images, les saccades, les messages d’erreur et, après un crash, les dernières lignes de la console (adresses, e-mails et jetons retirés) pour améliorer xc-osu!. Un identifiant d’installation aléatoire relie vos sessions ; sans IP ni compte. Décochez pour désactiver.',
     'build.title': 'Origine du code source', 'build.none': 'Infos de build indisponibles.', 'build.lazer': 'osu!lazer',
     'build.ahead': '+{0} commits', 'build.kept': 'du code upstream gardé intact ({0} lignes de sources upstream sélectionnées)',
@@ -239,7 +239,7 @@ const S = {
     'launch.noisolation': 'Cette page a besoin de l’isolation cross-origin (en-têtes COOP/COEP) pour tourner.',
     'gpuwarn.title': 'Ton navigateur n’utilise pas ta carte graphique',
     'gpuwarn.body': 'Le rendu se fait sur le processeur ({0}) : le jeu tournera à une fraction de sa fluidité normale. C’est un réglage du navigateur ou du pilote, les options du jeu n’y changent rien.',
-    'gpuwarn.chromium': 'Ouvre [[{0}]] dans un nouvel onglet, active « Utiliser l’accélération graphique si disponible » et relance le navigateur. Si c’est déjà activé, [[{1}]] indique pourquoi la carte a été écartée dans « Problems detected » — mettre à jour le pilote graphique et redémarrer règle en général le problème.',
+    'gpuwarn.chromium': 'Ouvre [[{0}]] dans un nouvel onglet, active « Utiliser l’accélération graphique si disponible » et relance le navigateur. Si c’est déjà activé, [[{1}]] indique pourquoi la carte a été écartée dans « Problems detected »: mettre à jour le pilote graphique et redémarrer règle en général le problème.',
     'gpuwarn.firefox': 'Ouvre [[about:support]] et regarde la section Graphiques pour la raison ; mettre à jour le pilote graphique et relancer Firefox règle en général le problème.',
     'gpuwarn.other': 'Active l’accélération matérielle dans les réglages du navigateur, mets à jour le pilote graphique, puis relance le navigateur.',
     'presets': 'Préréglages',
@@ -285,7 +285,7 @@ const S = {
     'o.cpuCount': 'Cœurs CPU annoncés', 'o.cpuCount.h': 'Environment.ProcessorCount vu par .NET (DOTNET_PROCESSOR_COUNT). Plus bas = pools de threads et chargements parallèles réduits.',
     'o.threadPoolMax': 'Limite du thread pool', 'o.threadPoolMax.h': 'Nombre max de workers du thread pool .NET (doit être ≥ cœurs annoncés).',
     'o.softHeap': 'Limiteur RAM (souple)', 'o.softHeap.h': 'Au-delà de cette taille de tas managé, le GC collecte agressivement au lieu de grossir (MONO_GC_PARAMS soft-heap-limit).',
-    'o.hardHeap': 'Limiteur RAM (strict)', 'o.hardHeap.h': 'Plafond absolu du tas managé (max-heap-size). Le jeu crashe en OutOfMemory au-delà — à manier avec précaution.',
+    'o.hardHeap': 'Limiteur RAM (strict)', 'o.hardHeap.h': 'Plafond absolu du tas managé (max-heap-size). Le jeu crashe en OutOfMemory au-delà: à manier avec précaution.',
     'o.nursery': 'Taille de la nursery GC', 'o.nursery.h': 'Taille de la gen0. Plus petit = pauses plus fréquentes mais plus courtes ; plus grand = moins de pauses.',
     'o.gpu': 'Préférence GPU', 'o.gpu.h': 'powerPreference WebGL : choisit le GPU dédié ou intégré sur les portables bi-GPU.',
     'gpu.high-performance': 'Haute performance', 'gpu.default': 'Défaut du navigateur', 'gpu.low-power': 'Basse consommation',

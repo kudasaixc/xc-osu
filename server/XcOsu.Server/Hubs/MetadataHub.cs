@@ -1,4 +1,4 @@
-// xc-osu! server — metadata hub: presence, friends, beatmap updates. xc softworks (kudasaixc)
+// xc-osu! server. Metadata hub: presence, friends, beatmap updates. xc softworks (kudasaixc)
 
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;

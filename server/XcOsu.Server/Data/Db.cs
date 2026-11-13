@@ -1,4 +1,4 @@
-// xc-osu! server — PostgreSQL persistence. xc softworks (kudasaixc)
+// xc-osu! server: PostgreSQL persistence. xc softworks (kudasaixc)
 //
 // One pooled data source for the whole process: every request borrows a connection for a few statements and hands it
 // back, so hundreds of simultaneous clients share a bounded set of server backends and never wait on a single writer.

@@ -1,4 +1,4 @@
-// xc-osu! verbose launch screen + log viewer — xc softworks (kudasaixc)
+// xc-osu! verbose launch screen + log viewer: xc softworks (kudasaixc)
 // Stages are driven by real events: loader callbacks from main.js, and the actual log lines the runtime/game prints.
 
 import { xcLog, fmtTime } from './xc-log.js';

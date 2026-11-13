@@ -1,4 +1,4 @@
-// xc-osu! server — live connections bound to the session that opened them. xc softworks (kudasaixc)
+// xc-osu! server: live connections bound to the session that opened them. xc softworks (kudasaixc)
 
 using System.Collections.Concurrent;
 
@@ -6,7 +6,7 @@ namespace XcOsu.Server.Services;
 
 /// <summary>
 /// Every long-lived connection (SignalR hubs, the notification socket) is registered with the session it authenticated with.
-/// When that session ends — sign-out, password or email change, reset, restriction, absolute expiry — the connection is closed,
+/// When that session ends (sign-out, password or email change, reset, restriction, absolute expiry), the connection is closed,
 /// even if it never invokes anything again. A normal token rotation keeps the session id, so matches survive it.
 /// </summary>
 public sealed class SessionConnections : IDisposable

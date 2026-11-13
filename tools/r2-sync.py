@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# xc-osu! — put a build's engine .wasm files on the CDN (Cloudflare R2). xc softworks (kudasaixc)
+# xc-osu!: put a build's engine .wasm files on the CDN (Cloudflare R2). xc softworks (kudasaixc)
 # usage: r2-sync.py <wwwroot> [--off]
 #   Uploads every _framework/*.wasm that is not on the bucket yet (names are content-fingerprinted, so a
 #   file already there is the same file), brotli-compressed, then points the build's main.js at the CDN.
@@ -25,7 +25,7 @@ def point(base):
 
 def site_only(why):
     point('')
-    print('r2-sync: ' + why + ' — this build loads everything from the site')
+    print('r2-sync: ' + why + '; this build loads everything from the site')
     sys.exit(0)
 
 if '--off' in sys.argv: site_only('switched off')

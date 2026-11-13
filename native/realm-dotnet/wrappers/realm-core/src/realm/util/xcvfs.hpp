@@ -1,4 +1,4 @@
-// xc-osu! xcvfs — a coherent file layer for realm-core on multi-threaded WebAssembly. xc softworks (kudasaixc)
+// xc-osu! xcvfs: a coherent file layer for realm-core on multi-threaded WebAssembly. xc softworks (kudasaixc)
 //
 // Emscripten's mmap(MAP_SHARED) copies file contents into a private buffer, so two mappings of the same file
 // (realm maps its data and lock files many times, from many threads) never see each other's writes, and flock()

@@ -1,4 +1,4 @@
-// xc-osu! server — spectator hub + server-side replay recording. xc softworks (kudasaixc)
+// xc-osu! server: spectator hub + server-side replay recording. xc softworks (kudasaixc)
 
 using System.Collections.Concurrent;
 using Microsoft.AspNetCore.Authorization;

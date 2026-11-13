@@ -1,4 +1,4 @@
-// xc-osu! xcvfs — see xcvfs.hpp. xc softworks (kudasaixc)
+// xc-osu! xcvfs: see xcvfs.hpp. xc softworks (kudasaixc)
 #include <realm/util/xcvfs.hpp>
 
 #if REALM_XCVFS
