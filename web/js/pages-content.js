@@ -99,13 +99,18 @@ export function reportIssue({ go }) { go('/wiki/Reporting_a_problem', { replace:
 // ---------------------------------------------------------------- changelog
 const TYPE = { add: ['+', () => t('Added', 'Ajout')], fix: ['✓', () => t('Fixed', 'Correction')], misc: ['·', () => t('Other', 'Divers')] };
 
-export async function changelog({ params: [version] }) {
+export async function changelog({ params: [stream, version] }) {
   const data = await v2('/changelog?' + locale());
-  const builds = data.builds || [];
+  const streams = data.streams || [];
+  const current = stream ? streams.find((s) => s.name === stream) : null;
+  if (stream && !current) throw new ApiError(404, 'Build not found');
+  const builds = (data.builds || []).filter((b) => !current || b.update_stream?.name === current.name);
+  const link = (b) => L(`/home/changelog/${encodeURIComponent(b.update_stream?.name || 'lazer')}/${encodeURIComponent(b.version)}`);
   const one = (b) => {
     const groups = new Map();
     for (const e of b.changelog_entries || []) (groups.get(e.category) || groups.set(e.category, []).get(e.category)).push(e);
-    return `<section class="build" id="v${esc(b.version)}"><h2><a href="${L('/home/changelog/lazer/' + encodeURIComponent(b.version))}">${esc(b.display_version)}</a> <span class="build-date">${dateText(b.created_at)}</span></h2>
+    const s = b.update_stream || {};
+    return `<section class="build stream-${esc(s.name)}" id="${esc(s.name)}-${esc(b.version)}"><h2><a href="${link(b)}"><span class="build-stream">${esc(s.display_name)}</span> ${esc(b.display_version)}</a> <span class="build-date">${dateText(b.created_at)}</span></h2>
       ${[...groups].map(([category, entries]) => `<h3>${esc(category)}</h3><ul class="entries">${entries.map((e) => {
         const [mark, label] = TYPE[String(e.type).toLowerCase()] || TYPE.misc;
         return `<li class="entry${e.major ? ' major' : ''}"><span class="entry-type" title="${label()}">${mark}</span><span>${esc(e.title)}</span></li>`;
@@ -113,10 +118,14 @@ export async function changelog({ params: [version] }) {
   };
   const shown = version ? builds.filter((b) => b.version === version) : builds;
   if (version && !shown.length) throw new ApiError(404, 'Build not found');
+  // the stream badges of the official changelog: name, latest version, and a bar in the stream's colour
+  const badges = `<nav class="streams">${streams.map((s) => `<a class="stream-badge stream-${esc(s.name)}${current?.name === s.name ? ' active' : ''}" href="${L('/home/changelog/' + encodeURIComponent(s.name))}">
+      <span class="stream-name">${esc(s.display_name)}</span><span class="stream-version">${esc(s.latest_build?.display_version || '')}</span></a>`).join('')}</nav>`;
   return {
     title: t('Changelog', 'Journal des modifications'),
     html: `<h1 class="page-title">${t('Changelog', 'Journal des modifications')}</h1>
-      ${version ? `<p class="crumbs"><a href="${L('/home/changelog')}">${t('All versions', 'Toutes les versions')}</a></p>` : `<p class="lead">${t('What changed in each version of xc-osu!. The longer stories are in the', 'Ce qui a changé dans chaque version de xc-osu!. Les explications détaillées sont dans les')} <a href="${L('/news')}">${t('news', 'actualités')}</a>.</p>`}
+      ${current ? `<p class="crumbs"><a href="${L('/home/changelog')}">${t('All streams', 'Tous les flux')}</a>${version ? ` · <a href="${L('/home/changelog/' + encodeURIComponent(current.name))}">${esc(current.display_name)}</a>` : ''}</p>` : `<p class="lead">${t('What changed in each version of xc-osu! (the game) and of xc-osu!nanbeige (its server). The longer stories are in the', 'Ce qui a changé dans chaque version de xc-osu! (le jeu) et de xc-osu!nanbeige (son serveur). Les explications détaillées sont dans les')} <a href="${L('/news')}">${t('news', 'actualités')}</a>.</p>`}
+      ${badges}
       <div class="changelog">${shown.length ? shown.map(one).join('') : empty(t('Nothing yet.', 'Rien pour l’instant.'))}</div>`,
   };
 }

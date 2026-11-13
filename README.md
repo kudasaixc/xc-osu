@@ -39,6 +39,14 @@ cd server/XcOsu.Server && dotnet publish -c Release -o ../publish
 
 The page must be served with `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` (multithreaded wasm). Add `?log` to the URL for verbose logs in the devtools console.
 
+## Database
+
+The server keeps all state in PostgreSQL 16+. `sudo deploy/setup-isolation.sh` creates the `xc-osu` role and the
+`xc_osu` database it owns; the service connects over the local Unix socket with peer authentication
+(`Database:ConnectionString` defaults to `Host=/var/run/postgresql;Database=xc_osu`). A non-default server can be
+pointed with `Database__ConnectionString`. The former SQLite files are loaded once with
+`dotnet xc-osu-server.dll import-sqlite /var/lib/xc-osu` while the service is stopped.
+
 ## Licence
 
 MIT — see `LICENSE`. Upstream components keep their own licences (`osu/LICENCE`, `osu-framework/LICENCE`, `native/realm-dotnet/LICENSE`, …).

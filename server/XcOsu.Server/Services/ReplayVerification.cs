@@ -107,11 +107,11 @@ namespace XcOsu.Server.Services
                 {
                     if (ReplayGraceSeconds == null) continue;
                     using var c = db.Open();
-                    var late = c.Query("SELECT id FROM scores WHERE ranked = 1 AND has_replay = 0 AND replay_due IS NOT NULL AND replay_due < $n",
-                        r => r.GetInt64(0), ("$n", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+                    var late = c.Query("SELECT id FROM scores WHERE ranked = 1 AND has_replay = 0 AND replay_due IS NOT NULL AND replay_due < @n",
+                        r => r.GetInt64(0), ("@n", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
                     foreach (long id in late)
                     {
-                        c.Exec("UPDATE scores SET ranked = 0, pp = NULL, verification = $v WHERE id = $i AND has_replay = 0", ("$v", MISSING_REPLAY), ("$i", id));
+                        c.Exec("UPDATE scores SET ranked = 0, pp = NULL, verification = @v WHERE id = @i AND has_replay = 0", ("@v", MISSING_REPLAY), ("@i", id));
                         log.LogWarning("score {Score} unranked: no replay was delivered", id);
                     }
                     if (late.Count > 0) users.InvalidateLeaderboard();
@@ -124,8 +124,8 @@ namespace XcOsu.Server.Services
         {
             (int beatmap, int ruleset, long total, double accuracy, int combo, int state) row;
             using (var c = db.Open())
-                row = c.Query("SELECT beatmap_id, ruleset_id, total_score, accuracy, max_combo, verification FROM scores WHERE id = $i",
-                    r => (r.GetInt32(0), r.GetInt32(1), r.GetInt64(2), r.GetDouble(3), r.GetInt32(4), r.GetInt32(5)), ("$i", scoreId)).FirstOrDefault();
+                row = c.Query("SELECT beatmap_id, ruleset_id, total_score, accuracy, max_combo, verification FROM scores WHERE id = @i",
+                    r => (r.GetInt32(0), r.GetInt32(1), r.GetInt64(2), r.GetDouble(3), r.GetInt32(4), r.GetInt32(5)), ("@i", scoreId)).FirstOrDefault();
             if (row.beatmap == 0 || row.state is VERIFIED or MISMATCH or UNVERIFIABLE) return;
 
             string? replay = scores.ReplayPath(scoreId);
@@ -211,14 +211,14 @@ namespace XcOsu.Server.Services
             using var c = db.Open();
             if (state == MISMATCH && mode == "enforce")
             {
-                c.Exec("UPDATE scores SET verification = $v, ranked = 0, pp = NULL WHERE id = $i", ("$v", state), ("$i", scoreId));
+                c.Exec("UPDATE scores SET verification = @v, ranked = 0, pp = NULL WHERE id = @i", ("@v", state), ("@i", scoreId));
                 users.InvalidateLeaderboard();
                 log.LogWarning("score {Score} unranked, its replay does not reproduce it: {Detail}", scoreId, detail);
                 return;
             }
 
             // in observe mode a mismatch is only reported, so the score stays as it was and is looked at again once enforcement is on.
-            if (state != MISMATCH) c.Exec("UPDATE scores SET verification = $v WHERE id = $i", ("$v", state), ("$i", scoreId));
+            if (state != MISMATCH) c.Exec("UPDATE scores SET verification = @v WHERE id = @i", ("@v", state), ("@i", scoreId));
             if (state == VERIFIED) log.LogInformation("score {Score} verified: {Detail}", scoreId, detail);
             else log.LogWarning("score {Score} {State}: {Detail}", scoreId, state == MISMATCH ? "would be unranked (observe mode)" : "could not be verified", detail);
         }

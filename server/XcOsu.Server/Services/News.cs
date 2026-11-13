@@ -174,24 +174,39 @@ namespace XcOsu.Server.Services
         /// <summary>Players connected right now; set by the endpoint from <see cref="Presence"/>.</summary>
         [ThreadStatic] private static int online;
 
-        private static JObject stream(JObject? latest) => new JObject
-        {
-            ["id"] = 1, ["name"] = "lazer", ["display_name"] = "xc-osu!", ["is_featured"] = true, ["user_count"] = online,
-            ["latest_build"] = latest,
-        };
+        /// <summary>
+        /// Update streams, as osu-web has one per product: the game itself, and the server ("nanbeige", what bancho is to osu!).
+        /// A build of changelog.json belongs to the first one unless it names another in "stream".
+        /// </summary>
+        private static readonly (int Id, string Name, string DisplayName)[] streams = { (1, "lazer", "xc-osu!"), (2, "nanbeige", "xc-osu!nanbeige") };
 
+        private static JObject stream(string name, JObject? latest)
+        {
+            var s = streams.FirstOrDefault(x => x.Name == name);
+            if (s.Name == null) s = streams[0];
+            return new JObject
+            {
+                ["id"] = s.Id, ["name"] = s.Name, ["display_name"] = s.DisplayName, ["is_featured"] = s.Id == 1, ["user_count"] = online,
+                ["latest_build"] = latest,
+            };
+        }
+
+        private static string streamOf(JObject build) => build["update_stream"]!.Value<string>("name")!;
+
+        /// <summary>Every build of every stream, newest first. Ids are unique across streams and grow with time.</summary>
         private static List<JObject> builds(string locale)
         {
             string file = Path.Combine(root, "changelog.json");
             var list = new List<JObject>();
             if (!File.Exists(file)) return list;
 
-            var source = JArray.Parse(File.ReadAllText(file));
-            int entryId = source.Sum(b => ((JArray?)b["entries"])?.Count ?? 0);
+            var source = JArray.Parse(File.ReadAllText(file)).Cast<JObject>()
+                               .Select(b => (build: b, created: DateTimeOffset.Parse(b.Value<string>("date")!, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal)))
+                               .OrderByDescending(b => b.created).ToList();
+            int entryId = source.Sum(b => ((JArray?)b.build["entries"])?.Count ?? 0);
             for (int i = 0; i < source.Count; i++)
             {
-                var b = (JObject)source[i];
-                var created = DateTimeOffset.Parse(b.Value<string>("date")!, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal);
+                var (b, created) = source[i];
                 var entries = new JArray();
                 foreach (var e in (JArray?)b["entries"] ?? new JArray())
                 {
@@ -210,35 +225,40 @@ namespace XcOsu.Server.Services
                 {
                     ["id"] = source.Count - i, ["version"] = b.Value<string>("version"), ["display_version"] = b.Value<string>("version"),
                     ["users"] = 0, ["created_at"] = created, ["changelog_entries"] = entries,
+                    ["update_stream"] = stream(b.Value<string>("stream") ?? streams[0].Name, null),
                 });
             }
-            foreach (var b in list) b["update_stream"] = stream(null);
             return list;
         }
 
         private static JObject brief(JObject build) => new JObject
         {
             ["id"] = build["id"], ["version"] = build["version"], ["display_version"] = build["display_version"], ["users"] = 0,
-            ["created_at"] = build["created_at"], ["update_stream"] = stream(null),
+            ["created_at"] = build["created_at"], ["update_stream"] = stream(streamOf(build), null),
         };
 
-        public static JObject Changelog(string locale, int playersOnline = 0)
+        /// <param name="only">Name of the one stream to list builds of (osu-web's "stream" filter), or null for all of them.</param>
+        public static JObject Changelog(string locale, int playersOnline = 0, string? only = null)
         {
             online = playersOnline;
             var all = builds(locale);
+            var listed = new JArray();
+            foreach (var s in streams)
+                if (all.Find(b => streamOf(b) == s.Name) is JObject latest) listed.Add(stream(s.Name, brief(latest)));
             return new JObject
             {
-                ["builds"] = new JArray(all),
-                ["streams"] = new JArray(all.Count > 0 ? new[] { stream(brief(all[0])) } : Array.Empty<JObject>()),
-                ["search"] = new JObject { ["stream"] = null, ["from"] = null, ["to"] = null, ["max_id"] = null, ["limit"] = 21 },
+                ["builds"] = new JArray(string.IsNullOrEmpty(only) ? all : all.Where(b => streamOf(b) == only)),
+                ["streams"] = listed,
+                ["search"] = new JObject { ["stream"] = string.IsNullOrEmpty(only) ? null : only, ["from"] = null, ["to"] = null, ["max_id"] = null, ["limit"] = 21 },
             };
         }
 
-        public static JObject? ChangelogBuild(string locale, string version, int playersOnline = 0)
+        /// <summary>One build of one stream ("latest" for its newest), with its neighbours in that stream.</summary>
+        public static JObject? ChangelogBuild(string locale, string streamName, string version, int playersOnline = 0)
         {
             online = playersOnline;
-            var all = builds(locale);
-            int i = all.FindIndex(b => b.Value<string>("version") == version || (version == "latest" && b == all[0]));
+            var all = builds(locale).Where(b => streamOf(b) == streamName).ToList();
+            int i = version == "latest" ? (all.Count > 0 ? 0 : -1) : all.FindIndex(b => b.Value<string>("version") == version);
             if (i < 0) return null;
             all[i]["versions"] = new JObject { ["next"] = i > 0 ? brief(all[i - 1]) : null, ["previous"] = i + 1 < all.Count ? brief(all[i + 1]) : null };
             return all[i];

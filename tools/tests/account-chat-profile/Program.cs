@@ -104,8 +104,10 @@ try
     string transport = Path.Combine(directory, "sendmail");
     await File.WriteAllTextAsync(transport, "#!/bin/sh\ncat > '" + capture + "'\n");
     File.SetUnixFileMode(transport, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+    using var database = new TestDatabase();
     var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
-        ["DataDirectory"] = directory, ["Mail:SendmailPath"] = transport, ["PublicUrl"] = "https://osu.test"
+        ["DataDirectory"] = directory, ["Mail:SendmailPath"] = transport, ["PublicUrl"] = "https://osu.test",
+        ["Database:ConnectionString"] = database.ConnectionString
     }).Build();
     var db = new Db(config);
     var accounts = new Accounts(db);
@@ -121,7 +123,7 @@ try
     string body = Encoding.UTF8.GetString(Convert.FromBase64String(firstMail.Split("\r\n\r\n", 2)[1]));
     string token = Regex.Match(body, "#token=([A-F0-9]{64})").Groups[1].Value;
     check(token.Length == 64 && body.Contains("https://osu.test/web/home/password-reset#token="), "Mail contains trusted URL and token");
-    using (var c = db.Open()) check(c.Scalar<long>("SELECT COUNT(*) FROM password_resets WHERE token_hash = $t", ("$t", token)) == 0, "Raw token must not be stored");
+    using (var c = db.Open()) check(c.Scalar<long>("SELECT COUNT(*) FROM password_resets WHERE token_hash = @t", ("@t", token)) == 0, "Raw token must not be stored");
     await recovery.Request("reset@example.test");
     check(await File.ReadAllTextAsync(capture) == firstMail, "Account cooldown");
     check(!recovery.Complete(new string('F', 64), "new-password"), "Invalid token rejected");
@@ -146,8 +148,7 @@ try
 }
 finally
 {
-    Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-    Directory.Delete(directory, recursive: true);
+        Directory.Delete(directory, recursive: true);
 }
 
 sealed class DisposedHubConnector(HubConnection hub) : IHubClientConnector

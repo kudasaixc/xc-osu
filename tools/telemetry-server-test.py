@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Run against an isolated server: python3 tools/telemetry-server-test.py URL DATA_DIR."""
-import json, urllib.request, urllib.error, uuid, sqlite3, sys
-base, directory = sys.argv[1:]
+"""Run against an isolated server: python3 tools/telemetry-server-test.py URL "dbname=<throwaway database> host=/var/run/postgresql"."""
+import json, urllib.request, urllib.error, uuid, sys
+import psycopg2
+base, dsn = sys.argv[1:]
 sid = str(uuid.uuid4())
+# ingestion only accepts the page's own session cookie, sent from the same origin
+with urllib.request.urlopen(base+'/api/xc/tm/session') as r: cookie = r.headers['Set-Cookie'].split(';')[0]
 def post(body, expected=200):
-    req=urllib.request.Request(base+'/api/xc/tm',data=(body if isinstance(body,str) else json.dumps(body)).encode(),headers={'Content-Type':'text/plain'})
+    req=urllib.request.Request(base+'/api/xc/tm',data=(body if isinstance(body,str) else json.dumps(body)).encode(),headers={'Content-Type':'text/plain','Cookie':cookie,'Origin':base})
     try:
         with urllib.request.urlopen(req) as r: status, data = r.status, r.read()
     except urllib.error.HTTPError as e: status,data=e.code,e.read()
@@ -17,8 +20,8 @@ post('not JSON',400)
 post({'sid':{'invalid':True}},400)
 post({'sid':sid,'items':[{'q':{}}]},400)
 post('x'*524289,413)
-c=sqlite3.connect(directory+'/telemetry.db')
-assert c.execute('select count(*) from tm_windows where sid=?',(sid,)).fetchone()[0]==1
-assert c.execute('select count(*) from tm_events where sid=?',(sid,)).fetchone()[0]==1
-assert c.execute('select last_seq from tm_sessions where sid=?',(sid,)).fetchone()[0]==2
+c=psycopg2.connect(dsn).cursor()
+c.execute('select count(*) from tm_windows where sid=%s',(sid,));assert c.fetchone()[0]==1
+c.execute('select count(*) from tm_events where sid=%s',(sid,));assert c.fetchone()[0]==1
+c.execute('select last_seq from tm_sessions where sid=%s',(sid,));assert c.fetchone()[0]==2
 print('PASS: ingestion, ordering, duplicate retry, malformed payloads, size limit, persisted rows')

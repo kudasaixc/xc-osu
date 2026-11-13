@@ -14,8 +14,12 @@ const port = 5190, api = `http://127.0.0.1:${port}`;
 const transport = join(dir, 'sendmail');
 writeFileSync(transport, `#!/bin/sh\ncat > "${dir}/mail-$$.eml"\n`);
 chmodSync(transport, 0o700);
+// a throwaway database: this run registers players and rewrites them, never the live one.
+const database = 'xc_test_' + crypto.randomBytes(16).toString('hex');
+execFileSync('createdb', ['-T', 'template0', '-E', 'UTF8', '--lc-collate=C', '--lc-ctype=C', database]);
 const server = spawn(process.env.DOTNET || join(process.env.HOME, '.dotnet/dotnet'), [join(root, 'server/XcOsu.Server/bin/Release/net10.0/xc-osu-server.dll')], {
-  env: { ...process.env, DataDirectory: dir, Urls: api, PublicUrl: 'https://osu.test', Mail__SendmailPath: transport }, stdio: ['ignore', 'pipe', 'pipe'],
+  env: { ...process.env, DataDirectory: dir, Urls: api, PublicUrl: 'https://osu.test', Mail__SendmailPath: transport,
+    Database__ConnectionString: `Host=/var/run/postgresql;Database=${database}` }, stdio: ['ignore', 'pipe', 'pipe'],
 });
 let log = '';
 server.stdout.on('data', d => log += d); server.stderr.on('data', d => log += d);
@@ -92,7 +96,7 @@ try {
 
   // H — every team stays reachable past the first page.
   const rows = Array.from({ length: 119 }, (_, i) => `('Filler ${i}', 'F${i}', 900000, '2026-01-01T00:00:00Z')`).join(',');
-  execFileSync('sqlite3', [join(dir, 'xc-osu.db'), `INSERT INTO teams (name, short_name, leader_id, created_at) VALUES ${rows}, ('Needle Squad', 'NDL', 900000, '2026-01-01T00:00:00Z');`]);
+  execFileSync('psql', ['-q', '-d', database, '-c', `INSERT INTO teams (name, short_name, leader_id, created_at) VALUES ${rows}, ('Needle Squad', 'NDL', 900000, '2026-01-01T00:00:00Z');`]);
   const p1 = await req('/api/xc/teams'), p3 = await req('/api/xc/teams?page=3'), found = await req('/api/xc/teams?q=needle');
   check(p1.json.length === 50 && p1.headers.get('x-total-count') === '121' && p1.headers.get('x-has-more') === '1', 'first page of teams announces more');
   check(p3.json.length === 21 && p3.headers.get('x-has-more') === '0', 'last page of teams reachable');
@@ -148,4 +152,6 @@ try {
   server.kill('SIGTERM');
   await sleep(500);
   rmSync(dir, { recursive: true, force: true });
+  try { execFileSync('dropdb', ['--if-exists', '-f', database]); }
+  catch (e) { console.error('could not drop ' + database + ': ' + e.message); }
 }

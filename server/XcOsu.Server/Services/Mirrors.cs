@@ -15,6 +15,13 @@ namespace XcOsu.Server.Services
         private readonly ILogger<Mirrors> log;
         private readonly string osuCache;
 
+        // Search results per upstream URL, and one in-flight fetch per URL: hundreds of clients searching the same
+        // words used to each download and re-parse the whole ~1 MB mirror response, which starved every other route.
+        private readonly Dictionary<string, (DateTime at, JArray sets)> searchCache = new();
+        private readonly Dictionary<string, Task<JArray>> searchInflight = new();
+        private readonly object searchLock = new();
+        private static readonly TimeSpan searchTtl = TimeSpan.FromSeconds(60);
+
         public Mirrors(IHttpClientFactory factory, Db db, ILogger<Mirrors> log)
         {
             http = factory.CreateClient("mirrors");
@@ -70,16 +77,7 @@ namespace XcOsu.Server.Services
             qs.Add($"offset={page * 50}");
             qs.Add($"page={page}");
 
-            var res = await getJson("/search?" + string.Join('&', qs), ct);
-            var sets = res switch
-            {
-                JArray a => a,
-                JObject o when o["beatmapsets"] is JArray a => a,
-                _ => new JArray(),
-            };
-
-            foreach (var s in sets.OfType<JObject>())
-                cacheSet(s);
+            var sets = await searchSets("/search?" + string.Join('&', qs), ct);
 
             // osu-web's default ("leaderboard") only lists maps that have a leaderboard.
             string sFilter = query["s"].ToString();
@@ -88,11 +86,62 @@ namespace XcOsu.Server.Services
             return sets;
         }
 
+        /// <summary>Cached mirror search: one upstream fetch per query per minute, shared by every client asking at once.</summary>
+        private async Task<JArray> searchSets(string path, CancellationToken ct)
+        {
+            lock (searchLock)
+                if (searchCache.TryGetValue(path, out var hit) && hit.at > DateTime.UtcNow - searchTtl)
+                    return hit.sets;
+
+            Task<JArray> task;
+            lock (searchLock)
+            {
+                if (!searchInflight.TryGetValue(path, out task!))
+                {
+                    task = fetchSearch(path);
+                    searchInflight[path] = task;
+                }
+            }
+
+            // the caller can give up (client disconnected) without cancelling the fetch others are waiting on.
+            return await task.WaitAsync(ct);
+        }
+
+        private async Task<JArray> fetchSearch(string path)
+        {
+            try
+            {
+                var res = await getJson(path, CancellationToken.None);
+                var sets = res switch
+                {
+                    JArray a => a,
+                    JObject o when o["beatmapsets"] is JArray a => a,
+                    _ => new JArray(),
+                };
+
+                // one batched transaction rather than a connection and a commit per set: this runs on the live matchmaking path.
+                if (sets.Count > 0) CacheSets(sets.OfType<JObject>());
+
+                // only cache real mirror answers, so a failed fetch is retried by the next client.
+                if (res != null)
+                    lock (searchLock)
+                    {
+                        if (searchCache.Count >= 512) searchCache.Clear();
+                        searchCache[path] = (DateTime.UtcNow, sets);
+                    }
+                return sets;
+            }
+            finally
+            {
+                lock (searchLock) searchInflight.Remove(path);
+            }
+        }
+
         public async Task<JObject?> GetBeatmapset(int id, CancellationToken ct)
         {
             using (var c = db.Open())
             {
-                string? cached = c.Scalar<string>("SELECT json FROM beatmapsets WHERE id = $i AND fetched_at > $t", ("$i", id), ("$t", now() - 3600));
+                string? cached = c.Scalar<string>("SELECT json FROM beatmapsets WHERE id = @i AND fetched_at > @t", ("@i", id), ("@t", now() - 3600));
                 if (cached != null) return JObject.Parse(cached);
             }
 
@@ -106,9 +155,9 @@ namespace XcOsu.Server.Services
             using (var c = db.Open())
             {
                 string? cached = id != null
-                    ? c.Scalar<string>("SELECT json FROM beatmaps WHERE id = $i AND fetched_at > $t", ("$i", id), ("$t", now() - 3600))
+                    ? c.Scalar<string>("SELECT json FROM beatmaps WHERE id = @i AND fetched_at > @t", ("@i", id), ("@t", now() - 3600))
                     : checksum != null
-                        ? c.Scalar<string>("SELECT json FROM beatmaps WHERE checksum = $c AND fetched_at > $t", ("$c", checksum), ("$t", now() - 3600))
+                        ? c.Scalar<string>("SELECT json FROM beatmaps WHERE checksum = @c AND fetched_at > @t", ("@c", checksum), ("@t", now() - 3600))
                         : null;
                 if (cached != null) return JObject.Parse(cached);
             }
@@ -140,10 +189,14 @@ namespace XcOsu.Server.Services
             try
             {
                 using var c = db.Open();
-                c.Exec("BEGIN");
-                foreach (var s in sets)
+                using var tx = c.BeginTransaction();
+                // One writer at a time: hundreds of clients searching the same words used to queue on each other's row
+                // locks for seconds. Losing the race only skips this refresh; another search or the TTL caches it later.
+                if (c.Scalar<bool>("SELECT pg_try_advisory_xact_lock(7203118)") != true) return;
+                // a stable order keeps two concurrent searches from locking the same rows crosswise.
+                foreach (var s in sets.OrderBy(s => s.Value<int?>("id") ?? 0))
                     cacheSet(s, c);
-                c.Exec("COMMIT");
+                tx.Commit();
             }
             catch (Exception e)
             {
@@ -151,14 +204,14 @@ namespace XcOsu.Server.Services
             }
         }
 
-        private void cacheSet(JObject set, Microsoft.Data.Sqlite.SqliteConnection? conn = null)
+        private void cacheSet(JObject set, Npgsql.NpgsqlConnection? conn = null)
         {
             int? id = set.Value<int?>("id");
             if (id == null) return;
             var owned = conn == null ? db.Open() : null;
             var c = conn ?? owned!;
             using var _ = owned;
-            c.Exec("INSERT OR REPLACE INTO beatmapsets (id, json, fetched_at) VALUES ($i, $j, $t)", ("$i", id), ("$j", set.ToString(Newtonsoft.Json.Formatting.None)), ("$t", now()));
+            c.Exec("INSERT INTO beatmapsets (id, json, fetched_at) VALUES (@i, @j, @t) ON CONFLICT (id) DO UPDATE SET json = EXCLUDED.json, fetched_at = EXCLUDED.fetched_at", ("@i", id), ("@j", set.ToString(Newtonsoft.Json.Formatting.None)), ("@t", now()));
             if (set["beatmaps"] is JArray maps)
             {
                 var parent = (JObject)set.DeepClone();
@@ -173,16 +226,19 @@ namespace XcOsu.Server.Services
             }
         }
 
-        private void cacheMap(JObject map, Microsoft.Data.Sqlite.SqliteConnection? conn = null)
+        private void cacheMap(JObject map, Npgsql.NpgsqlConnection? conn = null)
         {
             int? id = map.Value<int?>("id");
             if (id == null) return;
             var c = conn ?? db.Open();
             try
             {
-                c.Exec("INSERT OR REPLACE INTO beatmaps (id, set_id, checksum, status, json, fetched_at) VALUES ($i, $s, $c, $st, $j, $t)",
-                    ("$i", id), ("$s", map.Value<int?>("beatmapset_id") ?? 0), ("$c", map.Value<string>("checksum")),
-                    ("$st", statusValue(map["status"] ?? map["ranked"])), ("$j", map.ToString(Newtonsoft.Json.Formatting.None)), ("$t", now()));
+                c.Exec("""
+                    INSERT INTO beatmaps (id, set_id, checksum, status, json, fetched_at) VALUES (@i, @s, @c, @st, @j, @t)
+                    ON CONFLICT (id) DO UPDATE SET set_id = EXCLUDED.set_id, checksum = EXCLUDED.checksum, status = EXCLUDED.status, json = EXCLUDED.json, fetched_at = EXCLUDED.fetched_at
+                    """,
+                    ("@i", id), ("@s", map.Value<int?>("beatmapset_id") ?? 0), ("@c", map.Value<string>("checksum")),
+                    ("@st", statusValue(map["status"] ?? map["ranked"])), ("@j", map.ToString(Newtonsoft.Json.Formatting.None)), ("@t", now()));
             }
             finally
             {

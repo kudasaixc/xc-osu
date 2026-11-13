@@ -140,7 +140,7 @@ namespace XcOsu.Server.Api
                 if (!store.Rooms.TryGetValue(id, out var room))
                 {
                     using var c = db.Open();
-                    string? stored = c.Scalar<string>("SELECT json FROM rooms WHERE id = $i", ("$i", id));
+                    string? stored = c.Scalar<string>("SELECT json FROM rooms WHERE id = @i", ("@i", id));
                     return stored == null || stored == "{}" ? Json.Error("Room not found", 404) : Json.Ok(JObject.Parse(stored));
                 }
 
@@ -205,7 +205,7 @@ namespace XcOsu.Server.Api
                 if (room.Json.Value<int?>("max_attempts") is int max)
                 {
                     using var c = db.Open();
-                    long attempts = c.Scalar<long>("SELECT COUNT(*) FROM score_tokens WHERE user_id = $u AND playlist_item_id = $p", ("$u", u), ("$p", item));
+                    long attempts = c.Scalar<long>("SELECT COUNT(*) FROM score_tokens WHERE user_id = @u AND playlist_item_id = @p", ("@u", u), ("@p", item));
                     if (attempts >= max) return Json.Error("You've run out of attempts.", 422);
                 }
 
@@ -227,7 +227,7 @@ namespace XcOsu.Server.Api
                 if (score == null) return Json.Error("invalid score");
                 int beatmapId;
                 using (var c = db.Open())
-                    beatmapId = (int)(c.Scalar<long?>("SELECT beatmap_id FROM score_tokens WHERE id = $t AND room_id = $r AND playlist_item_id = $p", ("$t", token), ("$r", id), ("$p", item)) ?? 0);
+                    beatmapId = (int)(c.Scalar<long?>("SELECT beatmap_id FROM score_tokens WHERE id = @t AND room_id = @r AND playlist_item_id = @p", ("@t", token), ("@r", id), ("@p", item)) ?? 0);
                 SoloScoreInfo? stored;
                 try
                 {
@@ -250,7 +250,7 @@ namespace XcOsu.Server.Api
             {
                 int limit = Math.Clamp(int.TryParse(ctx.Request.Query["limit"], out int l) ? l : 50, 1, 100);
                 using (var check = db.Open())
-                    if (check.Scalar<long>("SELECT COUNT(*) FROM playlist_items WHERE id = $i AND room_id = $r", ("$i", item), ("$r", id)) != 1)
+                    if (check.Scalar<long>("SELECT COUNT(*) FROM playlist_items WHERE id = @i AND room_id = @r", ("@i", item), ("@r", id)) != 1)
                         return Json.Error("Playlist item not found", 404);
                 var all = playlistBest(db, item, accounts, users);
                 int? me = uid(ctx);
@@ -268,14 +268,14 @@ namespace XcOsu.Server.Api
             api.MapGet("/rooms/{id:long}/playlist/{item:long}/scores/{scoreId:long}", (long id, long item, long scoreId, Db db, Accounts accounts, UsersService users) =>
             {
                 using (var check = db.Open())
-                    if (check.Scalar<long>("SELECT COUNT(*) FROM playlist_items WHERE id = $i AND room_id = $r", ("$i", item), ("$r", id)) != 1)
+                    if (check.Scalar<long>("SELECT COUNT(*) FROM playlist_items WHERE id = @i AND room_id = @r", ("@i", item), ("@r", id)) != 1)
                         return Json.Error("Playlist item not found", 404);
                 var all = playlistBest(db, item, accounts, users);
                 int idx = all.FindIndex(s => (long)(s.ID ?? 0) == scoreId);
                 if (idx < 0)
                 {
                     using var c = db.Open();
-                    if (c.Scalar<long>("SELECT COUNT(*) FROM scores WHERE id = $s AND playlist_item_id = $p", ("$s", scoreId), ("$p", item)) != 1)
+                    if (c.Scalar<long>("SELECT COUNT(*) FROM scores WHERE id = @s AND playlist_item_id = @p", ("@s", scoreId), ("@p", item)) != 1)
                         return Json.Error("Score not found", 404);
                     var s = Scores.Load(c, new[] { scoreId }, accounts, users, withBeatmap: false).FirstOrDefault();
                     return s == null ? Json.Error("Score not found", 404) : Json.Ok(withPosition(s, null, id, item));
@@ -287,7 +287,7 @@ namespace XcOsu.Server.Api
             api.MapGet("/rooms/{id:long}/playlist/{item:long}/scores/users/{user:int}", (long id, long item, int user, Db db, Accounts accounts, UsersService users) =>
             {
                 using (var check = db.Open())
-                    if (check.Scalar<long>("SELECT COUNT(*) FROM playlist_items WHERE id = $i AND room_id = $r", ("$i", item), ("$r", id)) != 1)
+                    if (check.Scalar<long>("SELECT COUNT(*) FROM playlist_items WHERE id = @i AND room_id = @r", ("@i", item), ("@r", id)) != 1)
                         return Json.Error("Playlist item not found", 404);
                 var all = playlistBest(db, item, accounts, users);
                 int idx = all.FindIndex(s => s.UserID == user);
@@ -303,8 +303,8 @@ namespace XcOsu.Server.Api
                 var rows = c.Query($"""
                     SELECT user_id, SUM(best), AVG(acc), COUNT(*) FROM (
                         SELECT user_id, playlist_item_id, MAX(total_score) AS best, MAX(accuracy) AS acc FROM scores
-                        WHERE playlist_item_id IN ({string.Join(',', items)}) AND passed = 1 GROUP BY user_id, playlist_item_id)
-                    GROUP BY user_id ORDER BY SUM(best) DESC
+                        WHERE playlist_item_id IN ({string.Join(',', items)}) AND passed = 1 GROUP BY user_id, playlist_item_id) t
+                    GROUP BY user_id ORDER BY SUM(best) DESC, user_id
                     """, r => (user: r.GetInt32(0), total: r.GetInt64(1), acc: r.GetDouble(2), count: r.GetInt32(3)));
 
                 var accountsById = accounts.GetMany(rows.Select(r => r.user)).ToDictionary(a => a.Id);
@@ -330,8 +330,8 @@ namespace XcOsu.Server.Api
         {
             var db = ctx.RequestServices.GetRequiredService<Db>();
             using var c = db.Open();
-            c.Exec("INSERT OR REPLACE INTO playlist_items (id, room_id, json) VALUES ($i, $r, $j)",
-                ("$i", item.Value<long>("id")), ("$r", roomId), ("$j", item.ToString(Formatting.None)));
+            c.Exec("INSERT INTO playlist_items (id, room_id, json) VALUES (@i, @r, @j) ON CONFLICT (id) DO UPDATE SET room_id = EXCLUDED.room_id, json = EXCLUDED.json",
+                ("@i", item.Value<long>("id")), ("@r", roomId), ("@j", item.ToString(Formatting.None)));
         }
 
         private static List<long> playlistItemIds(RoomStore store, Db db, long roomId)
@@ -346,7 +346,7 @@ namespace XcOsu.Server.Api
             }
 
             using var c = db.Open();
-            return c.Query("SELECT id FROM playlist_items WHERE room_id = $r", r => r.GetInt64(0), ("$r", roomId));
+            return c.Query("SELECT id FROM playlist_items WHERE room_id = @r", r => r.GetInt64(0), ("@r", roomId));
         }
 
         private static int? findBeatmap(RoomStore store, Db db, long roomId, long itemId)
@@ -361,15 +361,15 @@ namespace XcOsu.Server.Api
             }
 
             using var c = db.Open();
-            string? json = c.Scalar<string>("SELECT json FROM playlist_items WHERE id = $i AND room_id = $r", ("$i", itemId), ("$r", roomId));
+            string? json = c.Scalar<string>("SELECT json FROM playlist_items WHERE id = @i AND room_id = @r", ("@i", itemId), ("@r", roomId));
             return json == null ? null : JObject.Parse(json).Value<int?>("beatmap_id");
         }
 
         private static List<SoloScoreInfo> playlistBest(Db db, long item, Accounts accounts, UsersService users)
         {
             using var c = db.Open();
-            var rows = c.Query("SELECT id, user_id FROM scores WHERE playlist_item_id = $p AND passed = 1 ORDER BY total_score DESC, id ASC",
-                r => (id: r.GetInt64(0), user: r.GetInt32(1)), ("$p", item));
+            var rows = c.Query("SELECT id, user_id FROM scores WHERE playlist_item_id = @p AND passed = 1 ORDER BY total_score DESC, id ASC",
+                r => (id: r.GetInt64(0), user: r.GetInt32(1)), ("@p", item));
             var seen = new HashSet<int>();
             return Scores.Load(c, rows.Where(r => seen.Add(r.user)).Select(r => r.id), accounts, users, withBeatmap: false);
         }

@@ -233,7 +233,10 @@ try {
     await visit('/community/forums/topics/create?forum_id=5');
     await page.waitForURL(/\/web\/wiki\/Reporting_a_problem$/); await page.waitForSelector('.prose h1'); step('the game\'s "report an issue" link lands on the reporting page');
     await visit('/home/changelog'); assert.match(await text(page), /2026\.1109\.0/); assert.match(await text(page), /Première version publique/);
-    await visit('/home/changelog/lazer/2026.1110.0'); assert.doesNotMatch(await text(page), /2026\.1109\.0/); step('changelog: all versions and one version');
+    assert.equal(await page.locator('.stream-badge').count(), 2); assert.match(await text(page), /Première version du serveur/);
+    await visit('/home/changelog/lazer/2026.1110.0'); assert.doesNotMatch(await text(page), /2026\.1109\.0/); assert.doesNotMatch(await text(page), /Matchmaking/);
+    await visit('/home/changelog/nanbeige'); assert.match(await text(page), /Première version du serveur/); assert.doesNotMatch(await text(page), /Première version publique/);
+    await visit('/home/changelog/nanbeige/2026.1110.0'); assert.match(await text(page), /Matchmaking/); assert.doesNotMatch(await text(page), /2026\.1109\.0/); step('changelog: all versions, one stream and one version');
     await visit('/home/news'); await page.click('.post-card:has-text("Bienvenue")');
     await page.waitForSelector('.prose'); assert.match(page.url(), /\/web\/news\/2026-11-09-welcome-to-xc-osu$/);
     await page.click('.post-near'); await page.waitForFunction(() => /onglet/.test(document.querySelector('.article h1')?.textContent || '')); step('news: list, post, next post');

@@ -65,7 +65,7 @@ namespace XcOsu.Server.Api
                 if (ctx.User.UserId() is not int u) return Json.Error("unauthorized", 401);
                 File.Delete(Path.Combine(db.DataDirectory, "covers", u.ToString()));
                 using var c = db.Open();
-                c.Exec("UPDATE users SET cover_version = 0 WHERE id = $u", ("$u", u));
+                c.Exec("UPDATE users SET cover_version = 0 WHERE id = @u", ("@u", u));
                 return Results.NoContent();
             });
 
@@ -109,9 +109,9 @@ namespace XcOsu.Server.Api
                 if (body["profile_order"] is JArray order) profile["profile_order"] = order;
 
                 using var c = db.Open();
-                c.Exec("UPDATE users SET profile_json = $p WHERE id = $u", ("$p", profile.ToString(Formatting.None)), ("$u", u));
+                c.Exec("UPDATE users SET profile_json = @p WHERE id = @u", ("@p", profile.ToString(Formatting.None)), ("@u", u));
                 if (body.Value<string>("playmode") is "osu" or "taiko" or "fruits" or "mania")
-                    c.Exec("UPDATE users SET playmode = $m WHERE id = $u", ("$m", body.Value<string>("playmode")), ("$u", u));
+                    c.Exec("UPDATE users SET playmode = @m WHERE id = @u", ("@m", body.Value<string>("playmode")), ("@u", u));
                 // the country is set from the connection when the account is created and is not editable: rankings by country rely on it.
                 return Results.NoContent();
             });
@@ -124,12 +124,12 @@ namespace XcOsu.Server.Api
                 string next = p("new_password") ?? "";
                 if (next.Length is < Accounts.PASSWORD_MIN or > Accounts.PASSWORD_MAX) return Json.Error(Accounts.PASSWORD_RULE, 422);
                 using var c = db.Open();
-                c.Exec("BEGIN IMMEDIATE");
-                c.Exec("UPDATE users SET password_hash = $h WHERE id = $u", ("$h", Accounts.HashPassword(next)), ("$u", u));
-                c.Exec("DELETE FROM password_resets WHERE user_id = $u", ("$u", u));
-                c.Exec("DELETE FROM tokens WHERE user_id = $u", ("$u", u));
-                c.Exec("DELETE FROM account_challenges WHERE user_id = $u AND purpose = 'reset'", ("$u", u));
-                c.Exec("COMMIT");
+                using var tx = c.BeginTransaction();
+                c.Exec("UPDATE users SET password_hash = @h WHERE id = @u", ("@h", Accounts.HashPassword(next)), ("@u", u));
+                c.Exec("DELETE FROM password_resets WHERE user_id = @u", ("@u", u));
+                c.Exec("DELETE FROM tokens WHERE user_id = @u", ("@u", u));
+                c.Exec("DELETE FROM account_challenges WHERE user_id = @u AND purpose = 'reset'", ("@u", u));
+                tx.Commit();
                 accounts.NotifyRevoked(u);
                 return Results.NoContent();
             });
@@ -157,7 +157,7 @@ namespace XcOsu.Server.Api
             File.Move(tmp, Path.Combine(dir, u.ToString()), true);
 
             using var c = db.Open();
-            c.Exec($"UPDATE users SET {versionColumn} = {versionColumn} + 1 WHERE id = $u", ("$u", u));
+            c.Exec($"UPDATE users SET {versionColumn} = {versionColumn} + 1 WHERE id = @u", ("@u", u));
             return Results.NoContent();
         }
     }

@@ -82,7 +82,7 @@ namespace XcOsu.Server.Hubs
             {
                 using var c = db.Open();
                 // only ownership is enforced: the spectator state may legitimately lack a beatmap / ruleset id.
-                if (c.Scalar<long>("SELECT COUNT(*) FROM score_tokens WHERE id = $t AND user_id = $u", ("$t", token), ("$u", u)) != 1)
+                if (c.Scalar<long>("SELECT COUNT(*) FROM score_tokens WHERE id = @t AND user_id = @u", ("@t", token), ("@u", u)) != 1)
                     throw new HubException("Invalid score token.");
             }
             // a newer connection (reconnect, second tab) takes the play session over, as it always did.
@@ -139,7 +139,7 @@ namespace XcOsu.Server.Hubs
                 for (int i = 0; i < 60 && scoreId == null; i++)
                 {
                     using (var c = db.Open())
-                        scoreId = c.Scalar<long?>("SELECT score_id FROM score_tokens WHERE id = $t AND user_id = $u", ("$t", token), ("$u", userId));
+                        scoreId = c.Scalar<long?>("SELECT score_id FROM score_tokens WHERE id = @t AND user_id = @u", ("@t", token), ("@u", userId));
                     if (scoreId == null) await Task.Delay(1000);
                 }
 
@@ -150,7 +150,7 @@ namespace XcOsu.Server.Hubs
                 using (var c = db.Open())
                 {
                     solo = Scores.Load(c, new[] { scoreId.Value }, accounts, users, withBeatmap: false).Single();
-                    checksum = c.Scalar<string>("SELECT checksum FROM beatmaps WHERE id = $b", ("$b", solo.BeatmapID));
+                    checksum = c.Scalar<string>("SELECT checksum FROM beatmaps WHERE id = @b", ("@b", solo.BeatmapID));
                 }
 
                 var ruleset = Performance.Ruleset(solo.RulesetID);

@@ -12,6 +12,11 @@ using XcOsu.Server.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// database calls are synchronous: keep enough workers ready that a burst of a few hundred requests is served at once
+// instead of waiting for the pool to grow one thread at a time.
+ThreadPool.GetMinThreads(out int minWorkers, out int minIo);
+ThreadPool.SetMinThreads(Math.Max(minWorkers, 128), Math.Max(minIo, 64));
+
 builder.WebHost.UseUrls(builder.Configuration["Urls"] ?? "http://127.0.0.1:5080");
 builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 18 * 1024 * 1024);
 builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(o => { o.MultipartBodyLengthLimit = 17 * 1024 * 1024; o.ValueCountLimit = 64; o.ValueLengthLimit = 65536; o.MultipartHeadersCountLimit = 16; });
@@ -90,8 +95,23 @@ if (args.Length == 2 && args[0] == "grant-admin")
     if (!int.TryParse(args[1], out int adminId) || adminId <= 0)
         throw new ArgumentException("Usage: grant-admin <existing-user-id>");
     using var connection = app.Services.GetRequiredService<Db>().Open();
-    if (connection.Exec("UPDATE users SET is_admin = 1 WHERE id = $id AND restricted = 0", ("$id", adminId)) != 1)
+    if (connection.Exec("UPDATE users SET is_admin = 1 WHERE id = @id AND restricted = 0", ("@id", adminId)) != 1)
         throw new InvalidOperationException("Eligible account not found.");
+    return;
+}
+
+// Local operator command: load the former SQLite files (xc-osu.db, telemetry.db) into PostgreSQL, replacing what is there.
+if (args.Length >= 2 && args[0] == "import-sqlite")
+{
+    var target = app.Services.GetRequiredService<Db>();
+    _ = app.Services.GetRequiredService<Telemetry>(); // its tables are created on first use
+    var files = args.Skip(1).SelectMany(a => Directory.Exists(a)
+        ? new[] { "xc-osu.db", "telemetry.db" }.Select(f => Path.Combine(a, f)).Where(File.Exists)
+        : new[] { a }).ToList();
+    if (files.Count == 0) throw new ArgumentException("Usage: import-sqlite <directory | file.db ...>");
+    foreach (string f in files) Console.WriteLine(f);
+    SqliteImport.Run(target, files, Console.WriteLine);
+    Console.WriteLine("import complete");
     return;
 }
 

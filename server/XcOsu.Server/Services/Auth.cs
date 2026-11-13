@@ -27,7 +27,7 @@ namespace XcOsu.Server.Services
 
         public Accounts(Db db) => this.db = db;
 
-        public static AccountRow Map(Microsoft.Data.Sqlite.SqliteDataReader r) => new AccountRow(
+        public static AccountRow Map(DbRow r) => new AccountRow(
             r.GetInt32(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4),
             DateTimeOffset.Parse(r.GetString(5)), r.GetInt32(6) != 0, r.IsDBNull(7) ? null : r.GetString(7), r.GetString(8),
             r.GetInt32(9), r.GetInt32(10), r.IsDBNull(11) ? null : DateTimeOffset.Parse(r.GetString(11)), r.GetInt32(12) != 0, r.GetString(13), r.GetString(14),
@@ -39,13 +39,13 @@ namespace XcOsu.Server.Services
         public AccountRow? Get(int id)
         {
             using var c = db.Open();
-            return c.Query($"SELECT {COLUMNS} FROM users WHERE id = $id", Map, ("$id", id)).FirstOrDefault();
+            return c.Query($"SELECT {COLUMNS} FROM users WHERE id = @id", Map, ("@id", id)).FirstOrDefault();
         }
 
         public AccountRow? GetByName(string name)
         {
             using var c = db.Open();
-            return c.Query($"SELECT {COLUMNS} FROM users WHERE username = $n", Map, ("$n", name)).FirstOrDefault();
+            return c.Query($"SELECT {COLUMNS} FROM users WHERE username = @n", Map, ("@n", name)).FirstOrDefault();
         }
 
         public List<AccountRow> GetMany(IEnumerable<int> ids)
@@ -76,16 +76,24 @@ namespace XcOsu.Server.Services
                 add("password", "Password may not contain username.");
 
             using var c = db.Open();
-            if (c.Scalar<long>("SELECT COUNT(*) FROM users WHERE username = $u", ("$u", username)) > 0)
+            if (c.Scalar<long>("SELECT COUNT(*) FROM users WHERE username = @u", ("@u", username)) > 0)
                 add("username", "Username is already in use!");
-            if (c.Scalar<long>("SELECT COUNT(*) FROM users WHERE email = $e", ("$e", email)) > 0)
+            if (c.Scalar<long>("SELECT COUNT(*) FROM users WHERE email = @e", ("@e", email)) > 0)
                 add("user_email", "Registration cannot be completed with these details.");
 
             if (errors.Count > 0)
                 return errors.ToDictionary(e => e.Key, e => e.Value.ToArray());
 
-            c.Exec("INSERT INTO users (username, email, password_hash, country, join_date, is_admin, verification_required) VALUES ($u, $e, $p, $c, $d, $a, 1)",
-                ("$u", username), ("$e", email), ("$p", HashPassword(password)), ("$c", country), ("$d", DateTimeOffset.UtcNow.ToString("O")), ("$a", 0));
+            try
+            {
+                c.Exec("INSERT INTO users (username, email, password_hash, country, join_date, is_admin, verification_required) VALUES (@u, @e, @p, @c, @d, @a, 1)",
+                    ("@u", username), ("@e", email), ("@p", HashPassword(password)), ("@c", country), ("@d", DateTimeOffset.UtcNow.ToString("O")), ("@a", 0));
+            }
+            catch (Exception e) when (e.IsUniqueViolation())
+            {
+                // two registrations raced past the checks above; the unique index decided.
+                return new Dictionary<string, string[]> { ["username"] = new[] { "Username is already in use!" } };
+            }
             return null;
         }
 
@@ -95,7 +103,7 @@ namespace XcOsu.Server.Services
             string accountKey = TokenHash(username.Trim().ToUpperInvariant());
             if (!LoginAttempts.CanTry(accountKey) || !AbuseGuard.Allow("login-account:" + accountKey, 10, TimeSpan.FromMinutes(1))) return null;
             using var c = db.Open();
-            var user = c.Query($"SELECT {COLUMNS} FROM users WHERE username = $n OR email = $n", Map, ("$n", username.Trim())).FirstOrDefault();
+            var user = c.Query($"SELECT {COLUMNS} FROM users WHERE username = @n OR email = @n", Map, ("@n", username.Trim())).FirstOrDefault();
             bool valid = user != null && !user.Restricted && VerifyPassword(password, user.PasswordHash);
             LoginAttempts.Record(accountKey, valid);
             return valid ? user : null;
@@ -119,29 +127,29 @@ namespace XcOsu.Server.Services
         public (string access, string refresh) IssueToken(int userId, long? sessionExpiresAt = null, string? sessionId = null)
         {
             using var c = db.Open();
-            c.Exec("DELETE FROM tokens WHERE refresh_expires_at < $now", ("$now", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+            c.Exec("DELETE FROM tokens WHERE refresh_expires_at < @now", ("@now", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
             return issue(c, userId, sessionExpiresAt, sessionId);
         }
 
-        private static (string access, string refresh) issue(Microsoft.Data.Sqlite.SqliteConnection c, int userId, long? sessionExpiresAt, string? sessionId)
+        private static (string access, string refresh) issue(Npgsql.NpgsqlConnection c, int userId, long? sessionExpiresAt, string? sessionId)
         {
             string access = randomToken(), refresh = randomToken();
-            c.Exec("INSERT INTO tokens (access_token, refresh_token, user_id, expires_at, refresh_expires_at, session_expires_at, session_id) VALUES ($a, $r, $u, $e, $re, $se, $sid)",
-                ("$a", TokenHash(access)), ("$r", TokenHash(refresh)), ("$u", userId), ("$e", DateTimeOffset.UtcNow.ToUnixTimeSeconds() + TOKEN_LIFETIME_SECONDS),
-                ("$re", Math.Min(DateTimeOffset.UtcNow.AddDays(30).ToUnixTimeSeconds(), sessionExpiresAt ?? long.MaxValue)),
-                ("$se", sessionExpiresAt ?? DateTimeOffset.UtcNow.AddDays(90).ToUnixTimeSeconds()),
-                ("$sid", sessionId ?? randomToken()[..32]));
-            c.Exec("UPDATE users SET last_visit = $t WHERE id = $u", ("$t", DateTimeOffset.UtcNow.ToString("O")), ("$u", userId));
+            c.Exec("INSERT INTO tokens (access_token, refresh_token, user_id, expires_at, refresh_expires_at, session_expires_at, session_id) VALUES (@a, @r, @u, @e, @re, @se, @sid)",
+                ("@a", TokenHash(access)), ("@r", TokenHash(refresh)), ("@u", userId), ("@e", DateTimeOffset.UtcNow.ToUnixTimeSeconds() + TOKEN_LIFETIME_SECONDS),
+                ("@re", Math.Min(DateTimeOffset.UtcNow.AddDays(30).ToUnixTimeSeconds(), sessionExpiresAt ?? long.MaxValue)),
+                ("@se", sessionExpiresAt ?? DateTimeOffset.UtcNow.AddDays(90).ToUnixTimeSeconds()),
+                ("@sid", sessionId ?? randomToken()[..32]));
+            c.Exec("UPDATE users SET last_visit = @t WHERE id = @u", ("@t", DateTimeOffset.UtcNow.ToString("O")), ("@u", userId));
             return (access, refresh);
         }
 
-        private const string refresh_sql = "DELETE FROM tokens WHERE refresh_token = $r AND refresh_expires_at > $now AND session_expires_at > $now AND user_id IN (SELECT id FROM users WHERE restricted = 0) RETURNING user_id, session_expires_at, session_id";
+        private const string refresh_sql = "DELETE FROM tokens WHERE refresh_token = @r AND refresh_expires_at > @now AND session_expires_at > @now AND user_id IN (SELECT id FROM users WHERE restricted = 0) RETURNING user_id, session_expires_at, session_id";
 
-        private static (int UserId, long SessionExpiresAt, string SessionId)? consume(Microsoft.Data.Sqlite.SqliteConnection c, string refreshToken)
+        private static (int UserId, long SessionExpiresAt, string SessionId)? consume(Npgsql.NpgsqlConnection c, string refreshToken)
         {
             if (refreshToken.Length != 64) return null;
             var rows = c.Query(refresh_sql, r => (UserId: r.GetInt32(0), SessionExpiresAt: r.GetInt64(1), SessionId: r.GetString(2)),
-                ("$r", TokenHash(refreshToken)), ("$now", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+                ("@r", TokenHash(refreshToken)), ("@now", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
             return rows.Count == 1 ? rows[0] : null;
         }
 
@@ -160,16 +168,13 @@ namespace XcOsu.Server.Services
         {
             if (refreshToken.Length != 64) return null;
             using var c = db.Open();
-            c.Exec("BEGIN IMMEDIATE");
-            try
-            {
-                var old = consume(c, refreshToken);
-                if (old == null) { c.Exec("ROLLBACK"); return null; }
-                var pair = issue(c, old.Value.UserId, old.Value.SessionExpiresAt, old.Value.SessionId);
-                c.Exec("COMMIT");
-                return (old.Value.UserId, pair.access, pair.refresh);
-            }
-            catch { try { c.Exec("ROLLBACK"); } catch { } throw; }
+            // the DELETE … RETURNING takes the row lock: a concurrent rotation of the same token waits, then finds nothing.
+            using var tx = c.BeginTransaction();
+            var old = consume(c, refreshToken);
+            if (old == null) return null;
+            var pair = issue(c, old.Value.UserId, old.Value.SessionExpiresAt, old.Value.SessionId);
+            tx.Commit();
+            return (old.Value.UserId, pair.access, pair.refresh);
         }
 
         private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (bool Active, long CheckedAtMs, long Epoch)> sessionChecks = new();
@@ -185,8 +190,8 @@ namespace XcOsu.Server.Services
             if (sessionChecks.TryGetValue(sessionId, out var known) && known.Epoch == epoch && nowMs - known.CheckedAtMs < 2000) return known.Active;
             long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             using var c = db.Open();
-            bool active = c.Scalar<long>("SELECT COUNT(*) FROM tokens WHERE session_id = $s AND user_id = $u AND session_expires_at > $now AND (expires_at > $now OR refresh_expires_at > $now) AND user_id IN (SELECT id FROM users WHERE restricted = 0)",
-                ("$s", sessionId), ("$u", userId), ("$now", now)) > 0;
+            bool active = c.Scalar<long>("SELECT COUNT(*) FROM tokens WHERE session_id = @s AND user_id = @u AND session_expires_at > @now AND (expires_at > @now OR refresh_expires_at > @now) AND user_id IN (SELECT id FROM users WHERE restricted = 0)",
+                ("@s", sessionId), ("@u", userId), ("@now", now)) > 0;
             if (sessionChecks.Count > 50000) sessionChecks.Clear();
             sessionChecks[sessionId] = (active, nowMs, epoch);
             return active;
@@ -205,13 +210,13 @@ namespace XcOsu.Server.Services
         {
             if (!EmailConfirmationEnforced) return false;
             using var c = db.Open();
-            return c.Scalar<long>("SELECT COUNT(*) FROM users WHERE id = $u AND verification_required = 1 AND email_verified = 0", ("$u", userId)) > 0;
+            return c.Scalar<long>("SELECT COUNT(*) FROM users WHERE id = @u AND verification_required = 1 AND email_verified = 0", ("@u", userId)) > 0;
         }
 
         public bool EmailVerified(int userId)
         {
             using var c = db.Open();
-            return c.Scalar<long>("SELECT COUNT(*) FROM users WHERE id = $u AND email_verified = 1", ("$u", userId)) > 0;
+            return c.Scalar<long>("SELECT COUNT(*) FROM users WHERE id = @u AND email_verified = 1", ("@u", userId)) > 0;
         }
 
         public static string TokenHash(string token) => "sha256:" + Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(token)));
@@ -221,9 +226,9 @@ namespace XcOsu.Server.Services
         public (int UserId, string SessionId)? ValidateAccess(string token)
         {
             using var c = db.Open();
-            var rows = c.Query("SELECT user_id, session_id FROM tokens WHERE access_token = $a AND expires_at > $now AND session_expires_at > $now AND user_id IN (SELECT id FROM users WHERE restricted = 0)",
+            var rows = c.Query("SELECT user_id, session_id FROM tokens WHERE access_token = @a AND expires_at > @now AND session_expires_at > @now AND user_id IN (SELECT id FROM users WHERE restricted = 0)",
                 r => (UserId: r.GetInt32(0), SessionId: r.GetString(1)),
-                ("$a", TokenHash(token)), ("$now", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+                ("@a", TokenHash(token)), ("@now", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
             return rows.Count == 1 ? rows[0] : null;
         }
 
@@ -233,11 +238,11 @@ namespace XcOsu.Server.Services
             int? user = null;
             using (var c = db.Open())
             {
-                var rows = c.Query("DELETE FROM tokens WHERE access_token = $a RETURNING user_id, session_id", r => (r.GetInt32(0), r.GetString(1)), ("$a", TokenHash(token)));
+                var rows = c.Query("DELETE FROM tokens WHERE access_token = @a RETURNING user_id, session_id", r => (r.GetInt32(0), r.GetString(1)), ("@a", TokenHash(token)));
                 foreach (var (u, sid) in rows)
                 {
                     user = u;
-                    c.Exec("DELETE FROM tokens WHERE session_id = $s AND user_id = $u", ("$s", sid), ("$u", u));
+                    c.Exec("DELETE FROM tokens WHERE session_id = @s AND user_id = @u", ("@s", sid), ("@u", u));
                 }
             }
             if (user != null) NotifyRevoked(user);
@@ -246,7 +251,7 @@ namespace XcOsu.Server.Services
         /// <summary>End every session of an account (password / email change, reset, moderation).</summary>
         public void RevokeAll(int userId)
         {
-            using (var c = db.Open()) c.Exec("DELETE FROM tokens WHERE user_id = $u", ("$u", userId));
+            using (var c = db.Open()) c.Exec("DELETE FROM tokens WHERE user_id = @u", ("@u", userId));
             NotifyRevoked(userId);
         }
 

@@ -27,10 +27,10 @@ namespace XcOsu.Server.Services
 
         private sealed record ChannelRow(int Id, string Name, string Description, string Type, int? A, int? B);
 
-        private static ChannelRow mapChannel(Microsoft.Data.Sqlite.SqliteDataReader r) =>
+        private static ChannelRow mapChannel(DbRow r) =>
             new ChannelRow(r.GetInt32(0), r.GetString(1), r.GetString(2), r.GetString(3), r.IsDBNull(4) ? null : r.GetInt32(4), r.IsDBNull(5) ? null : r.GetInt32(5));
 
-        private Channel toChannel(ChannelRow row, int viewer, Microsoft.Data.Sqlite.SqliteConnection c)
+        private Channel toChannel(ChannelRow row, int viewer, Npgsql.NpgsqlConnection c)
         {
             var ch = new Channel
             {
@@ -38,8 +38,8 @@ namespace XcOsu.Server.Services
                 Name = row.Name,
                 Topic = row.Description,
                 Type = Enum.TryParse(row.Type, true, out ChannelType t) ? t : ChannelType.Public,
-                LastMessageId = c.Scalar<long?>("SELECT MAX(id) FROM chat_messages WHERE channel_id = $c", ("$c", row.Id)),
-                LastReadId = c.Scalar<long?>("SELECT last_read_id FROM chat_members WHERE channel_id = $c AND user_id = $u", ("$c", row.Id), ("$u", viewer)),
+                LastMessageId = c.Scalar<long?>("SELECT MAX(id) FROM chat_messages WHERE channel_id = @c", ("@c", row.Id)),
+                LastReadId = c.Scalar<long?>("SELECT last_read_id FROM chat_members WHERE channel_id = @c AND user_id = @u", ("@c", row.Id), ("@u", viewer)),
             };
 
             if (row.Type == "PM")
@@ -95,57 +95,57 @@ namespace XcOsu.Server.Services
             using var c = db.Open();
             return c.Query("""
                 SELECT c.id, c.name, c.description, c.type, c.pm_user_a, c.pm_user_b FROM chat_channels c
-                JOIN chat_members m ON m.channel_id = c.id WHERE m.user_id = $u
-                """, mapChannel, ("$u", viewer)).Select(r => toChannel(r, viewer, c)).ToList();
+                JOIN chat_members m ON m.channel_id = c.id WHERE m.user_id = @u
+                """, mapChannel, ("@u", viewer)).Select(r => toChannel(r, viewer, c)).ToList();
         }
 
         public Channel? Get(int channelId, int viewer)
         {
             using var c = db.Open();
-            var row = c.Query("SELECT id, name, description, type, pm_user_a, pm_user_b FROM chat_channels WHERE id = $i", mapChannel, ("$i", channelId)).FirstOrDefault();
+            var row = c.Query("SELECT id, name, description, type, pm_user_a, pm_user_b FROM chat_channels WHERE id = @i", mapChannel, ("@i", channelId)).FirstOrDefault();
             return row == null ? null : toChannel(row, viewer, c);
         }
 
         public Channel? Join(int channelId, int userId, bool roomAuthorized = false)
         {
             using var c = db.Open();
-            var row = c.Query("SELECT id, name, description, type, pm_user_a, pm_user_b FROM chat_channels WHERE id = $i", mapChannel, ("$i", channelId)).FirstOrDefault();
+            var row = c.Query("SELECT id, name, description, type, pm_user_a, pm_user_b FROM chat_channels WHERE id = @i", mapChannel, ("@i", channelId)).FirstOrDefault();
             if (row == null) return null;
             if (row.Type == "PM" && row.A != userId && row.B != userId) return null;
             if (row.Type == "MULTIPLAYER" && !roomAuthorized)
             {
-                long? roomId = c.Scalar<long?>("SELECT room_id FROM chat_channels WHERE id = $c", ("$c", channelId));
+                long? roomId = c.Scalar<long?>("SELECT room_id FROM chat_channels WHERE id = @c", ("@c", channelId));
                 if (roomId == null) return null;
-                string? category = c.Scalar<string>("SELECT category FROM rooms WHERE id = $r", ("$r", roomId));
+                string? category = c.Scalar<string>("SELECT category FROM rooms WHERE id = @r", ("@r", roomId));
                 if (category == "realtime" ? Hubs.MultiplayerHub.RoomOf(userId) != roomId :
-                    c.Scalar<long>("SELECT COUNT(*) FROM chat_members WHERE channel_id = $c AND user_id = $u", ("$c", channelId), ("$u", userId)) == 0)
+                    c.Scalar<long>("SELECT COUNT(*) FROM chat_members WHERE channel_id = @c AND user_id = @u", ("@c", channelId), ("@u", userId)) == 0)
                     return null;
             }
-            c.Exec("INSERT OR IGNORE INTO chat_members (channel_id, user_id) VALUES ($c, $u)", ("$c", channelId), ("$u", userId));
+            c.Exec("INSERT INTO chat_members (channel_id, user_id) VALUES (@c, @u) ON CONFLICT DO NOTHING", ("@c", channelId), ("@u", userId));
             return toChannel(row, userId, c);
         }
 
         public void Leave(int channelId, int userId)
         {
             using var c = db.Open();
-            c.Exec("DELETE FROM chat_members WHERE channel_id = $c AND user_id = $u", ("$c", channelId), ("$u", userId));
+            c.Exec("DELETE FROM chat_members WHERE channel_id = @c AND user_id = @u", ("@c", channelId), ("@u", userId));
         }
 
         public void MarkRead(int channelId, int userId, long messageId)
         {
             using var c = db.Open();
-            c.Exec("UPDATE chat_members SET last_read_id = MAX(last_read_id, $m) WHERE channel_id = $c AND user_id = $u", ("$m", messageId), ("$c", channelId), ("$u", userId));
+            c.Exec("UPDATE chat_members SET last_read_id = GREATEST(last_read_id, @m) WHERE channel_id = @c AND user_id = @u", ("@m", messageId), ("@c", channelId), ("@u", userId));
         }
 
         public bool CanRead(int channelId, int userId)
         {
             using var c = db.Open();
-            long? realtimeRoom = c.Scalar<long?>("SELECT ch.room_id FROM chat_channels ch JOIN rooms r ON r.id = ch.room_id WHERE ch.id = $c AND ch.type = 'MULTIPLAYER' AND r.category = 'realtime'", ("$c", channelId));
+            long? realtimeRoom = c.Scalar<long?>("SELECT ch.room_id FROM chat_channels ch JOIN rooms r ON r.id = ch.room_id WHERE ch.id = @c AND ch.type = 'MULTIPLAYER' AND r.category = 'realtime'", ("@c", channelId));
             if (realtimeRoom != null && Hubs.MultiplayerHub.RoomOf(userId) != realtimeRoom) return false;
             return c.Scalar<long>("""
-                SELECT COUNT(*) FROM chat_channels WHERE id = $c AND (type = 'PUBLIC' OR pm_user_a = $u OR pm_user_b = $u
-                    OR EXISTS (SELECT 1 FROM chat_members WHERE channel_id = $c AND user_id = $u))
-                """, ("$c", channelId), ("$u", userId)) > 0;
+                SELECT COUNT(*) FROM chat_channels WHERE id = @c AND (type = 'PUBLIC' OR pm_user_a = @u OR pm_user_b = @u
+                    OR EXISTS (SELECT 1 FROM chat_members WHERE channel_id = @c AND user_id = @u))
+                """, ("@c", channelId), ("@u", userId)) > 0;
         }
 
         private Message toMessage((long id, int channel, int sender, string content, bool action, string ts, string uuid) m, Dictionary<int, APIUser> cache)
@@ -172,9 +172,9 @@ namespace XcOsu.Server.Services
             using var c = db.Open();
             var rows = c.Query("""
                 SELECT id, channel_id, sender_id, content, is_action, timestamp, uuid FROM chat_messages
-                WHERE channel_id = $c AND id > $s ORDER BY id DESC LIMIT $l
+                WHERE channel_id = @c AND id > @s ORDER BY id DESC LIMIT @l
                 """, r => (r.GetInt64(0), r.GetInt32(1), r.GetInt32(2), r.GetString(3), r.GetInt32(4) != 0, r.GetString(5), r.IsDBNull(6) ? "" : r.GetString(6)),
-                ("$c", channelId), ("$s", since ?? 0), ("$l", limit));
+                ("@c", channelId), ("@s", since ?? 0), ("@l", limit));
             rows.Reverse();
             var cache = new Dictionary<int, APIUser>();
             return rows.Select(m => toMessage(m, cache)).ToList();
@@ -188,18 +188,18 @@ namespace XcOsu.Server.Services
             List<int> recipients;
             using (var c = db.Open())
             {
-                id = c.Insert("INSERT INTO chat_messages (channel_id, sender_id, content, is_action, timestamp, uuid) VALUES ($c, $s, $m, $a, $t, $g)",
-                    ("$c", channelId), ("$s", senderId), ("$m", content), ("$a", isAction ? 1 : 0), ("$t", ts), ("$g", uuid));
-                c.Exec("INSERT OR IGNORE INTO chat_members (channel_id, user_id) VALUES ($c, $u)", ("$c", channelId), ("$u", senderId));
-                c.Exec("UPDATE chat_members SET last_read_id = $m WHERE channel_id = $c AND user_id = $u", ("$m", id), ("$c", channelId), ("$u", senderId));
-                recipients = c.Query("SELECT user_id FROM chat_members WHERE channel_id = $c", r => r.GetInt32(0), ("$c", channelId));
+                id = c.Insert("INSERT INTO chat_messages (channel_id, sender_id, content, is_action, timestamp, uuid) VALUES (@c, @s, @m, @a, @t, @g)",
+                    ("@c", channelId), ("@s", senderId), ("@m", content), ("@a", isAction ? 1 : 0), ("@t", ts), ("@g", uuid));
+                c.Exec("INSERT INTO chat_members (channel_id, user_id) VALUES (@c, @u) ON CONFLICT DO NOTHING", ("@c", channelId), ("@u", senderId));
+                c.Exec("UPDATE chat_members SET last_read_id = @m WHERE channel_id = @c AND user_id = @u", ("@m", id), ("@c", channelId), ("@u", senderId));
+                recipients = c.Query("SELECT user_id FROM chat_members WHERE channel_id = @c", r => r.GetInt32(0), ("@c", channelId));
                 // PM: make sure the recipient sees the channel
-                var pm = c.Query("SELECT pm_user_a, pm_user_b FROM chat_channels WHERE id = $c AND type = 'PM'", r => (r.GetInt32(0), r.GetInt32(1)), ("$c", channelId)).FirstOrDefault();
+                var pm = c.Query("SELECT pm_user_a, pm_user_b FROM chat_channels WHERE id = @c AND type = 'PM'", r => (r.GetInt32(0), r.GetInt32(1)), ("@c", channelId)).FirstOrDefault();
                 if (pm != default)
                 {
                     foreach (int u in new[] { pm.Item1, pm.Item2 })
                     {
-                        c.Exec("INSERT OR IGNORE INTO chat_members (channel_id, user_id) VALUES ($c, $u)", ("$c", channelId), ("$u", u));
+                        c.Exec("INSERT INTO chat_members (channel_id, user_id) VALUES (@c, @u) ON CONFLICT DO NOTHING", ("@c", channelId), ("@u", u));
                         if (!recipients.Contains(u)) recipients.Add(u);
                     }
                 }
@@ -224,14 +224,14 @@ namespace XcOsu.Server.Services
             if (sender.SilencedUntil is DateTimeOffset until && until > DateTimeOffset.UtcNow) return $"You are silenced until {until:u}.";
 
             using var c = db.Open();
-            var pm = c.Query("SELECT pm_user_a, pm_user_b FROM chat_channels WHERE id = $c AND type = 'PM'", r => (r.GetInt32(0), r.GetInt32(1)), ("$c", channelId)).FirstOrDefault();
+            var pm = c.Query("SELECT pm_user_a, pm_user_b FROM chat_channels WHERE id = @c AND type = 'PM'", r => (r.GetInt32(0), r.GetInt32(1)), ("@c", channelId)).FirstOrDefault();
             if (pm != default)
             {
                 int other = pm.Item1 == senderId ? pm.Item2 : pm.Item1;
                 return PmRestriction(senderId, other);
             }
 
-            if (c.Scalar<long>("SELECT moderated FROM chat_channels WHERE id = $c", ("$c", channelId)) == 1 && !sender.IsAdmin)
+            if (c.Scalar<long>("SELECT moderated FROM chat_channels WHERE id = @c", ("@c", channelId)) == 1 && !sender.IsAdmin)
                 return "This channel is moderated.";
             return null;
         }
@@ -239,14 +239,14 @@ namespace XcOsu.Server.Services
         public string? PmRestriction(int sender, int target)
         {
             using var c = db.Open();
-            if (c.Scalar<long>("SELECT COUNT(*) FROM blocks WHERE user_id = $t AND target_id = $u", ("$t", target), ("$u", sender)) > 0)
+            if (c.Scalar<long>("SELECT COUNT(*) FROM blocks WHERE user_id = @t AND target_id = @u", ("@t", target), ("@u", sender)) > 0)
                 return "You cannot message this user.";
-            if (c.Scalar<long>("SELECT COUNT(*) FROM blocks WHERE user_id = $u AND target_id = $t", ("$t", target), ("$u", sender)) > 0)
+            if (c.Scalar<long>("SELECT COUNT(*) FROM blocks WHERE user_id = @u AND target_id = @t", ("@t", target), ("@u", sender)) > 0)
                 return "You have blocked this user.";
             var t = accounts.Get(target);
             if (t == null) return "User not found.";
             if (Newtonsoft.Json.Linq.JObject.Parse(t.ProfileJson).Value<bool?>("pm_friends_only") == true
-                && c.Scalar<long>("SELECT COUNT(*) FROM friends WHERE user_id = $t AND target_id = $u", ("$t", target), ("$u", sender)) == 0)
+                && c.Scalar<long>("SELECT COUNT(*) FROM friends WHERE user_id = @t AND target_id = @u", ("@t", target), ("@u", sender)) == 0)
                 return "This user only accepts messages from friends.";
             return null;
         }
@@ -255,14 +255,14 @@ namespace XcOsu.Server.Services
         public int CreateRoomChannel(long roomId, string roomName)
         {
             using var c = db.Open();
-            return (int)c.Insert("INSERT INTO chat_channels (name, description, type, room_id) VALUES ($n, $d, 'MULTIPLAYER', $r)",
-                ("$n", $"#mp_{roomId}"), ("$d", roomName), ("$r", roomId));
+            return (int)c.Insert("INSERT INTO chat_channels (name, description, type, room_id) VALUES (@n, @d, 'MULTIPLAYER', @r)",
+                ("@n", $"#mp_{roomId}"), ("@d", roomName), ("@r", roomId));
         }
 
         public void RenameRoomChannel(int channelId, string roomName)
         {
             using var c = db.Open();
-            c.Exec("UPDATE chat_channels SET description = $d WHERE id = $c", ("$d", roomName), ("$c", channelId));
+            c.Exec("UPDATE chat_channels SET description = @d WHERE id = @c", ("@d", roomName), ("@c", channelId));
         }
 
         /// <summary>Joins a user to a channel and tells their clients (chat.channel.join), like osu-web does for multiplayer rooms.</summary>
@@ -283,7 +283,7 @@ namespace XcOsu.Server.Services
         {
             List<int> members;
             using (var c = db.Open())
-                members = c.Query("SELECT user_id FROM chat_members WHERE channel_id = $c", r => r.GetInt32(0), ("$c", channelId));
+                members = c.Query("SELECT user_id FROM chat_members WHERE channel_id = @c", r => r.GetInt32(0), ("@c", channelId));
             foreach (int u in members)
                 await PartAndNotify(channelId, u);
         }
@@ -292,10 +292,10 @@ namespace XcOsu.Server.Services
         {
             int lo = Math.Min(a, b), hi = Math.Max(a, b);
             using var c = db.Open();
-            long? existing = c.Scalar<long?>("SELECT id FROM chat_channels WHERE type = 'PM' AND pm_user_a = $a AND pm_user_b = $b", ("$a", lo), ("$b", hi));
+            long? existing = c.Scalar<long?>("SELECT id FROM chat_channels WHERE type = 'PM' AND pm_user_a = @a AND pm_user_b = @b", ("@a", lo), ("@b", hi));
             if (existing != null) return (int)existing;
-            return (int)c.Insert("INSERT INTO chat_channels (name, description, type, pm_user_a, pm_user_b) VALUES ($n, '', 'PM', $a, $b)",
-                ("$n", $"pm_{lo}-{hi}"), ("$a", lo), ("$b", hi));
+            return (int)c.Insert("INSERT INTO chat_channels (name, description, type, pm_user_a, pm_user_b) VALUES (@n, '', 'PM', @a, @b)",
+                ("@n", $"pm_{lo}-{hi}"), ("@a", lo), ("@b", hi));
         }
 
         // ------------------------------------------------------------ notification websocket

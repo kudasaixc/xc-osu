@@ -60,15 +60,15 @@ namespace XcOsu.Server.Services
         {
             long id = Interlocked.Increment(ref nextPlaylistItemId);
             using var c = db.Open();
-            c.Exec("INSERT OR IGNORE INTO playlist_items (id, room_id, json) VALUES ($i, 0, '{}')", ("$i", id));
+            c.Exec("INSERT INTO playlist_items (id, room_id, json) VALUES (@i, 0, '{}') ON CONFLICT DO NOTHING", ("@i", id));
             return id;
         }
 
         public long AllocateRoomId(int hostId, string category, string type)
         {
             using var c = db.Open();
-            return c.Insert("INSERT INTO rooms (json, host_id, category, type, created_at) VALUES ('{}', $h, $c, $t, $d)",
-                ("$h", hostId), ("$c", category), ("$t", type), ("$d", DateTimeOffset.UtcNow.ToString("O")));
+            return c.Insert("INSERT INTO rooms (json, host_id, category, type, created_at) VALUES ('{}', @h, @c, @t, @d)",
+                ("@h", hostId), ("@c", category), ("@t", type), ("@d", DateTimeOffset.UtcNow.ToString("O")));
         }
 
         public ServerRoom CreatePlaylistRoom(int hostId, JObject json)
@@ -77,24 +77,24 @@ namespace XcOsu.Server.Services
                 throw new ArgumentException("Invalid playlist");
             using var c = db.Open();
             using var transaction = c.BeginTransaction();
-            long id = c.Insert("INSERT INTO rooms (json, host_id, category, type, created_at) VALUES ('{}', $h, 'normal', 'playlists', $at)",
-                ("$h", hostId), ("$at", DateTimeOffset.UtcNow.ToString("O")));
-            int channel = (int)c.Insert("INSERT INTO chat_channels (name, description, type, room_id) VALUES ($n, $d, 'MULTIPLAYER', $r)",
-                ("$n", $"#mp_{id}"), ("$d", json.Value<string>("name")), ("$r", id));
+            long id = c.Insert("INSERT INTO rooms (json, host_id, category, type, created_at) VALUES ('{}', @h, 'normal', 'playlists', @at)",
+                ("@h", hostId), ("@at", DateTimeOffset.UtcNow.ToString("O")));
+            int channel = (int)c.Insert("INSERT INTO chat_channels (name, description, type, room_id) VALUES (@n, @d, 'MULTIPLAYER', @r)",
+                ("@n", $"#mp_{id}"), ("@d", json.Value<string>("name")), ("@r", id));
             foreach (var item in playlist)
             {
                 long itemId = Interlocked.Increment(ref nextPlaylistItemId);
                 item["id"] = itemId;
                 item["room_id"] = id;
-                c.Exec("INSERT INTO playlist_items (id, room_id, json) VALUES ($i, $r, $j)",
-                    ("$i", itemId), ("$r", id), ("$j", item.ToString(Formatting.None)));
+                c.Exec("INSERT INTO playlist_items (id, room_id, json) VALUES (@i, @r, @j)",
+                    ("@i", itemId), ("@r", id), ("@j", item.ToString(Formatting.None)));
             }
             json["id"] = id;
             json["channel_id"] = channel;
             json["current_playlist_item"] = playlist[0].DeepClone();
-            c.Exec("UPDATE rooms SET json = $j, ends_at = $e WHERE id = $i",
-                ("$j", json.ToString(Formatting.None)), ("$e", endsAt(json)), ("$i", id));
-            c.Exec("INSERT INTO chat_members (channel_id, user_id) VALUES ($c, $u)", ("$c", channel), ("$u", hostId));
+            c.Exec("UPDATE rooms SET json = @j, ends_at = @e WHERE id = @i",
+                ("@j", json.ToString(Formatting.None)), ("@e", endsAt(json)), ("@i", id));
+            c.Exec("INSERT INTO chat_members (channel_id, user_id) VALUES (@c, @u)", ("@c", channel), ("@u", hostId));
             transaction.Commit();
             var room = new ServerRoom { Id = id, Json = json, ChannelId = channel };
             Rooms[id] = room;
@@ -104,9 +104,9 @@ namespace XcOsu.Server.Services
         public void Persist(ServerRoom room)
         {
             using var c = db.Open();
-            c.Exec("UPDATE rooms SET json = $j, active = $a, ends_at = $e WHERE id = $i",
-                ("$j", room.Json.ToString(Formatting.None)), ("$a", room.Json.Value<string>("status") == "ended" ? 0 : 1),
-                ("$e", endsAt(room.Json)), ("$i", room.Id));
+            c.Exec("UPDATE rooms SET json = @j, active = @a, ends_at = @e WHERE id = @i",
+                ("@j", room.Json.ToString(Formatting.None)), ("@a", room.Json.Value<string>("status") == "ended" ? 0 : 1),
+                ("@e", endsAt(room.Json)), ("@i", room.Id));
         }
 
         private static string? endsAt(JObject json) => json["ends_at"] switch

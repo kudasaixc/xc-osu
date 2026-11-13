@@ -216,7 +216,7 @@ namespace XcOsu.Server.Services
         private (double rating, double sigma) rating(int userId, int poolId)
         {
             using var c = db.Open();
-            return c.Query("SELECT rating, sigma FROM matchmaking_ratings WHERE user_id = $u AND pool_id = $p", r => (r.GetDouble(0), r.GetDouble(1)), ("$u", userId), ("$p", poolId))
+            return c.Query("SELECT rating, sigma FROM matchmaking_ratings WHERE user_id = @u AND pool_id = @p", r => (r.GetDouble(0), r.GetDouble(1)), ("@u", userId), ("@p", poolId))
                     .FirstOrDefault((1500, 350));
         }
 
@@ -245,9 +245,9 @@ namespace XcOsu.Server.Services
                 double newRating = r + (n > 1 ? k * delta / (n - 1) * Math.Min(2, Math.Sqrt(n - 1)) : 0);
                 double newSigma = Math.Max(60, sigma * 0.88);
                 c.Exec("""
-                    INSERT INTO matchmaking_ratings (user_id, pool_id, rating, sigma, plays, first_placements, total_points) VALUES ($u, $p, $r, $s, 1, $f, $t)
-                    ON CONFLICT(user_id, pool_id) DO UPDATE SET rating = $r, sigma = $s, plays = plays + 1, first_placements = first_placements + $f, total_points = total_points + $t
-                    """, ("$u", u), ("$p", poolId), ("$r", newRating), ("$s", newSigma), ("$f", i == 0 ? 1 : 0), ("$t", points.GetValueOrDefault(u)));
+                    INSERT INTO matchmaking_ratings (user_id, pool_id, rating, sigma, plays, first_placements, total_points) VALUES (@u, @p, @r, @s, 1, @f, @t)
+                    ON CONFLICT(user_id, pool_id) DO UPDATE SET rating = @r, sigma = @s, plays = matchmaking_ratings.plays + 1, first_placements = matchmaking_ratings.first_placements + @f, total_points = matchmaking_ratings.total_points + @t
+                    """, ("@u", u), ("@p", poolId), ("@r", newRating), ("@s", newSigma), ("@f", i == 0 ? 1 : 0), ("@t", points.GetValueOrDefault(u)));
                 result[u] = (int)Math.Round(newRating);
             }
 
@@ -262,8 +262,8 @@ namespace XcOsu.Server.Services
             lock (queueLock) inQueue = queue.Where(q => q.PoolId == poolId).Select(q => q.UserId).ToArray();
 
             using var c = db.Open();
-            var distribution = c.Query("SELECT CAST(rating / 100 AS INTEGER) * 100, COUNT(*) FROM matchmaking_ratings WHERE pool_id = $p GROUP BY 1 ORDER BY 1",
-                r => (r.GetInt32(0), r.GetInt32(1)), ("$p", poolId)).ToArray();
+            var distribution = c.Query("SELECT trunc(rating / 100)::int * 100, COUNT(*) FROM matchmaking_ratings WHERE pool_id = @p GROUP BY 1 ORDER BY 1",
+                r => (r.GetInt32(0), r.GetInt32(1)), ("@p", poolId)).ToArray();
 
             var status = new MatchmakingLobbyStatus { UsersInQueue = inQueue, RatingDistribution = distribution };
             if (userId != null)
@@ -271,7 +271,7 @@ namespace XcOsu.Server.Services
                 var (r, sigma) = rating(userId.Value, poolId);
                 status.UserRating = (int)Math.Round(r);
                 status.UserSigma = sigma;
-                status.UserRank = (int)c.Scalar<long>("SELECT COUNT(*) FROM matchmaking_ratings WHERE pool_id = $p AND rating > $r", ("$p", poolId), ("$r", r)) + 1;
+                status.UserRank = (int)c.Scalar<long>("SELECT COUNT(*) FROM matchmaking_ratings WHERE pool_id = @p AND rating > @r", ("@p", poolId), ("@r", r)) + 1;
             }
 
             return status;
@@ -360,7 +360,7 @@ namespace XcOsu.Server.Services
             if (POOLS.All(p => p.Id != poolId)) throw new HubException("Unknown pool.");
             if (client(hub, to) is not { } target) throw new HubException("That player isn't online right now.");
             using (var c = db.Open())
-                if (c.Scalar<long>("SELECT COUNT(*) FROM blocks WHERE (user_id = $a AND target_id = $b) OR (user_id = $b AND target_id = $a)", ("$a", from), ("$b", to)) > 0)
+                if (c.Scalar<long>("SELECT COUNT(*) FROM blocks WHERE (user_id = @a AND target_id = @b) OR (user_id = @b AND target_id = @a)", ("@a", from), ("@b", to)) > 0)
                     throw new HubException("You can't duel this player.");
 
             var duel = new Duel(Guid.NewGuid(), from, to, poolId, DateTimeOffset.UtcNow);
@@ -812,7 +812,7 @@ namespace XcOsu.Server.Services
         {
             var ids = players.ToHashSet();
             using var c = db.Open();
-            var rows = c.Query("SELECT id, user_id FROM scores WHERE playlist_item_id = $p ORDER BY total_score DESC, id ASC", r => (id: r.GetInt64(0), user: r.GetInt32(1)), ("$p", itemId));
+            var rows = c.Query("SELECT id, user_id FROM scores WHERE playlist_item_id = @p ORDER BY total_score DESC, id ASC", r => (id: r.GetInt64(0), user: r.GetInt32(1)), ("@p", itemId));
             var seen = new HashSet<int>();
             return Scores.Load(c, rows.Where(r => ids.Contains(r.user) && seen.Add(r.user)).Select(r => r.id), accounts, users, withBeatmap: false);
         }

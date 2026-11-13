@@ -225,6 +225,11 @@ h2.diff-name { font-size: 20px; align-items: center; }
 .wiki-index { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 3px; }
 .wiki-index a { display: block; padding: 14px 16px; background: var(--b4); border-radius: 6px; color: var(--ink); font-weight: 700; border-left: 4px solid var(--b2); } .wiki-index a:hover { background: var(--b3); border-left-color: var(--hl); text-decoration: none; }
 .changelog { margin: 0 calc(-1 * var(--pad)); }
+.stream-lazer { --stream: rgb(237, 18, 33); } .stream-nanbeige { --stream: rgb(227, 201, 160); }
+.streams { display: flex; flex-wrap: wrap; gap: 3px; margin: 18px 0 6px; }
+.stream-badge { display: grid; gap: 1px; min-width: 150px; padding: 12px 16px 10px; background: var(--b4); border-radius: 0 0 6px 6px; border-top: 4px solid var(--stream, var(--b2)); color: var(--ink); opacity: .75; } .stream-badge:hover, .stream-badge.active { background: var(--b3); opacity: 1; text-decoration: none; }
+.stream-name { font-size: 14px; font-weight: 700; } .stream-version { font-size: 12.5px; color: var(--ink-3); font-weight: 600; }
+.build > h2::before { background: var(--stream, var(--hl)); } .build-stream { font-weight: 700; }
 .build { padding: 26px var(--pad); border-bottom: 2px solid var(--b6); }
 .build h2 { font-size: 22px; align-items: center; margin-bottom: 4px; } .build h2 a { color: var(--ink); } .build h2 a:hover { color: var(--hl); text-decoration: none; }
 .build-date { color: var(--ink-3); font-size: 13px; font-weight: 600; margin-left: auto; }

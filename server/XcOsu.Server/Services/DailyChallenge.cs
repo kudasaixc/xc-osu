@@ -42,7 +42,7 @@ namespace XcOsu.Server.Services
             this.log = log;
 
             using var c = db.Open();
-            CurrentRoomId = c.Scalar<long?>("SELECT room_id FROM daily_challenges WHERE day = $d", ("$d", today()));
+            CurrentRoomId = c.Scalar<long?>("SELECT room_id FROM daily_challenges WHERE day = @d", ("@d", today()));
         }
 
         private static string today() => DateTime.UtcNow.ToString("yyyy-MM-dd");
@@ -54,7 +54,7 @@ namespace XcOsu.Server.Services
             if (roomId == null) return false;
             if (roomId == CurrentRoomId) return true;
             using var c = db.Open();
-            return c.Scalar<long>("SELECT COUNT(*) FROM daily_challenges WHERE room_id = $r", ("$r", roomId)) > 0;
+            return c.Scalar<long>("SELECT COUNT(*) FROM daily_challenges WHERE room_id = @r", ("@r", roomId)) > 0;
         }
 
         /// <summary>Makes sure today's challenge exists (creating it and closing yesterday's if needed).</summary>
@@ -66,7 +66,7 @@ namespace XcOsu.Server.Services
                 string day = today();
                 long? existing;
                 using (var c = db.Open())
-                    existing = c.Scalar<long?>("SELECT room_id FROM daily_challenges WHERE day = $d", ("$d", day));
+                    existing = c.Scalar<long?>("SELECT room_id FROM daily_challenges WHERE day = @d", ("@d", day));
                 if (existing != null && store.Rooms.ContainsKey(existing.Value))
                 {
                     CurrentRoomId = existing;
@@ -76,7 +76,7 @@ namespace XcOsu.Server.Services
                 // close and score the previous challenges
                 List<(string day, long room)> previous;
                 using (var c = db.Open())
-                    previous = c.Query("SELECT day, room_id FROM daily_challenges WHERE day < $d", r => (r.GetString(0), r.GetInt64(1)), ("$d", day));
+                    previous = c.Query("SELECT day, room_id FROM daily_challenges WHERE day < @d", r => (r.GetString(0), r.GetInt64(1)), ("@d", day));
                 foreach (var (_, room) in previous)
                 {
                     if (!store.Rooms.TryGetValue(room, out var old)) continue;
@@ -160,8 +160,8 @@ namespace XcOsu.Server.Services
             store.Rooms[id] = room;
             store.Persist(room);
             using var c = db.Open();
-            c.Exec("INSERT OR REPLACE INTO playlist_items (id, room_id, json) VALUES ($i, $r, $j)", ("$i", item.Value<long>("id")), ("$r", id), ("$j", item.ToString(Formatting.None)));
-            c.Exec("INSERT OR REPLACE INTO daily_challenges (day, room_id, beatmap_id) VALUES ($d, $r, $b)", ("$d", date.ToString("yyyy-MM-dd")), ("$r", id), ("$b", map.BeatmapId));
+            c.Exec("INSERT INTO playlist_items (id, room_id, json) VALUES (@i, @r, @j) ON CONFLICT (id) DO UPDATE SET room_id = EXCLUDED.room_id, json = EXCLUDED.json", ("@i", item.Value<long>("id")), ("@r", id), ("@j", item.ToString(Formatting.None)));
+            c.Exec("INSERT INTO daily_challenges (day, room_id, beatmap_id) VALUES (@d, @r, @b) ON CONFLICT (day) DO UPDATE SET room_id = EXCLUDED.room_id, beatmap_id = EXCLUDED.beatmap_id", ("@d", date.ToString("yyyy-MM-dd")), ("@r", id), ("@b", map.BeatmapId));
             return id;
         }
 
@@ -170,14 +170,14 @@ namespace XcOsu.Server.Services
         {
             using var c = db.Open();
             var board = c.Query("""
-                SELECT user_id, MAX(total_score) FROM scores WHERE playlist_item_id IN (SELECT id FROM playlist_items WHERE room_id = $r) AND passed = 1
+                SELECT user_id, MAX(total_score) FROM scores WHERE playlist_item_id IN (SELECT id FROM playlist_items WHERE room_id = @r) AND passed = 1
                 GROUP BY user_id ORDER BY 2 DESC
-                """, r => r.GetInt32(0), ("$r", roomId));
+                """, r => r.GetInt32(0), ("@r", roomId));
             for (int i = 0; i < board.Count; i++)
             {
                 double percentile = (i + 1) / (double)board.Count;
                 if (percentile <= 0.5)
-                    c.Exec("UPDATE daily_challenge_stats SET top_50p = top_50p + 1, top_10p = top_10p + $t WHERE user_id = $u", ("$t", percentile <= 0.1 ? 1 : 0), ("$u", board[i]));
+                    c.Exec("UPDATE daily_challenge_stats SET top_50p = top_50p + 1, top_10p = top_10p + @t WHERE user_id = @u", ("@t", percentile <= 0.1 ? 1 : 0), ("@u", board[i]));
             }
         }
 
@@ -191,14 +191,14 @@ namespace XcOsu.Server.Services
             if (IsDailyRoom(roomId) && s.Score.Passed)
             {
                 using var c = db.Open();
-                string? dayString = c.Scalar<string>("SELECT day FROM daily_challenges WHERE room_id = $r", ("$r", roomId));
+                string? dayString = c.Scalar<string>("SELECT day FROM daily_challenges WHERE room_id = @r", ("@r", roomId));
                 if (dayString != null)
                 {
                     var day = DateTime.Parse(dayString);
                     var week = weekStart(day);
-                    var row = c.Query("SELECT daily_streak_current, daily_streak_best, weekly_streak_current, weekly_streak_best, last_day, last_week FROM daily_challenge_stats WHERE user_id = $u",
+                    var row = c.Query("SELECT daily_streak_current, daily_streak_best, weekly_streak_current, weekly_streak_best, last_day, last_week FROM daily_challenge_stats WHERE user_id = @u",
                         r => (dc: r.GetInt32(0), db: r.GetInt32(1), wc: r.GetInt32(2), wb: r.GetInt32(3), ld: r.IsDBNull(4) ? (DateTime?)null : DateTime.Parse(r.GetString(4)),
-                            lw: r.IsDBNull(5) ? (DateTime?)null : DateTime.Parse(r.GetString(5))), ("$u", s.Score.UserID)).FirstOrDefault();
+                            lw: r.IsDBNull(5) ? (DateTime?)null : DateTime.Parse(r.GetString(5))), ("@u", s.Score.UserID)).FirstOrDefault();
 
                     if (row.ld?.Date != day.Date)
                     {
@@ -206,11 +206,11 @@ namespace XcOsu.Server.Services
                         int wc = row.lw?.Date == week ? row.wc : row.lw?.Date == week.AddDays(-7) ? row.wc + 1 : 1;
                         c.Exec("""
                             INSERT INTO daily_challenge_stats (user_id, playcount, daily_streak_current, daily_streak_best, weekly_streak_current, weekly_streak_best, last_day, last_week)
-                            VALUES ($u, 1, $dc, $dc, $wc, $wc, $ld, $lw)
-                            ON CONFLICT(user_id) DO UPDATE SET playcount = playcount + 1, daily_streak_current = $dc, daily_streak_best = MAX(daily_streak_best, $dc),
-                                weekly_streak_current = $wc, weekly_streak_best = MAX(weekly_streak_best, $wc), last_day = $ld, last_week = $lw
-                            """, ("$u", s.Score.UserID), ("$dc", dc), ("$wc", wc), ("$ld", new DateTimeOffset(day, TimeSpan.Zero).ToString("O")),
-                            ("$lw", new DateTimeOffset(week, TimeSpan.Zero).ToString("O")));
+                            VALUES (@u, 1, @dc, @dc, @wc, @wc, @ld, @lw)
+                            ON CONFLICT(user_id) DO UPDATE SET playcount = daily_challenge_stats.playcount + 1, daily_streak_current = @dc, daily_streak_best = GREATEST(daily_challenge_stats.daily_streak_best, @dc),
+                                weekly_streak_current = @wc, weekly_streak_best = GREATEST(daily_challenge_stats.weekly_streak_best, @wc), last_day = @ld, last_week = @lw
+                            """, ("@u", s.Score.UserID), ("@dc", dc), ("@wc", wc), ("@ld", new DateTimeOffset(day, TimeSpan.Zero).ToString("O")),
+                            ("@lw", new DateTimeOffset(week, TimeSpan.Zero).ToString("O")));
                     }
                 }
             }
@@ -219,15 +219,15 @@ namespace XcOsu.Server.Services
             if (s.Score.Passed)
             {
                 using var c = db.Open();
-                long previousBest = c.Scalar<long?>("SELECT MAX(total_score) FROM scores WHERE playlist_item_id = $p AND user_id = $u AND passed = 1 AND id != $s",
-                    ("$p", itemId), ("$u", s.Score.UserID), ("$s", (long)(s.Score.ID ?? 0))) ?? -1;
+                long previousBest = c.Scalar<long?>("SELECT MAX(total_score) FROM scores WHERE playlist_item_id = @p AND user_id = @u AND passed = 1 AND id != @s",
+                    ("@p", itemId), ("@u", s.Score.UserID), ("@s", (long)(s.Score.ID ?? 0))) ?? -1;
                 if (s.Score.TotalScore > previousBest)
                 {
                     var board = c.Query("""
                         SELECT user_id FROM (SELECT user_id, playlist_item_id, MAX(total_score) AS best FROM scores
-                            WHERE playlist_item_id IN (SELECT id FROM playlist_items WHERE room_id = $r) AND passed = 1 GROUP BY user_id, playlist_item_id)
-                        GROUP BY user_id ORDER BY SUM(best) DESC
-                        """, r => r.GetInt32(0), ("$r", roomId));
+                            WHERE playlist_item_id IN (SELECT id FROM playlist_items WHERE room_id = @r) AND passed = 1 GROUP BY user_id, playlist_item_id) t
+                        GROUP BY user_id ORDER BY SUM(best) DESC, user_id
+                        """, r => r.GetInt32(0), ("@r", roomId));
                     int idx = board.IndexOf(s.Score.UserID);
                     if (idx >= 0) newRank = idx + 1;
                 }
@@ -248,12 +248,12 @@ namespace XcOsu.Server.Services
         public MultiplayerPlaylistItemStats[] RoomStats(long roomId)
         {
             using var c = db.Open();
-            var items = c.Query("SELECT id FROM playlist_items WHERE room_id = $r", r => r.GetInt64(0), ("$r", roomId));
+            var items = c.Query("SELECT id FROM playlist_items WHERE room_id = @r", r => r.GetInt64(0), ("@r", roomId));
             var result = new List<MultiplayerPlaylistItemStats>();
             foreach (long item in items)
             {
                 var stats = new MultiplayerPlaylistItemStats { PlaylistItemID = item };
-                var rows = c.Query("SELECT id, total_score FROM scores WHERE playlist_item_id = $p AND passed = 1", r => (id: r.GetInt64(0), score: r.GetInt64(1)), ("$p", item));
+                var rows = c.Query("SELECT id, total_score FROM scores WHERE playlist_item_id = @p AND passed = 1", r => (id: r.GetInt64(0), score: r.GetInt64(1)), ("@p", item));
                 foreach (var (id, score) in rows)
                 {
                     int bin = (int)Math.Clamp(score / 100_000, 0, MultiplayerPlaylistItemStats.TOTAL_SCORE_DISTRIBUTION_BINS - 1);

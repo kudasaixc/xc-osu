@@ -2,7 +2,8 @@
 """Publish anonymous, aggregate frame history. Read-only DB; no session IDs in output.
 python3 tools/performance-history.py --output out/performance --public site/launcher/performance.json
 """
-import argparse, collections, datetime, hashlib, json, math, pathlib, sqlite3
+import argparse, collections, datetime, hashlib, json, math, pathlib
+import psycopg2, psycopg2.extras
 EDGES = [.25,.5,1,2,3,4,5,6,7,8,9,10,12,14,17,20,25,33,50,75,100,150,250,500,1000]
 
 def percentile(hist, fraction=.99):
@@ -16,12 +17,13 @@ def percentile(hist, fraction=.99):
             return {'lower': EDGES[i-1] if i else 0, 'upper': EDGES[i] if i < len(EDGES) else None}
 
 def collect(db):
-    conn = sqlite3.connect(pathlib.Path(db).resolve().as_uri()+'?mode=ro', uri=True)
-    conn.row_factory = sqlite3.Row
+    conn = psycopg2.connect(db)
+    # One consistent read-only snapshot while live ingestion continues.
+    conn.set_session(isolation_level='REPEATABLE READ', readonly=True)
+    cursor = conn.cursor('windows', cursor_factory=psycopg2.extras.RealDictCursor)
+    cursor.execute('SELECT w.sid,w.at,w.data,s.gpu,s.build,s.info FROM tm_windows w JOIN tm_sessions s USING(sid) ORDER BY w.at')
     groups = {}
-    # One consistent read transaction while live ingestion continues in WAL mode.
-    conn.execute('BEGIN')
-    for row in conn.execute('SELECT w.sid,w.at,w.data,s.gpu,s.build,s.info FROM tm_windows w JOIN tm_sessions s USING(sid) ORDER BY w.at'):
+    for row in cursor:
         w = json.loads(row['data'])
         if w.get('js',{}).get('hidden',0): continue
         meta = json.loads(row['info'] or '{}'); opts = meta.get('options', {})
@@ -60,7 +62,7 @@ def markdown(report):
     return '\n'.join(lines)+'\n'
 
 def main():
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--db',default='/var/lib/xc-osu/telemetry.db');parser.add_argument('--output',default='out/performance');parser.add_argument('--public');args=parser.parse_args()
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--db',default='dbname=xc_osu host=/var/run/postgresql',help='PostgreSQL connection string');parser.add_argument('--output',default='out/performance');parser.add_argument('--public');args=parser.parse_args()
     out=pathlib.Path(args.output);out.mkdir(parents=True,exist_ok=True)
     history=out/'history.json'
     previous=json.loads(history.read_text()) if history.exists() else {'rows':[]}

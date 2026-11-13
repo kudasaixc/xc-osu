@@ -1,5 +1,44 @@
 [
  {
+  "version": "2026.1113.2",
+  "stream": "nanbeige",
+  "date": "2026-11-13T16:45:00Z",
+  "entries": [
+   {
+    "category": "Infrastructure",
+    "category_fr": "Infrastructure",
+    "type": "add",
+    "title": "Move the whole server database from SQLite to PostgreSQL 16, with a one-time verified import of every existing table",
+    "title_fr": "Migration de toute la base du serveur de SQLite vers PostgreSQL 16, avec import unique et vérifié de chaque table existante",
+    "major": true
+   },
+   {
+    "category": "Performance",
+    "category_fr": "Performances",
+    "type": "fix",
+    "title": "Hundreds of simultaneous connections are served without lag, backed by pooled database connections and cached profile statistics",
+    "title_fr": "Des centaines de connexions simultanées sont servies sans latence, avec des connexions PostgreSQL regroupées et des statistiques de profil mises en cache",
+    "major": true
+   },
+   {
+    "category": "Performance",
+    "category_fr": "Performances",
+    "type": "fix",
+    "title": "Concurrent beatmap searches share a single mirror request and a short-lived response cache instead of re-downloading the same page",
+    "title_fr": "Les recherches de beatmaps simultanées partagent une seule requête au miroir et un cache de réponse à court terme au lieu de retélécharger la même page",
+    "major": true
+   },
+   {
+    "category": "Infrastructure",
+    "category_fr": "Infrastructure",
+    "type": "add",
+    "title": "The server starts only when PostgreSQL is available; setup and restart scripts create and check the service role and database",
+    "title_fr": "Le serveur ne démarre qu’avec PostgreSQL disponible ; les scripts d’installation et de redémarrage créent et vérifient le rôle et la base du service",
+    "major": false
+   }
+  ]
+ },
+ {
   "version": "2026.1111.3",
   "date": "2026-11-11T17:10:00Z",
   "entries": [
@@ -447,6 +486,595 @@
     "type": "add",
     "title": "Multiplayer rooms, playlists and spectating",
     "title_fr": "Salles multijoueur, playlists et mode spectateur",
+    "major": false
+   }
+  ]
+ },
+ {
+  "version": "2026.1113.1",
+  "stream": "nanbeige",
+  "date": "2026-11-13T10:50:00Z",
+  "entries": [
+   {
+    "category": "Changelog",
+    "category_fr": "Journal des modifications",
+    "type": "add",
+    "title": "The changelog has several update streams: xc-osu!nanbeige lists the server's own updates, apart from the game's",
+    "title_fr": "Le journal des modifications a plusieurs flux : xc-osu!nanbeige liste les mises à jour du serveur, séparément de celles du jeu",
+    "major": true
+   },
+   {
+    "category": "Changelog",
+    "category_fr": "Journal des modifications",
+    "type": "add",
+    "title": "Builds are requested per stream, with previous and next builds inside the same stream",
+    "title_fr": "Les versions se demandent par flux, avec la version précédente et la suivante dans le même flux",
+    "major": false
+   }
+  ]
+ },
+ {
+  "version": "2026.1113.0",
+  "stream": "nanbeige",
+  "date": "2026-11-13T04:50:36Z",
+  "entries": [
+   {
+    "category": "Security",
+    "category_fr": "Sécurité",
+    "type": "add",
+    "title": "Real-time connections (multiplayer, spectator, presence) are bound to the session: signing out, changing password or a restriction cuts them",
+    "title_fr": "Les connexions temps réel (multijoueur, spectateur, présence) sont liées à la session : une déconnexion, un changement de mot de passe ou une restriction les coupe",
+    "major": true
+   },
+   {
+    "category": "Scores",
+    "category_fr": "Scores",
+    "type": "add",
+    "title": "osu!standard replays are re-simulated on the server; a score claiming clearly more than its replay shows loses its rank and pp",
+    "title_fr": "Les replays osu!standard sont rejoués côté serveur ; un score qui annonce nettement plus que son replay perd son rang et ses pp",
+    "major": true
+   },
+   {
+    "category": "Accounts",
+    "category_fr": "Comptes",
+    "type": "add",
+    "title": "Actions other players can see (chat, comments, teams…) need a confirmed email address",
+    "title_fr": "Les actions visibles par les autres joueurs (tchat, commentaires, équipes…) demandent une adresse e-mail confirmée",
+    "major": true
+   },
+   {
+    "category": "Accounts",
+    "category_fr": "Comptes",
+    "type": "misc",
+    "title": "Passwords are 8 to 256 characters long",
+    "title_fr": "Les mots de passe font de 8 à 256 caractères",
+    "major": false
+   },
+   {
+    "category": "Accounts",
+    "category_fr": "Comptes",
+    "type": "misc",
+    "title": "The country is set once, at registration",
+    "title_fr": "Le pays est fixé une fois pour toutes à l’inscription",
+    "major": false
+   },
+   {
+    "category": "Accounts",
+    "category_fr": "Comptes",
+    "type": "misc",
+    "title": "Account emails are sent through the local mail server",
+    "title_fr": "Les e-mails de compte passent par le serveur de messagerie local",
+    "major": false
+   },
+   {
+    "category": "Security",
+    "category_fr": "Sécurité",
+    "type": "misc",
+    "title": "Sign-in attempts are limited separately from token refreshes, and every account has its own request budget",
+    "title_fr": "Les tentatives de connexion sont limitées séparément des renouvellements de jeton, et chaque compte a son propre quota de requêtes",
+    "major": false
+   },
+   {
+    "category": "Security",
+    "category_fr": "Sécurité",
+    "type": "misc",
+    "title": "The asset proxy only follows redirects that stay within the allowed hosts",
+    "title_fr": "Le proxy de ressources ne suit que les redirections qui restent sur les hôtes autorisés",
+    "major": false
+   },
+   {
+    "category": "Security",
+    "category_fr": "Sécurité",
+    "type": "misc",
+    "title": "Session verification endpoints the server does not implement answer 501 instead of pretending to succeed",
+    "title_fr": "Les points d’accès de vérification de session non implémentés répondent 501 au lieu de simuler une réussite",
+    "major": false
+   },
+   {
+    "category": "Teams",
+    "category_fr": "Équipes",
+    "type": "misc",
+    "title": "The team list is paginated",
+    "title_fr": "La liste des équipes est paginée",
+    "major": false
+   }
+  ]
+ },
+ {
+  "version": "2026.1112.0",
+  "stream": "nanbeige",
+  "date": "2026-11-12T14:36:30Z",
+  "entries": [
+   {
+    "category": "Security",
+    "category_fr": "Sécurité",
+    "type": "add",
+    "title": "Server hardening after a security audit: authentication and sessions, rate limits and connection caps",
+    "title_fr": "Durcissement du serveur après un audit de sécurité : authentification et sessions, limites de débit et plafonds de connexions",
+    "major": true
+   },
+   {
+    "category": "Accounts",
+    "category_fr": "Comptes",
+    "type": "add",
+    "title": "Email address confirmation for accounts",
+    "title_fr": "Confirmation de l’adresse e-mail des comptes",
+    "major": true
+   },
+   {
+    "category": "Accounts",
+    "category_fr": "Comptes",
+    "type": "add",
+    "title": "Cookie sessions for the website, next to the game's tokens",
+    "title_fr": "Sessions par cookie pour le site web, en plus des jetons du jeu",
+    "major": false
+   },
+   {
+    "category": "Security",
+    "category_fr": "Sécurité",
+    "type": "add",
+    "title": "Uploaded images (avatars, covers…) are re-encoded before being served",
+    "title_fr": "Les images envoyées (avatars, bannières…) sont réencodées avant d’être servies",
+    "major": false
+   },
+   {
+    "category": "Security",
+    "category_fr": "Sécurité",
+    "type": "add",
+    "title": "The asset proxy only reaches public networks, and its disk cache is cleaned up automatically",
+    "title_fr": "Le proxy de ressources n’atteint que les réseaux publics, et son cache disque est nettoyé automatiquement",
+    "major": false
+   },
+   {
+    "category": "Security",
+    "category_fr": "Sécurité",
+    "type": "fix",
+    "title": "Access checks on multiplayer rooms and chat channels",
+    "title_fr": "Contrôles d’accès sur les salons multijoueur et les canaux de tchat",
+    "major": false
+   },
+   {
+    "category": "Security",
+    "category_fr": "Sécurité",
+    "type": "add",
+    "title": "Every real-time hub call goes through a security filter",
+    "title_fr": "Chaque appel des hubs temps réel passe par un filtre de sécurité",
+    "major": false
+   },
+   {
+    "category": "Telemetry",
+    "category_fr": "Télémétrie",
+    "type": "misc",
+    "title": "Telemetry sessions are signed by the server",
+    "title_fr": "Les sessions de télémétrie sont signées par le serveur",
+    "major": false
+   },
+   {
+    "category": "Scores",
+    "category_fr": "Scores",
+    "type": "add",
+    "title": "Groundwork for server-side replay verification",
+    "title_fr": "Préparation de la vérification des replays côté serveur",
+    "major": false
+   }
+  ]
+ },
+ {
+  "version": "2026.1111.2",
+  "stream": "nanbeige",
+  "date": "2026-11-11T17:01:04Z",
+  "entries": [
+   {
+    "category": "Accounts",
+    "category_fr": "Comptes",
+    "type": "add",
+    "title": "Password recovery by email: a single-use link that expires, and signs out every existing session once used",
+    "title_fr": "Récupération du mot de passe par e-mail : un lien à usage unique qui expire, et qui déconnecte toutes les sessions existantes une fois utilisé",
+    "major": true
+   },
+   {
+    "category": "Accounts",
+    "category_fr": "Comptes",
+    "type": "misc",
+    "title": "Password recovery requests are limited to 5 per 15 minutes per address",
+    "title_fr": "Les demandes de récupération sont limitées à 5 par quart d’heure par adresse",
+    "major": false
+   }
+  ]
+ },
+ {
+  "version": "2026.1111.1",
+  "stream": "nanbeige",
+  "date": "2026-11-11T13:42:39Z",
+  "entries": [
+   {
+    "category": "Chat",
+    "category_fr": "Tchat",
+    "type": "fix",
+    "title": "Chat history shows who wrote each message again",
+    "title_fr": "L’historique du tchat affiche de nouveau l’auteur de chaque message",
+    "major": true
+   },
+   {
+    "category": "Profiles",
+    "category_fr": "Profils",
+    "type": "misc",
+    "title": "New default avatar",
+    "title_fr": "Nouvel avatar par défaut",
+    "major": false
+   }
+  ]
+ },
+ {
+  "version": "2026.1111.0",
+  "stream": "nanbeige",
+  "date": "2026-11-11T11:18:42Z",
+  "entries": [
+   {
+    "category": "Content",
+    "category_fr": "Contenu",
+    "type": "add",
+    "title": "News, wiki and changelog are served by the server, in English or French depending on the player's language",
+    "title_fr": "Les actualités, le wiki et le journal des modifications sont servis par le serveur, en anglais ou en français selon la langue du joueur",
+    "major": true
+   },
+   {
+    "category": "Content",
+    "category_fr": "Contenu",
+    "type": "add",
+    "title": "Wiki page index and news by year, for the website",
+    "title_fr": "Index des pages du wiki et actualités par année, pour le site web",
+    "major": false
+   },
+   {
+    "category": "Content",
+    "category_fr": "Contenu",
+    "type": "add",
+    "title": "Endpoint for the banners of the game's main menu",
+    "title_fr": "Point d’accès pour les bannières du menu principal du jeu",
+    "major": false
+   }
+  ]
+ },
+ {
+  "version": "2026.1110.2",
+  "stream": "nanbeige",
+  "date": "2026-11-10T16:07:00Z",
+  "entries": [
+   {
+    "category": "Beatmaps",
+    "category_fr": "Beatmaps",
+    "type": "add",
+    "title": "Beatmap search understands the official query syntax (stars>=6 ar>9 length<3m status=ranked…)",
+    "title_fr": "La recherche de beatmaps comprend la syntaxe officielle (stars>=6 ar>9 length<3m status=ranked…)",
+    "major": true
+   },
+   {
+    "category": "Beatmaps",
+    "category_fr": "Beatmaps",
+    "type": "add",
+    "title": "Genre, language, played, favourites and rank filters are answered by the server itself, and several statuses can be combined",
+    "title_fr": "Les filtres genre, langue, jouées, favoris et rang sont traités par le serveur lui-même, et plusieurs statuts peuvent être combinés",
+    "major": false
+   },
+   {
+    "category": "Beatmaps",
+    "category_fr": "Beatmaps",
+    "type": "add",
+    "title": "Search tolerates typos",
+    "title_fr": "La recherche tolère les fautes de frappe",
+    "major": false
+   },
+   {
+    "category": "Beatmaps",
+    "category_fr": "Beatmaps",
+    "type": "fix",
+    "title": "Much lighter beatmap listing pages (a page of 50 sets weighed about 1 MB)",
+    "title_fr": "Pages de liste de beatmaps beaucoup plus légères (une page de 50 sets pesait environ 1 Mo)",
+    "major": false
+   },
+   {
+    "category": "Profiles",
+    "category_fr": "Profils",
+    "type": "add",
+    "title": "Profile badges and titles, assigned by the staff",
+    "title_fr": "Badges et titres de profil, attribués par l’équipe",
+    "major": false
+   },
+   {
+    "category": "Telemetry",
+    "category_fr": "Télémétrie",
+    "type": "add",
+    "title": "Anonymous client performance telemetry, stored apart from the accounts and without the player's address",
+    "title_fr": "Télémétrie anonyme des performances du client, stockée à part des comptes et sans l’adresse du joueur",
+    "major": false
+   }
+  ]
+ },
+ {
+  "version": "2026.1110.1",
+  "stream": "nanbeige",
+  "date": "2026-11-10T10:59:12Z",
+  "entries": [
+   {
+    "category": "Accounts",
+    "category_fr": "Comptes",
+    "type": "fix",
+    "title": "User ids start at 2: the game treats ids 0 and 1 as \"no user\"",
+    "title_fr": "Les identifiants de joueur commencent à 2 : le jeu traite 0 et 1 comme « aucun joueur »",
+    "major": false
+   },
+   {
+    "category": "Multiplayer",
+    "category_fr": "Multijoueur",
+    "type": "fix",
+    "title": "Rooms survive a server restart",
+    "title_fr": "Les salons survivent à un redémarrage du serveur",
+    "major": true
+   },
+   {
+    "category": "Daily challenge",
+    "category_fr": "Défi du jour",
+    "type": "misc",
+    "title": "The daily challenge room is hosted by the first administrator",
+    "title_fr": "Le salon du défi du jour est hébergé par le premier administrateur",
+    "major": false
+   }
+  ]
+ },
+ {
+  "version": "2026.1110.0",
+  "stream": "nanbeige",
+  "date": "2026-11-10T10:42:47Z",
+  "entries": [
+   {
+    "category": "Matchmaking",
+    "category_fr": "Matchmaking",
+    "type": "add",
+    "title": "Quick play and ranked play matchmaking, with Elo ratings",
+    "title_fr": "Matchmaking partie rapide et partie classée, avec classement Elo",
+    "major": true
+   },
+   {
+    "category": "Daily challenge",
+    "category_fr": "Défi du jour",
+    "type": "add",
+    "title": "Daily challenge with a new beatmap every day, streaks and a live score distribution",
+    "title_fr": "Défi du jour avec une nouvelle beatmap chaque jour, des séries et une répartition des scores en direct",
+    "major": true
+   },
+   {
+    "category": "Teams",
+    "category_fr": "Équipes",
+    "type": "add",
+    "title": "Teams with a tag and a flag",
+    "title_fr": "Équipes avec tag et drapeau",
+    "major": true
+   },
+   {
+    "category": "Profiles",
+    "category_fr": "Profils",
+    "type": "add",
+    "title": "Medals, with a notification when one is unlocked",
+    "title_fr": "Médailles, avec une notification au déblocage",
+    "major": true
+   },
+   {
+    "category": "Profiles",
+    "category_fr": "Profils",
+    "type": "add",
+    "title": "Avatars and profile covers",
+    "title_fr": "Avatars et bannières de profil",
+    "major": false
+   },
+   {
+    "category": "Profiles",
+    "category_fr": "Profils",
+    "type": "add",
+    "title": "Pinned scores, first places, rank history over 90 days and recent activity",
+    "title_fr": "Scores épinglés, premières places, historique de rang sur 90 jours et activité récente",
+    "major": false
+   },
+   {
+    "category": "Accounts",
+    "category_fr": "Comptes",
+    "type": "add",
+    "title": "Account settings page (profile, avatar, cover, password)",
+    "title_fr": "Page de paramètres du compte (profil, avatar, bannière, mot de passe)",
+    "major": false
+   },
+   {
+    "category": "Beatmaps",
+    "category_fr": "Beatmaps",
+    "type": "add",
+    "title": "Comments with votes, and beatmap tags",
+    "title_fr": "Commentaires avec votes, et tags de beatmaps",
+    "major": false
+   },
+   {
+    "category": "Scores",
+    "category_fr": "Scores",
+    "type": "add",
+    "title": "Scores far above what the game can produce are refused",
+    "title_fr": "Les scores très au-dessus de ce que le jeu peut produire sont refusés",
+    "major": false
+   },
+   {
+    "category": "Scores",
+    "category_fr": "Scores",
+    "type": "add",
+    "title": "pp is recomputed when a beatmap's status changes",
+    "title_fr": "Les pp sont recalculés quand le statut d’une beatmap change",
+    "major": false
+   },
+   {
+    "category": "Chat",
+    "category_fr": "Tchat",
+    "type": "add",
+    "title": "Multiplayer rooms get their own chat channel",
+    "title_fr": "Les salons multijoueur ont leur propre canal de tchat",
+    "major": false
+   },
+   {
+    "category": "Content",
+    "category_fr": "Contenu",
+    "type": "add",
+    "title": "News posts",
+    "title_fr": "Articles d’actualité",
+    "major": false
+   }
+  ]
+ },
+ {
+  "version": "2026.1109.1",
+  "stream": "nanbeige",
+  "date": "2026-11-09T21:00:11Z",
+  "entries": [
+   {
+    "category": "Content",
+    "category_fr": "Contenu",
+    "type": "add",
+    "title": "Menu backgrounds for everyone, guests included: every image placed in the server's backgrounds folder",
+    "title_fr": "Fonds du menu pour tout le monde, invités compris : chaque image placée dans le dossier de fonds du serveur",
+    "major": false
+   }
+  ]
+ },
+ {
+  "version": "2026.1109.0",
+  "stream": "nanbeige",
+  "date": "2026-11-09T19:28:54Z",
+  "entries": [
+   {
+    "category": "Accounts",
+    "category_fr": "Comptes",
+    "type": "add",
+    "title": "First version of the server: registration and sign-in from the game",
+    "title_fr": "Première version du serveur : inscription et connexion depuis le jeu",
+    "major": true
+   },
+   {
+    "category": "Beatmaps",
+    "category_fr": "Beatmaps",
+    "type": "add",
+    "title": "Beatmap search, details and downloads through mirrors (catboy.best, osu.direct, nerinyan)",
+    "title_fr": "Recherche, fiches et téléchargement de beatmaps via des miroirs (catboy.best, osu.direct, nerinyan)",
+    "major": true
+   },
+   {
+    "category": "Scores",
+    "category_fr": "Scores",
+    "type": "add",
+    "title": "Score submission and beatmap leaderboards",
+    "title_fr": "Envoi des scores et classements par beatmap",
+    "major": true
+   },
+   {
+    "category": "Scores",
+    "category_fr": "Scores",
+    "type": "add",
+    "title": "pp and star ratings computed with osu!'s own calculators (osu!standard only)",
+    "title_fr": "pp et étoiles calculés avec les calculateurs d’osu! (osu!standard uniquement)",
+    "major": true
+   },
+   {
+    "category": "Scores",
+    "category_fr": "Scores",
+    "type": "add",
+    "title": "Replay downloads",
+    "title_fr": "Téléchargement des replays",
+    "major": false
+   },
+   {
+    "category": "Rankings",
+    "category_fr": "Classements",
+    "type": "add",
+    "title": "Player rankings",
+    "title_fr": "Classements des joueurs",
+    "major": false
+   },
+   {
+    "category": "Profiles",
+    "category_fr": "Profils",
+    "type": "add",
+    "title": "Player profiles with their scores",
+    "title_fr": "Profils des joueurs avec leurs scores",
+    "major": false
+   },
+   {
+    "category": "Chat",
+    "category_fr": "Tchat",
+    "type": "add",
+    "title": "Chat: public channels and private messages, delivered live",
+    "title_fr": "Tchat : canaux publics et messages privés, livrés en direct",
+    "major": true
+   },
+   {
+    "category": "Multiplayer",
+    "category_fr": "Multijoueur",
+    "type": "add",
+    "title": "Real-time multiplayer rooms",
+    "title_fr": "Salons multijoueur en temps réel",
+    "major": true
+   },
+   {
+    "category": "Multiplayer",
+    "category_fr": "Multijoueur",
+    "type": "add",
+    "title": "Playlists rooms with their leaderboards",
+    "title_fr": "Salons playlists avec leurs classements",
+    "major": false
+   },
+   {
+    "category": "Multiplayer",
+    "category_fr": "Multijoueur",
+    "type": "add",
+    "title": "Spectating",
+    "title_fr": "Mode spectateur",
+    "major": false
+   },
+   {
+    "category": "Social",
+    "category_fr": "Social",
+    "type": "add",
+    "title": "Friends and online presence",
+    "title_fr": "Amis et présence en ligne",
+    "major": false
+   },
+   {
+    "category": "Beatmaps",
+    "category_fr": "Beatmaps",
+    "type": "add",
+    "title": "Favourite beatmaps",
+    "title_fr": "Beatmaps favorites",
+    "major": false
+   },
+   {
+    "category": "Infrastructure",
+    "category_fr": "Infrastructure",
+    "type": "add",
+    "title": "Same-origin proxy for the web client's cross-origin assets, limited to an allow-list of hosts and cached on disk",
+    "title_fr": "Proxy same-origin pour les ressources externes du client web, limité à une liste d’hôtes autorisés et mis en cache sur disque",
     "major": false
    }
   ]

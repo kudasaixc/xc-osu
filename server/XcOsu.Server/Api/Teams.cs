@@ -11,9 +11,9 @@ namespace XcOsu.Server.Api
         private const int max_members = 256;
         private const long max_flag_bytes = 2 << 20;
 
-        private static JObject teamJson(Microsoft.Data.Sqlite.SqliteConnection c, Users users, Accounts accounts, long id, bool withMembers)
+        private static JObject teamJson(Npgsql.NpgsqlConnection c, Users users, Accounts accounts, long id, bool withMembers)
         {
-            var team = c.Query("SELECT id, name, short_name, flag_url, leader_id, created_at FROM teams WHERE id = $t", r => new JObject
+            var team = c.Query("SELECT id, name, short_name, flag_url, leader_id, created_at FROM teams WHERE id = @t", r => new JObject
             {
                 ["id"] = r.GetInt64(0),
                 ["name"] = r.GetString(1),
@@ -21,10 +21,10 @@ namespace XcOsu.Server.Api
                 ["flag_url"] = r.IsDBNull(3) ? null : r.GetString(3),
                 ["leader_id"] = r.GetInt64(4),
                 ["created_at"] = r.GetString(5),
-            }, ("$t", id)).FirstOrDefault();
+            }, ("@t", id)).FirstOrDefault();
             if (team == null) return new JObject();
 
-            var members = c.Query("SELECT user_id FROM team_members WHERE team_id = $t", r => r.GetInt32(0), ("$t", id));
+            var members = c.Query("SELECT user_id FROM team_members WHERE team_id = @t", r => r.GetInt32(0), ("@t", id));
             team["members_count"] = members.Count;
             if (withMembers)
                 team["members"] = new JArray(members.Select(accounts.Get).OfType<AccountRow>().Where(r => !r.Restricted)
@@ -32,7 +32,7 @@ namespace XcOsu.Server.Api
             return team;
         }
 
-        private static long? teamOf(Microsoft.Data.Sqlite.SqliteConnection c, int user) => c.Scalar<long?>("SELECT team_id FROM team_members WHERE user_id = $u", ("$u", user));
+        private static long? teamOf(Npgsql.NpgsqlConnection c, int user) => c.Scalar<long?>("SELECT team_id FROM team_members WHERE user_id = @u", ("@u", user));
 
         private static string? validate(string? name, string? shortName)
         {
@@ -53,10 +53,10 @@ namespace XcOsu.Server.Api
                 string q = (req.Query["q"].ToString() ?? "").Trim();
                 if (q.Length > 30) q = q[..30];
                 string like = "%" + q.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
-                const string filter = "($q = '' OR name LIKE $like ESCAPE '\\' OR short_name LIKE $like ESCAPE '\\')";
-                long total = c.Scalar<long>("SELECT COUNT(*) FROM teams WHERE " + filter, ("$q", q), ("$like", like));
-                var ids = c.Query("SELECT id FROM teams WHERE " + filter + " ORDER BY id LIMIT 50 OFFSET $offset", r => r.GetInt64(0),
-                    ("$q", q), ("$like", like), ("$offset", (page - 1) * 50));
+                const string filter = "(@q = '' OR name LIKE @like ESCAPE '\\' OR short_name LIKE @like ESCAPE '\\')";
+                long total = c.Scalar<long>("SELECT COUNT(*) FROM teams WHERE " + filter, ("@q", q), ("@like", like));
+                var ids = c.Query("SELECT id FROM teams WHERE " + filter + " ORDER BY id LIMIT 50 OFFSET @offset", r => r.GetInt64(0),
+                    ("@q", q), ("@like", like), ("@offset", (page - 1) * 50));
                 req.HttpContext.Response.Headers["X-Total-Count"] = total.ToString();
                 req.HttpContext.Response.Headers["X-Has-More"] = ((long)page * 50 < total) ? "1" : "0";
                 return Json.Ok(new JArray(ids.Select(id => teamJson(c, users, accounts, id, false))));
@@ -79,12 +79,23 @@ namespace XcOsu.Server.Api
 
                 using var c = db.Open();
                 if (teamOf(c, u) != null) return Json.Error("Leave your current team first.", 422);
-                if (c.Scalar<long>("SELECT COUNT(*) FROM teams WHERE name = $n OR short_name = $s", ("$n", name), ("$s", shortName)) > 0)
+                if (c.Scalar<long>("SELECT COUNT(*) FROM teams WHERE name = @n OR short_name = @s", ("@n", name), ("@s", shortName)) > 0)
                     return Json.Error("That team name or short name is taken.", 422);
 
-                long id = c.Insert("INSERT INTO teams (name, short_name, flag_url, leader_id, created_at) VALUES ($n, $s, NULL, $u, $t)",
-                    ("$n", name), ("$s", shortName), ("$u", u), ("$t", DateTimeOffset.UtcNow.ToString("O")));
-                c.Exec("INSERT INTO team_members (team_id, user_id) VALUES ($t, $u)", ("$t", id), ("$u", u));
+                long id;
+                try
+                {
+                    using var tx = c.BeginTransaction();
+                    id = c.Insert("INSERT INTO teams (name, short_name, flag_url, leader_id, created_at) VALUES (@n, @s, NULL, @u, @t)",
+                        ("@n", name), ("@s", shortName), ("@u", u), ("@t", DateTimeOffset.UtcNow.ToString("O")));
+                    c.Exec("INSERT INTO team_members (team_id, user_id) VALUES (@t, @u)", ("@t", id), ("@u", u));
+                    tx.Commit();
+                }
+                catch (Exception e) when (e.IsUniqueViolation())
+                {
+                    return Json.Error("That team name or short name is taken.", 422);
+                }
+                users.InvalidateTeams();
                 return Json.Ok(teamJson(c, users, accounts, id, true));
             });
 
@@ -92,13 +103,15 @@ namespace XcOsu.Server.Api
             {
                 if (ctx.User.UserId() is not int u) return Json.Error("unauthorized", 401);
                 using var c = db.Open();
-                if (c.Scalar<long?>("SELECT leader_id FROM teams WHERE id = $t", ("$t", id)) != u) return Json.Error("Only the team leader can do that.", 403);
+                if (c.Scalar<long?>("SELECT leader_id FROM teams WHERE id = @t", ("@t", id)) != u) return Json.Error("Only the team leader can do that.", 403);
                 var p = await Json.Params(ctx.Request);
                 string? name = p("name")?.Trim(), shortName = p("short_name")?.Trim().ToUpperInvariant();
                 if (validate(name, shortName) is string error) return Json.Error(error, 422);
-                if (c.Scalar<long>("SELECT COUNT(*) FROM teams WHERE (name = $n OR short_name = $s) AND id != $t", ("$n", name), ("$s", shortName), ("$t", id)) > 0)
+                if (c.Scalar<long>("SELECT COUNT(*) FROM teams WHERE (name = @n OR short_name = @s) AND id != @t", ("@n", name), ("@s", shortName), ("@t", id)) > 0)
                     return Json.Error("That team name or short name is taken.", 422);
-                c.Exec("UPDATE teams SET name = $n, short_name = $s WHERE id = $t", ("$n", name), ("$s", shortName), ("$t", id));
+                try { c.Exec("UPDATE teams SET name = @n, short_name = @s WHERE id = @t", ("@n", name), ("@s", shortName), ("@t", id)); }
+                catch (Exception e) when (e.IsUniqueViolation()) { return Json.Error("That team name or short name is taken.", 422); }
+                users.InvalidateTeams();
                 return Json.Ok(teamJson(c, users, accounts, id, true));
             });
 
@@ -107,39 +120,50 @@ namespace XcOsu.Server.Api
                 if (ctx.User.UserId() is not int u || accounts.Get(u) is not { Restricted: false }) return Json.Error("unauthorized", 401);
                 if (accounts.NeedsEmailConfirmation(u)) return Json.Error(Accounts.CONFIRM_EMAIL_MESSAGE, 403);
                 using var c = db.Open();
-                if (c.Scalar<long>("SELECT COUNT(*) FROM teams WHERE id = $t", ("$t", id)) == 0) return Json.Error("Team not found", 404);
+                if (c.Scalar<long>("SELECT COUNT(*) FROM teams WHERE id = @t", ("@t", id)) == 0) return Json.Error("Team not found", 404);
                 if (teamOf(c, u) != null) return Json.Error("Leave your current team first.", 422);
-                if (c.Scalar<long>("SELECT COUNT(*) FROM team_members WHERE team_id = $t", ("$t", id)) >= max_members) return Json.Error("This team is full.", 422);
-                if (c.Exec("INSERT INTO team_members (team_id, user_id) SELECT $t, $u WHERE (SELECT COUNT(*) FROM team_members WHERE team_id = $t) < 256", ("$t", id), ("$u", u)) != 1)
-                    return Json.Error("This team is full.", 422);
+                if (c.Scalar<long>("SELECT COUNT(*) FROM team_members WHERE team_id = @t", ("@t", id)) >= max_members) return Json.Error("This team is full.", 422);
+                try
+                {
+                    // the team row is the lock that serialises joins, so the member cap holds under concurrency.
+                    using var tx = c.BeginTransaction();
+                    if (c.Scalar<long?>("SELECT id FROM teams WHERE id = @t FOR UPDATE", ("@t", id)) == null) return Json.Error("Team not found", 404);
+                    if (c.Exec("INSERT INTO team_members (team_id, user_id) SELECT @t, @u WHERE (SELECT COUNT(*) FROM team_members WHERE team_id = @t) < 256", ("@t", id), ("@u", u)) != 1)
+                        return Json.Error("This team is full.", 422);
+                    tx.Commit();
+                }
+                catch (Exception e) when (e.IsUniqueViolation()) { return Json.Error("Leave your current team first.", 422); }
+                users.InvalidateTeams();
                 return Json.Ok(teamJson(c, users, accounts, id, true));
             });
 
-            app.MapPost("/api/xc/teams/leave", (HttpContext ctx, Db db) =>
+            app.MapPost("/api/xc/teams/leave", (HttpContext ctx, Db db, Users users) =>
             {
                 if (ctx.User.UserId() is not int u) return Json.Error("unauthorized", 401);
                 using var c = db.Open();
                 if (teamOf(c, u) is not long team) return Results.NoContent();
-                c.Exec("DELETE FROM team_members WHERE user_id = $u", ("$u", u));
+                c.Exec("DELETE FROM team_members WHERE user_id = @u", ("@u", u));
 
                 // leadership passes to the longest-standing member; an empty team is disbanded.
-                if (c.Scalar<long?>("SELECT leader_id FROM teams WHERE id = $t", ("$t", team)) == u)
+                if (c.Scalar<long?>("SELECT leader_id FROM teams WHERE id = @t", ("@t", team)) == u)
                 {
-                    long? next = c.Scalar<long?>("SELECT user_id FROM team_members WHERE team_id = $t ORDER BY rowid LIMIT 1", ("$t", team));
-                    if (next == null) c.Exec("DELETE FROM teams WHERE id = $t", ("$t", team));
-                    else c.Exec("UPDATE teams SET leader_id = $l WHERE id = $t", ("$l", next), ("$t", team));
+                    long? next = c.Scalar<long?>("SELECT user_id FROM team_members WHERE team_id = @t ORDER BY seq LIMIT 1", ("@t", team));
+                    if (next == null) c.Exec("DELETE FROM teams WHERE id = @t", ("@t", team));
+                    else c.Exec("UPDATE teams SET leader_id = @l WHERE id = @t", ("@l", next), ("@t", team));
                 }
 
+                users.InvalidateTeams();
                 return Results.NoContent();
             });
 
-            app.MapDelete("/api/xc/teams/{id:long}/members/{user:int}", (long id, int user, HttpContext ctx, Db db) =>
+            app.MapDelete("/api/xc/teams/{id:long}/members/{user:int}", (long id, int user, HttpContext ctx, Db db, Users users) =>
             {
                 if (ctx.User.UserId() is not int u) return Json.Error("unauthorized", 401);
                 using var c = db.Open();
-                if (c.Scalar<long?>("SELECT leader_id FROM teams WHERE id = $t", ("$t", id)) != u) return Json.Error("Only the team leader can do that.", 403);
+                if (c.Scalar<long?>("SELECT leader_id FROM teams WHERE id = @t", ("@t", id)) != u) return Json.Error("Only the team leader can do that.", 403);
                 if (user == u) return Json.Error("Use leave instead.", 422);
-                c.Exec("DELETE FROM team_members WHERE team_id = $t AND user_id = $m", ("$t", id), ("$m", user));
+                c.Exec("DELETE FROM team_members WHERE team_id = @t AND user_id = @m", ("@t", id), ("@m", user));
+                users.InvalidateTeams();
                 return Results.NoContent();
             });
 
@@ -147,7 +171,7 @@ namespace XcOsu.Server.Api
             {
                 if (ctx.User.UserId() is not int u) return Json.Error("unauthorized", 401);
                 using (var c = db.Open())
-                    if (c.Scalar<long?>("SELECT leader_id FROM teams WHERE id = $t", ("$t", id)) != u) return Json.Error("Only the team leader can do that.", 403);
+                    if (c.Scalar<long?>("SELECT leader_id FROM teams WHERE id = @t", ("@t", id)) != u) return Json.Error("Only the team leader can do that.", 403);
                 if (!ctx.Request.HasFormContentType) return Json.Error("Send the image as multipart form field \"file\".", 422);
                 var form = await ctx.Request.ReadFormAsync();
                 var file = form.Files["file"] ?? form.Files.FirstOrDefault();
@@ -163,7 +187,8 @@ namespace XcOsu.Server.Api
 
                 using var c2 = db.Open();
                 string url = $"{users.PublicBase}/api/xc/team-flag/{id}?v={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
-                c2.Exec("UPDATE teams SET flag_url = $f WHERE id = $t", ("$f", url), ("$t", id));
+                c2.Exec("UPDATE teams SET flag_url = @f WHERE id = @t", ("@f", url), ("@t", id));
+                users.InvalidateTeams();
                 return Json.Ok(new { flag_url = url });
             }).DisableAntiforgery();
 

@@ -34,6 +34,8 @@ namespace XcOsu.Server.Services
         private readonly ILogger<BeatmapSearch> log;
 
         private readonly ConcurrentDictionary<string, (DateTime at, JArray sets)> cache = new();
+        // one upstream fetch per path even when hundreds of clients search the same words at once.
+        private readonly ConcurrentDictionary<string, Lazy<Task<JArray?>>> inflight = new();
         private DateTime osuDirectBlockedUntil;
 
         public BeatmapSearch(IHttpClientFactory factory, Mirrors mirrors, Db db, Users users, ILogger<BeatmapSearch> log)
@@ -107,9 +109,7 @@ namespace XcOsu.Server.Services
                 ? new JObject { ["page"] = page + 1, ["offsets"] = string.Join('.', streams.Select(s => s.Consumed)) }
                 : null;
 
-            if (results.Count > 0)
-                _ = Task.Run(() => mirrors.CacheSets(results));
-
+            // sets are cached in the DB once per fresh mirror page (see fetch), not on every search request.
             return new Result(results, cursor, page * PAGE_SIZE + results.Count + (more ? PAGE_SIZE : 0));
         }
 
@@ -167,6 +167,18 @@ namespace XcOsu.Server.Services
             if (cache.TryGetValue(path, out var hit) && DateTime.UtcNow - hit.at < cache_ttl)
                 return hit.sets;
 
+            // one shared fetch: a burst of identical searches used to download and re-parse the whole result page
+            // once per client, saturating the CPU and the mirror's rate limit at the same time.
+            var lazy = inflight.GetOrAdd(path, p => new Lazy<Task<JArray?>>(() => fetchUpstream(p), LazyThreadSafetyMode.ExecutionAndPublication));
+            var task = lazy.Value;
+            _ = task.ContinueWith(_ => inflight.TryRemove(new KeyValuePair<string, Lazy<Task<JArray?>>>(path, lazy)), TaskScheduler.Default);
+
+            // the caller may give up (client disconnected) without cancelling the fetch others are waiting on.
+            return await task.WaitAsync(ct);
+        }
+
+        private async Task<JArray?> fetchUpstream(string path)
+        {
             foreach (string b in new[] { "https://osu.direct/api/v2", "https://catboy.best/api/v2" })
             {
                 bool osuDirect = b.Contains("osu.direct");
@@ -175,7 +187,7 @@ namespace XcOsu.Server.Services
 
                 try
                 {
-                    using var res = await http.GetAsync(b + path, ct);
+                    using var res = await http.GetAsync(b + path, CancellationToken.None);
 
                     if (osuDirect)
                     {
@@ -194,7 +206,7 @@ namespace XcOsu.Server.Services
                         continue;
                     }
 
-                    var json = JToken.Parse(await res.Content.ReadAsStringAsync(ct));
+                    var json = JToken.Parse(await res.Content.ReadAsStringAsync(CancellationToken.None));
                     var sets = json switch
                     {
                         JArray a => a,
@@ -203,19 +215,20 @@ namespace XcOsu.Server.Services
                     };
                     if (sets == null) continue;
 
-                    if (cache.Count > 400)
+                    // each page is ~1-2 MB of mirror JSON: keep the whole cache well inside the service's heap ceiling.
+                    if (cache.Count > 120)
                     {
                         foreach (var k in cache.Where(kv => DateTime.UtcNow - kv.Value.at > cache_ttl).Select(kv => kv.Key).ToList())
                             cache.TryRemove(k, out _);
-                        if (cache.Count > 400) cache.Clear();
+                        if (cache.Count > 120) cache.Clear();
                     }
 
                     cache[path] = (DateTime.UtcNow, sets);
+                    if (sets.Count > 0) _ = Task.Run(() => mirrors.CacheSets(sets.OfType<JObject>()));
                     return sets;
                 }
                 catch (Exception e) when (e is HttpRequestException or TaskCanceledException or Newtonsoft.Json.JsonException)
                 {
-                    if (ct.IsCancellationRequested) throw;
                     log.LogWarning("search mirror {Base} failed: {Msg}", b, e.Message);
                 }
             }
@@ -233,7 +246,7 @@ namespace XcOsu.Server.Services
 
             List<int> ids;
             using (var c = db.Open())
-                ids = c.Query("SELECT beatmapset_id FROM favourites WHERE user_id = $u ORDER BY rowid DESC", r => r.GetInt32(0), ("$u", q.Viewer));
+                ids = c.Query("SELECT beatmapset_id FROM favourites WHERE user_id = @u ORDER BY seq DESC", r => r.GetInt32(0), ("@u", q.Viewer));
 
             var sets = new JObject?[ids.Count];
             using (var gate = new SemaphoreSlim(8))
@@ -261,14 +274,14 @@ namespace XcOsu.Server.Services
             int viewer = q.Viewer!.Value;
 
             if (q.Played != null)
-                q.PlayedIds = c.Query("SELECT DISTINCT beatmap_id FROM beatmap_playcounts WHERE user_id = $u", r => r.GetInt32(0), ("$u", viewer)).ToHashSet();
+                q.PlayedIds = c.Query("SELECT DISTINCT beatmap_id FROM beatmap_playcounts WHERE user_id = @u", r => r.GetInt32(0), ("@u", viewer)).ToHashSet();
 
             if (q.Ranks != null)
             {
                 // best rank per beatmap (by score), like osu-web's "rank achieved"
                 q.RankByBeatmap = new Dictionary<int, string>();
-                foreach (var (beatmap, rank) in c.Query("SELECT beatmap_id, rank, MAX(total_score) FROM scores WHERE user_id = $u AND passed = 1" + (q.Mode != null ? " AND ruleset_id = $r" : "") + " GROUP BY beatmap_id",
-                             r => (r.GetInt32(0), r.GetString(1)), ("$u", viewer), ("$r", q.Mode ?? 0)))
+                foreach (var (beatmap, rank) in c.Query("SELECT DISTINCT ON (beatmap_id) beatmap_id, rank FROM scores WHERE user_id = @u AND passed = 1 AND (@r < 0 OR ruleset_id = @r) ORDER BY beatmap_id, total_score DESC, id",
+                             r => (r.GetInt32(0), r.GetString(1)), ("@u", viewer), ("@r", q.Mode ?? -1)))
                     q.RankByBeatmap[beatmap] = rank;
             }
 

@@ -24,7 +24,7 @@ const ROUTES = [
   [/^\/(?:home\/)?news$/, content.news],
   [/^\/(?:home\/)?news\/([^/]+)$/, content.newsPost],
   [/^\/(?:help\/)?wiki(?:\/(.*))?$/, content.wiki],
-  [/^\/(?:home\/)?changelog(?:\/[^/]+\/([^/]+))?$/, content.changelog],
+  [/^\/(?:home\/)?changelog(?:\/([^/]+)(?:\/([^/]+))?)?$/, content.changelog],
   [/^\/community\/forums\/topics\/create$/, content.reportIssue],
   [/^\/comments$/, misc.comments],
   [/^\/home\/account\/edit$/, account.settings],

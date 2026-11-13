@@ -88,7 +88,7 @@ namespace XcOsu.Server.Hubs
         {
             using (var c = db.Open())
             {
-                string? json = c.Scalar<string>("SELECT json FROM rooms WHERE id = $i", ("$i", id));
+                string? json = c.Scalar<string>("SELECT json FROM rooms WHERE id = @i", ("@i", id));
                 if (json == null) throw new HubException("Room not found.");
                 var room = Newtonsoft.Json.Linq.JObject.Parse(json);
                 if ((room.Value<bool?>("has_password") == true || room.Value<string>("category") == "matchmaking")
@@ -113,7 +113,7 @@ namespace XcOsu.Server.Hubs
             int u = me;
             List<int> friends;
             using (var c = db.Open())
-                friends = c.Query("SELECT target_id FROM friends WHERE user_id = $u", r => r.GetInt32(0), ("$u", u));
+                friends = c.Query("SELECT target_id FROM friends WHERE user_id = @u", r => r.GetInt32(0), ("@u", u));
 
             var previous = Context.Items.TryGetValue("friends", out var old) ? (HashSet<int>)old! : new HashSet<int>();
             foreach (int removed in previous.Except(friends))

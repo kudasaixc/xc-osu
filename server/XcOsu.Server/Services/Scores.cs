@@ -70,13 +70,16 @@ namespace XcOsu.Server.Services
             if (!AbuseGuard.Allow("score-token:" + userId, 30, TimeSpan.FromMinutes(1))) throw new SubmitException("Too many score tokens", 429);
             using var c = db.Open();
             using var tokenTransaction = c.BeginTransaction();
-            c.Exec("DELETE FROM score_tokens WHERE score_id IS NULL AND created_at < $t", ("$t", DateTimeOffset.UtcNow.AddHours(-TOKEN_LIFETIME_HOURS).ToUnixTimeSeconds()));
-            if (c.Scalar<long>("SELECT COUNT(*) FROM score_tokens WHERE user_id = $u AND score_id IS NULL", ("$u", userId)) >= 100)
+            // the capacity below is a count followed by an insert: two simultaneous submissions for the same player would
+            // both see room for one more. Locking their row makes the pair behave like the single writer SQLite gave us.
+            c.Exec("SELECT 1 FROM users WHERE id = @u FOR UPDATE", ("@u", userId));
+            c.Exec("DELETE FROM score_tokens WHERE score_id IS NULL AND created_at < @t", ("@t", DateTimeOffset.UtcNow.AddHours(-TOKEN_LIFETIME_HOURS).ToUnixTimeSeconds()));
+            if (c.Scalar<long>("SELECT COUNT(*) FROM score_tokens WHERE user_id = @u AND score_id IS NULL", ("@u", userId)) >= 100)
                 throw new SubmitException("Too many outstanding score tokens", 429);
             long tokenId = c.Insert("""
-                INSERT INTO score_tokens (user_id, beatmap_id, ruleset_id, playlist_item_id, room_id, beatmap_hash, created_at) VALUES ($u, $b, $r, $p, $rm, $h, $t)
-                """, ("$u", userId), ("$b", beatmapId), ("$r", rulesetId), ("$p", playlistItemId), ("$rm", roomId), ("$h", beatmapHash),
-                ("$t", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+                INSERT INTO score_tokens (user_id, beatmap_id, ruleset_id, playlist_item_id, room_id, beatmap_hash, created_at) VALUES (@u, @b, @r, @p, @rm, @h, @t)
+                """, ("@u", userId), ("@b", beatmapId), ("@r", rulesetId), ("@p", playlistItemId), ("@rm", roomId), ("@h", beatmapHash),
+                ("@t", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
             tokenTransaction.Commit();
             return tokenId;
         }
@@ -91,9 +94,9 @@ namespace XcOsu.Server.Services
             long? roomId;
             using (var c = db.Open())
             {
-                var t = c.Query("SELECT user_id, beatmap_id, ruleset_id, score_id, beatmap_hash, playlist_item_id, room_id, created_at FROM score_tokens WHERE id = $t",
+                var t = c.Query("SELECT user_id, beatmap_id, ruleset_id, score_id, beatmap_hash, playlist_item_id, room_id, created_at FROM score_tokens WHERE id = @t",
                     r => (u: r.GetInt32(0), b: r.GetInt32(1), rs: r.GetInt32(2), s: r.IsDBNull(3) ? (long?)null : r.GetInt64(3), h: r.IsDBNull(4) ? null : r.GetString(4),
-                        p: r.IsDBNull(5) ? (long?)null : r.GetInt64(5), room: r.IsDBNull(6) ? (long?)null : r.GetInt64(6), at: r.GetInt64(7)), ("$t", token)).FirstOrDefault();
+                        p: r.IsDBNull(5) ? (long?)null : r.GetInt64(5), room: r.IsDBNull(6) ? (long?)null : r.GetInt64(6), at: r.GetInt64(7)), ("@t", token)).FirstOrDefault();
                 if (t == default || t.u != userId || t.b != beatmapId || t.p != playlistItemId) return null;
                 if (t.s != null)
                     return Load(c, new[] { t.s.Value }, accounts, users, withBeatmap: false).FirstOrDefault();
@@ -152,35 +155,36 @@ namespace XcOsu.Server.Services
             using (var c = db.Open())
             using (var tx = c.BeginTransaction())
             {
-                long? alreadyStored = c.Scalar<long?>("SELECT score_id FROM score_tokens WHERE id = $t", ("$t", token));
+                long? alreadyStored = c.Scalar<long?>("SELECT score_id FROM score_tokens WHERE id = @t FOR UPDATE", ("@t", token));
                 if (alreadyStored != null) return Load(c, new[] { alreadyStored.Value }, accounts, users, false).FirstOrDefault();
-                if (c.Scalar<long>("SELECT COUNT(*) FROM users WHERE id = $u AND restricted = 0", ("$u", userId)) != 1)
+                if (c.Scalar<long>("SELECT COUNT(*) FROM users WHERE id = @u AND restricted = 0", ("@u", userId)) != 1)
                     throw new SubmitException("Account unavailable", 403);
                 id = c.Insert("""
                     INSERT INTO scores (user_id, beatmap_id, ruleset_id, playlist_item_id, total_score, accuracy, max_combo, rank, passed, pp, ranked, mods, data, ended_at, started_at,
                                         has_replay, total_hits, play_seconds, legacy_total_score, replay_due)
-                    VALUES ($u, $b, $r, $p, $ts, $a, $mc, $rk, $ps, $pp, $rd, $m, $d, $e, $st, 0, $th, $sec, $lts, $due)
+                    VALUES (@u, @b, @r, @p, @ts, @a, @mc, @rk, @ps, @pp, @rd, @m, @d, @e, @st, 0, @th, @sec, @lts, @due)
                     """,
                     // a ranked pass has to back its numbers with a replay (see ReplayVerification).
-                    ("$due", ranked && score.Passed && ReplayVerification.ReplayGraceSeconds is int grace ? DateTimeOffset.UtcNow.ToUnixTimeSeconds() + grace : null),
-                    ("$u", userId), ("$b", beatmapId), ("$r", score.RulesetID), ("$p", playlistItemId), ("$ts", score.TotalScore), ("$a", score.Accuracy),
-                    ("$mc", score.MaxCombo), ("$rk", Users.RankString(score.Rank)), ("$ps", score.Passed ? 1 : 0), ("$pp", pp), ("$rd", ranked ? 1 : 0),
-                    ("$m", JsonConvert.SerializeObject(score.Mods)), ("$d", "{}"), ("$e", score.EndedAt.ToString("O")), ("$st", score.StartedAt?.ToString("O")),
-                    ("$th", totalHits), ("$sec", playSeconds), ("$lts", score.LegacyTotalScore ?? 0));
+                    ("@due", ranked && score.Passed && ReplayVerification.ReplayGraceSeconds is int grace ? DateTimeOffset.UtcNow.ToUnixTimeSeconds() + grace : null),
+                    ("@u", userId), ("@b", beatmapId), ("@r", score.RulesetID), ("@p", playlistItemId), ("@ts", score.TotalScore), ("@a", score.Accuracy),
+                    ("@mc", score.MaxCombo), ("@rk", Users.RankString(score.Rank)), ("@ps", score.Passed ? 1 : 0), ("@pp", pp), ("@rd", ranked ? 1 : 0),
+                    ("@m", JsonConvert.SerializeObject(score.Mods)), ("@d", "{}"), ("@e", score.EndedAt.ToString("O")), ("@st", score.StartedAt?.ToString("O")),
+                    ("@th", totalHits), ("@sec", playSeconds), ("@lts", score.LegacyTotalScore ?? 0));
 
                 score.ID = (ulong)id;
                 score.User = null;
                 score.Beatmap = null;
-                c.Exec("UPDATE scores SET data = $d WHERE id = $i", ("$d", JsonConvert.SerializeObject(score, Api.Json.SETTINGS)), ("$i", id));
-                c.Exec("UPDATE score_tokens SET score_id = $s WHERE id = $t", ("$s", id), ("$t", token));
+                c.Exec("UPDATE scores SET data = @d WHERE id = @i", ("@d", JsonConvert.SerializeObject(score, Api.Json.SETTINGS)), ("@i", id));
+                c.Exec("UPDATE score_tokens SET score_id = @s WHERE id = @t", ("@s", id), ("@t", token));
                 c.Exec("""
-                    INSERT INTO beatmap_playcounts (user_id, beatmap_id, count) VALUES ($u, $b, 1)
-                    ON CONFLICT(user_id, beatmap_id) DO UPDATE SET count = count + 1
-                    """, ("$u", userId), ("$b", beatmapId));
+                    INSERT INTO beatmap_playcounts (user_id, beatmap_id, count) VALUES (@u, @b, 1)
+                    ON CONFLICT(user_id, beatmap_id) DO UPDATE SET count = beatmap_playcounts.count + 1
+                    """, ("@u", userId), ("@b", beatmapId));
                 tx.Commit();
             }
 
             users.InvalidateLeaderboard();
+            users.InvalidateStatistics(userId);
             log.LogInformation("score {Id}: user {User} beatmap {Beatmap} {Score} pp={Pp} ranked={Ranked}", id, userId, beatmapId, score.TotalScore, pp, ranked);
 
             List<SoloScoreInfo> stored;
@@ -205,12 +209,12 @@ namespace XcOsu.Server.Services
         }
 
         /// <summary>osu-web style "rank" (top 50 on a beatmap) and "rank_lost" (lost #1) activity events.</summary>
-        private void recordRankEvents(Microsoft.Data.Sqlite.SqliteConnection c, SoloScoreInfo score, JObject? map)
+        private void recordRankEvents(Npgsql.NpgsqlConnection c, SoloScoreInfo score, JObject? map)
         {
             var board = c.Query("""
-                SELECT id, user_id FROM scores WHERE beatmap_id = $b AND ruleset_id = $r AND passed = 1 AND ranked = 1 AND playlist_item_id IS NULL
+                SELECT id, user_id FROM scores WHERE beatmap_id = @b AND ruleset_id = @r AND passed = 1 AND ranked = 1 AND playlist_item_id IS NULL
                 ORDER BY total_score DESC, id ASC
-                """, r => (id: r.GetInt64(0), user: r.GetInt32(1)), ("$b", score.BeatmapID), ("$r", score.RulesetID));
+                """, r => (id: r.GetInt64(0), user: r.GetInt32(1)), ("@b", score.BeatmapID), ("@r", score.RulesetID));
 
             var seen = new HashSet<int>();
             var bestPerUser = board.Where(r => seen.Add(r.user)).ToList();
@@ -233,21 +237,21 @@ namespace XcOsu.Server.Services
             }
         }
 
-        public void AddEvent(Microsoft.Data.Sqlite.SqliteConnection c, int userId, string type, JObject payload, string? at = null)
+        public void AddEvent(Npgsql.NpgsqlConnection c, int userId, string type, JObject payload, string? at = null)
         {
             var row = accounts.Get(userId);
             if (row != null) payload["user"] ??= new JObject { ["username"] = row.Username, ["url"] = $"/users/{userId}" };
-            c.Exec("INSERT INTO user_events (user_id, type, json, created_at) VALUES ($u, $t, $j, $c)",
-                ("$u", userId), ("$t", type), ("$j", payload.ToString(Formatting.None)), ("$c", at ?? DateTimeOffset.UtcNow.ToString("O")));
+            c.Exec("INSERT INTO user_events (user_id, type, json, created_at) VALUES (@u, @t, @j, @c)",
+                ("@u", userId), ("@t", type), ("@j", payload.ToString(Formatting.None)), ("@c", at ?? DateTimeOffset.UtcNow.ToString("O")));
         }
 
         public void AttachReplay(long scoreToken, byte[] osr)
         {
             using var c = db.Open();
-            long? scoreId = c.Scalar<long?>("SELECT score_id FROM score_tokens WHERE id = $t", ("$t", scoreToken));
+            long? scoreId = c.Scalar<long?>("SELECT score_id FROM score_tokens WHERE id = @t", ("@t", scoreToken));
             if (scoreId == null) return;
             File.WriteAllBytes(Path.Combine(ReplayDirectory, $"{scoreId}.osr"), osr);
-            c.Exec("UPDATE scores SET has_replay = 1 WHERE id = $i", ("$i", scoreId));
+            c.Exec("UPDATE scores SET has_replay = 1 WHERE id = @i", ("@i", scoreId));
             ReplayAttached?.Invoke(scoreId.Value);
         }
 
@@ -255,11 +259,11 @@ namespace XcOsu.Server.Services
         public void CountReplayWatch(long scoreId, int? viewer)
         {
             using var c = db.Open();
-            int? owner = (int?)c.Scalar<long?>("SELECT user_id FROM scores WHERE id = $i", ("$i", scoreId));
+            int? owner = (int?)c.Scalar<long?>("SELECT user_id FROM scores WHERE id = @i", ("@i", scoreId));
             if (owner == null || owner == viewer) return;
             c.Exec("""
-                INSERT INTO replay_watches (user_id, month, count) VALUES ($u, $m, 1) ON CONFLICT(user_id, month) DO UPDATE SET count = count + 1
-                """, ("$u", owner), ("$m", DateTime.UtcNow.ToString("yyyy-MM")));
+                INSERT INTO replay_watches (user_id, month, count) VALUES (@u, @m, 1) ON CONFLICT(user_id, month) DO UPDATE SET count = replay_watches.count + 1
+                """, ("@u", owner), ("@m", DateTime.UtcNow.ToString("yyyy-MM")));
         }
 
         private static bool Eligible(SoloScoreInfo score, JObject? map, string? tokenHash, bool legacy = false)
@@ -284,8 +288,8 @@ namespace XcOsu.Server.Services
             List<(long id, string data, int ranked)> rows;
             using (var c = db.Open())
                 // a score refused by replay verification stays refused whatever happens to the beatmap.
-                rows = c.Query($"SELECT id, data, ranked FROM scores WHERE beatmap_id = $b AND playlist_item_id IS NULL AND verification NOT IN ({ReplayVerification.MISMATCH}, {ReplayVerification.MISSING_REPLAY})",
-                    r => (r.GetInt64(0), r.GetString(1), r.GetInt32(2)), ("$b", beatmapId));
+                rows = c.Query($"SELECT id, data, ranked FROM scores WHERE beatmap_id = @b AND playlist_item_id IS NULL AND verification NOT IN ({ReplayVerification.MISMATCH}, {ReplayVerification.MISSING_REPLAY})",
+                    r => (r.GetInt64(0), r.GetString(1), r.GetInt32(2)), ("@b", beatmapId));
 
             foreach (var (id, data, wasRanked) in rows)
             {
@@ -294,17 +298,17 @@ namespace XcOsu.Server.Services
                 if (ruleset == null) continue;
                 bool modsRanked = s.Mods.All(m => { try { return m.ToMod(ruleset).Ranked; } catch { return false; } });
                 string? checksum;
-                using (var source = db.Open()) checksum = source.Scalar<string>("SELECT beatmap_hash FROM score_tokens WHERE score_id = $s LIMIT 1", ("$s", id));
+                using (var source = db.Open()) checksum = source.Scalar<string>("SELECT beatmap_hash FROM score_tokens WHERE score_id = @s LIMIT 1", ("@s", id));
                 bool ranked = Eligible(s, map, checksum, legacy: true);
                 double? pp = ranked && status is 1 or 2 or 3 && s.Passed ? await performance.CalculatePp(beatmapId, s, ct) : null;
                 using var c = db.Open();
-                c.Exec("UPDATE scores SET ranked = $r, pp = $p WHERE id = $i", ("$r", ranked ? 1 : 0), ("$p", pp), ("$i", id));
+                c.Exec("UPDATE scores SET ranked = @r, pp = @p WHERE id = @i", ("@r", ranked ? 1 : 0), ("@p", pp), ("@i", id));
             }
 
             users.InvalidateLeaderboard();
         }
 
-        public static List<SoloScoreInfo> Load(Microsoft.Data.Sqlite.SqliteConnection c, IEnumerable<long> ids, Accounts accounts, Users users, bool withBeatmap)
+        public static List<SoloScoreInfo> Load(Npgsql.NpgsqlConnection c, IEnumerable<long> ids, Accounts accounts, Users users, bool withBeatmap)
         {
             var idList = ids.ToList();
             if (idList.Count == 0) return new List<SoloScoreInfo>();
@@ -338,7 +342,7 @@ namespace XcOsu.Server.Services
                 {
                     if (!beatmapCache.TryGetValue(row.beatmap, out var bm))
                     {
-                        string? json = c.Scalar<string>("SELECT json FROM beatmaps WHERE id = $b", ("$b", row.beatmap));
+                        string? json = c.Scalar<string>("SELECT json FROM beatmaps WHERE id = @b", ("@b", row.beatmap));
                         if (json != null)
                         {
                             var jo = JObject.Parse(json);

@@ -25,9 +25,9 @@ namespace XcOsu.Server.Services
             long id;
             using (var c = db.Open())
                 id = c.Insert("""
-                    INSERT INTO notifications (user_id, name, object_type, object_id, category, source_user_id, details, created_at) VALUES ($u, $n, $ot, $oi, $c, $s, $d, $t)
-                    """, ("$u", userId), ("$n", name), ("$ot", objectType), ("$oi", objectId), ("$c", category), ("$s", sourceUserId),
-                    ("$d", details.ToString(Formatting.None)), ("$t", now));
+                    INSERT INTO notifications (user_id, name, object_type, object_id, category, source_user_id, details, created_at) VALUES (@u, @n, @ot, @oi, @c, @s, @d, @t)
+                    """, ("@u", userId), ("@n", name), ("@ot", objectType), ("@oi", objectId), ("@c", category), ("@s", sourceUserId),
+                    ("@d", details.ToString(Formatting.None)), ("@t", now));
 
             await chat.SendEvent(new[] { userId }, "new", toJson(id, name, objectType, objectId, category, sourceUserId, details, now, false));
         }
@@ -50,9 +50,9 @@ namespace XcOsu.Server.Services
             using var c = db.Open();
             var list = c.Query("""
                 SELECT id, name, object_type, object_id, category, source_user_id, details, created_at, is_read FROM notifications
-                WHERE user_id = $u ORDER BY id DESC LIMIT 50
+                WHERE user_id = @u ORDER BY id DESC LIMIT 50
                 """, r => toJson(r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetInt64(3), r.GetString(4), r.IsDBNull(5) ? null : r.GetInt32(5),
-                JObject.Parse(r.GetString(6)), r.GetString(7), r.GetInt32(8) != 0), ("$u", userId));
+                JObject.Parse(r.GetString(6)), r.GetString(7), r.GetInt32(8) != 0), ("@u", userId));
 
             var stacks = list.GroupBy(n => (n.Value<string>("object_type"), n.Value<long>("object_id"), n.Value<string>("category"))).Select(g => new JObject
             {
@@ -79,13 +79,13 @@ namespace XcOsu.Server.Services
         {
             using var c = db.Open();
             foreach (long id in ids)
-                c.Exec("UPDATE notifications SET is_read = 1 WHERE id = $i AND user_id = $u", ("$i", id), ("$u", userId));
+                c.Exec("UPDATE notifications SET is_read = 1 WHERE id = @i AND user_id = @u", ("@i", id), ("@u", userId));
         }
 
         public void MarkAllRead(int userId)
         {
             using var c = db.Open();
-            c.Exec("UPDATE notifications SET is_read = 1 WHERE user_id = $u", ("$u", userId));
+            c.Exec("UPDATE notifications SET is_read = 1 WHERE user_id = @u", ("@u", userId));
         }
     }
 
@@ -173,7 +173,7 @@ namespace XcOsu.Server.Services
                     if (score.MaxCombo >= combo) unlocked.Add(id);
 
                 using var c = db.Open();
-                long plays = c.Scalar<long>("SELECT COUNT(*) FROM scores WHERE user_id = $u AND ruleset_id = 0", ("$u", score.UserID));
+                long plays = c.Scalar<long>("SELECT COUNT(*) FROM scores WHERE user_id = @u AND ruleset_id = 0", ("@u", score.UserID));
                 foreach ((int n, int id) in new[] { (5000, 21), (15000, 22), (25000, 23), (50000, 24) })
                     if (plays >= n) unlocked.Add(id);
             }
@@ -199,8 +199,8 @@ namespace XcOsu.Server.Services
 
             using (var c = db.Open())
             {
-                if (c.Exec("INSERT OR IGNORE INTO user_achievements (user_id, achievement_id, achieved_at) VALUES ($u, $a, $t)",
-                        ("$u", userId), ("$a", medalId), ("$t", DateTimeOffset.UtcNow.ToString("O"))) == 0)
+                if (c.Exec("INSERT INTO user_achievements (user_id, achievement_id, achieved_at) VALUES (@u, @a, @t) ON CONFLICT DO NOTHING",
+                        ("@u", userId), ("@a", medalId), ("@t", DateTimeOffset.UtcNow.ToString("O"))) == 0)
                     return false;
 
                 scores.AddEvent(c, userId, "achievement", new JObject

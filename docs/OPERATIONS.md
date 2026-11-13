@@ -29,6 +29,18 @@ rsync -a --delete-delay \
 
 Only replace placeholders with an existing snapshot path. These backups are on the **same disk** and do not protect against disk loss. Server databases and telemetry archives require separate backups.
 
+## Database
+The server keeps all state in PostgreSQL 16+, reached over the local Unix socket at `/var/run/postgresql`. The
+`xc-osu` service account authenticates by peer credentials, so its PostgreSQL role carries the same name and owns the
+`xc_osu` database; `deploy/setup-isolation.sh` creates both on a fresh machine and `deploy/restart-server.sh` refuses
+to restart the service when PostgreSQL is down. `Database:ConnectionString` overrides the default
+(`Host=/var/run/postgresql;Database=xc_osu`); pool size, timeouts and auto-prepare are derived from it.
+
+The one-time move from the former SQLite files is `dotnet xc-osu-server.dll import-sqlite /var/lib/xc-osu` (or a list
+of `*.db` paths) with the service stopped. It replaces every matching table inside a single transaction and verifies
+row counts, so a failed import leaves the database untouched. Keep the SQLite files until the import has been
+validated, then remove them from backups deliberately.
+
 ## Known limits — November 10, 2026
 - Root disk is about 93% full; inspect generated output and caches carefully. Never delete live data or rollback snapshots to make room without a retention plan.
 - A WebAssembly update-pacing assertion targeting ~240 Hz failed during the earlier Codex run. Browser validation is pending at the owner's request.

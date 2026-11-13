@@ -39,6 +39,13 @@ namespace XcOsu.Server.Api
 
         private static readonly JsonSerializer serializer = JsonSerializer.Create(Json.SETTINGS);
 
+        // A search page is the heaviest GET in the app (full mirror beatmapsets decorated with our counts, ~230 KB), and
+        // popular terms are requested by many clients at once. Sharing the serialized page for a few seconds turns a
+        // burst into one page build instead of one per client.
+        private static readonly Dictionary<string, (DateTime at, string json)> searchResponses = new();
+        private static readonly object searchResponsesLock = new();
+        private static readonly TimeSpan searchResponseTtl = TimeSpan.FromSeconds(10);
+
         private static JObject jo(object o) => JObject.FromObject(o, serializer);
 
         // ------------------------------------------------------------------ auth
@@ -182,7 +189,7 @@ namespace XcOsu.Server.Api
                     var profile = JObject.Parse(row.ProfileJson);
                     if (settings["pm_friends_only"] is JValue v) profile["pm_friends_only"] = v.Value<bool>();
                     using var c = db.Open();
-                    c.Exec("UPDATE users SET profile_json = $p WHERE id = $u", ("$p", profile.ToString(Formatting.None)), ("$u", u));
+                    c.Exec("UPDATE users SET profile_json = @p WHERE id = @u", ("@p", profile.ToString(Formatting.None)), ("@u", u));
                 }
 
                 return me(ctx, users, accounts, null);
@@ -226,14 +233,14 @@ namespace XcOsu.Server.Api
                 {
                     "best" => users.Bests(c, id, ruleset).Skip(offset).Take(limit).Select(b => b.ScoreId).ToList(),
                     "recent" => c.Query($"""
-                        SELECT id FROM scores WHERE user_id = $u AND ruleset_id = $r AND ended_at > $t {(includeFails ? "" : "AND passed = 1")}
-                        ORDER BY id DESC LIMIT $l OFFSET $o
-                        """, r => r.GetInt64(0), ("$u", id), ("$r", ruleset), ("$t", DateTimeOffset.UtcNow.AddDays(-1).ToString("O")), ("$l", limit), ("$o", offset)),
+                        SELECT id FROM scores WHERE user_id = @u AND ruleset_id = @r AND ended_at > @t {(includeFails ? "" : "AND passed = 1")}
+                        ORDER BY id DESC LIMIT @l OFFSET @o
+                        """, r => r.GetInt64(0), ("@u", id), ("@r", ruleset), ("@t", DateTimeOffset.UtcNow.AddDays(-1).ToString("O")), ("@l", limit), ("@o", offset)),
                     "firsts" => UsersService.FirstPlaceBeatmaps(c, id, ruleset).Skip(offset).Take(limit).ToList(),
                     "pinned" => c.Query("""
-                        SELECT p.score_id FROM pinned_scores p JOIN scores s ON s.id = p.score_id WHERE p.user_id = $u AND s.ruleset_id = $r
-                        ORDER BY p.sort, p.score_id DESC LIMIT $l OFFSET $o
-                        """, r => r.GetInt64(0), ("$u", id), ("$r", ruleset), ("$l", limit), ("$o", offset)),
+                        SELECT p.score_id FROM pinned_scores p JOIN scores s ON s.id = p.score_id WHERE p.user_id = @u AND s.ruleset_id = @r
+                        ORDER BY p.sort, p.score_id DESC LIMIT @l OFFSET @o
+                        """, r => r.GetInt64(0), ("@u", id), ("@r", ruleset), ("@l", limit), ("@o", offset)),
                     _ => new List<long>(),
                 };
 
@@ -266,8 +273,8 @@ namespace XcOsu.Server.Api
                 {
                     case "most_played":
                     {
-                        var rows = c.Query("SELECT beatmap_id, count FROM beatmap_playcounts WHERE user_id = $u ORDER BY count DESC, beatmap_id LIMIT $l OFFSET $o",
-                            r => (beatmap: r.GetInt32(0), count: r.GetInt32(1)), ("$u", id), ("$l", limit), ("$o", offset));
+                        var rows = c.Query("SELECT beatmap_id, count FROM beatmap_playcounts WHERE user_id = @u ORDER BY count DESC, beatmap_id LIMIT @l OFFSET @o",
+                            r => (beatmap: r.GetInt32(0), count: r.GetInt32(1)), ("@u", id), ("@l", limit), ("@o", offset));
                         var list = new JArray();
                         foreach (var (beatmap, count) in rows)
                         {
@@ -284,8 +291,8 @@ namespace XcOsu.Server.Api
 
                     case "favourite":
                     {
-                        var ids = c.Query("SELECT beatmapset_id FROM favourites WHERE user_id = $u ORDER BY rowid DESC LIMIT $l OFFSET $o",
-                            r => r.GetInt32(0), ("$u", id), ("$l", limit), ("$o", offset));
+                        var ids = c.Query("SELECT beatmapset_id FROM favourites WHERE user_id = @u ORDER BY seq DESC LIMIT @l OFFSET @o",
+                            r => r.GetInt32(0), ("@u", id), ("@l", limit), ("@o", offset));
                         var sets = await Task.WhenAll(ids.Select(s => mirrors.GetBeatmapset(s, ct)));
                         return Json.Ok(sets.Where(s => s != null));
                     }
@@ -303,14 +310,14 @@ namespace XcOsu.Server.Api
                 int limit = Math.Clamp(int.TryParse(req.Query["limit"], out int l) ? l : 5, 1, 100);
                 int offset = Math.Max(0, int.TryParse(req.Query["offset"], out int o) ? o : 0);
                 using var c = db.Open();
-                var events = c.Query("SELECT id, type, json, created_at FROM user_events WHERE user_id = $u ORDER BY id DESC LIMIT $l OFFSET $o", r =>
+                var events = c.Query("SELECT id, type, json, created_at FROM user_events WHERE user_id = @u ORDER BY id DESC LIMIT @l OFFSET @o", r =>
                 {
                     var j = JObject.Parse(r.GetString(2));
                     j["id"] = r.GetInt64(0);
                     j["type"] = r.GetString(1);
                     j["createdAt"] = r.GetString(3);
                     return j;
-                }, ("$u", id), ("$l", limit), ("$o", offset));
+                }, ("@u", id), ("@l", limit), ("@o", offset));
                 return Json.Ok(events);
             });
 
@@ -323,13 +330,13 @@ namespace XcOsu.Server.Api
             {
                 if (uid(ctx) is not int u) return unauthorized();
                 using var c = db.Open();
-                if (c.Scalar<long>("SELECT COUNT(*) FROM scores WHERE id = $i AND user_id = $u AND passed = 1", ("$i", scoreId), ("$u", u)) == 0)
+                if (c.Scalar<long>("SELECT COUNT(*) FROM scores WHERE id = @i AND user_id = @u AND passed = 1", ("@i", scoreId), ("@u", u)) == 0)
                     return Json.Error("Score not found", 404);
                 if (on)
-                    c.Exec("INSERT OR IGNORE INTO pinned_scores (user_id, score_id, sort) VALUES ($u, $s, (SELECT COALESCE(MAX(sort), 0) + 1 FROM pinned_scores WHERE user_id = $u))",
-                        ("$u", u), ("$s", scoreId));
+                    c.Exec("INSERT INTO pinned_scores (user_id, score_id, sort) VALUES (@u, @s, (SELECT COALESCE(MAX(sort), 0) + 1 FROM pinned_scores WHERE user_id = @u)) ON CONFLICT DO NOTHING",
+                        ("@u", u), ("@s", scoreId));
                 else
-                    c.Exec("DELETE FROM pinned_scores WHERE user_id = $u AND score_id = $s", ("$u", u), ("$s", scoreId));
+                    c.Exec("DELETE FROM pinned_scores WHERE user_id = @u AND score_id = @s", ("@u", u), ("@s", scoreId));
                 return Results.NoContent();
             }
         }
@@ -337,17 +344,17 @@ namespace XcOsu.Server.Api
         // ------------------------------------------------------------------ beatmaps (mirrors + xc-osu! data)
 
         /// <summary>Replaces the mirrors' (official) community numbers with xc-osu!'s own: play/pass counts, favourites, user tags.</summary>
-        private static JObject decorateBeatmap(JObject map, Microsoft.Data.Sqlite.SqliteConnection c, int? viewer)
+        private static JObject decorateBeatmap(JObject map, Npgsql.NpgsqlConnection c, int? viewer)
         {
             map = (JObject)map.DeepClone();
             int id = map.Value<int>("id");
-            map["playcount"] = c.Scalar<long>("SELECT COUNT(*) FROM scores WHERE beatmap_id = $b", ("$b", id));
-            map["passcount"] = c.Scalar<long>("SELECT COUNT(*) FROM scores WHERE beatmap_id = $b AND passed = 1", ("$b", id));
-            map["top_tag_ids"] = new JArray(c.Query("SELECT tag_id, COUNT(*) FROM beatmap_tags WHERE beatmap_id = $b GROUP BY tag_id ORDER BY 2 DESC LIMIT 10",
-                r => new JObject { ["tag_id"] = r.GetInt64(0), ["count"] = r.GetInt32(1) }, ("$b", id)));
+            map["playcount"] = c.Scalar<long>("SELECT COUNT(*) FROM scores WHERE beatmap_id = @b", ("@b", id));
+            map["passcount"] = c.Scalar<long>("SELECT COUNT(*) FROM scores WHERE beatmap_id = @b AND passed = 1", ("@b", id));
+            map["top_tag_ids"] = new JArray(c.Query("SELECT tag_id, COUNT(*) FROM beatmap_tags WHERE beatmap_id = @b GROUP BY tag_id ORDER BY 2 DESC LIMIT 10",
+                r => new JObject { ["tag_id"] = r.GetInt64(0), ["count"] = r.GetInt32(1) }, ("@b", id)));
             map["current_user_tag_ids"] = viewer == null
                 ? new JArray()
-                : new JArray(c.Query("SELECT tag_id FROM beatmap_tags WHERE beatmap_id = $b AND user_id = $u", r => r.GetInt64(0), ("$b", id), ("$u", viewer)));
+                : new JArray(c.Query("SELECT tag_id FROM beatmap_tags WHERE beatmap_id = @b AND user_id = @u", r => r.GetInt64(0), ("@b", id), ("@u", viewer)));
             if (map["beatmapset"] is JObject set) map["beatmapset"] = decorateSet(set, c, viewer, nested: true);
             return map;
         }
@@ -356,7 +363,7 @@ namespace XcOsu.Server.Api
         /// Listing variant of <see cref="decorateSet"/>: same xc-osu! numbers, but batched queries and none of the per-set
         /// extras (related tags, user tags) the cards never show — they made a 50-set page weigh ~1 MB.
         /// </summary>
-        private static IEnumerable<JObject> decorateListing(List<JObject> sets, Microsoft.Data.Sqlite.SqliteConnection c, int? viewer)
+        private static IEnumerable<JObject> decorateListing(List<JObject> sets, Npgsql.NpgsqlConnection c, int? viewer)
         {
             if (sets.Count == 0) return Array.Empty<JObject>();
 
@@ -365,7 +372,7 @@ namespace XcOsu.Server.Api
                 r => (r.GetInt32(0), r.GetInt64(1))).ToDictionary(r => r.Item1, r => r.Item2);
             var mine = viewer == null
                 ? new HashSet<int>()
-                : c.Query($"SELECT beatmapset_id FROM favourites WHERE user_id = $u AND beatmapset_id IN ({setIds})", r => r.GetInt32(0), ("$u", viewer)).ToHashSet();
+                : c.Query($"SELECT beatmapset_id FROM favourites WHERE user_id = @u AND beatmapset_id IN ({setIds})", r => r.GetInt32(0), ("@u", viewer)).ToHashSet();
 
             var mapIds = sets.SelectMany(s => (s["beatmaps"] as JArray)?.Select(m => m.Value<int>("id")) ?? Enumerable.Empty<int>()).ToList();
             var plays = mapIds.Count == 0
@@ -398,12 +405,12 @@ namespace XcOsu.Server.Api
             });
         }
 
-        private static JObject decorateSet(JObject set, Microsoft.Data.Sqlite.SqliteConnection c, int? viewer, bool nested = false)
+        private static JObject decorateSet(JObject set, Npgsql.NpgsqlConnection c, int? viewer, bool nested = false)
         {
             set = (JObject)set.DeepClone();
             int id = set.Value<int>("id");
-            set["favourite_count"] = c.Scalar<long>("SELECT COUNT(*) FROM favourites WHERE beatmapset_id = $s", ("$s", id));
-            set["has_favourited"] = viewer != null && c.Scalar<long>("SELECT COUNT(*) FROM favourites WHERE beatmapset_id = $s AND user_id = $u", ("$s", id), ("$u", viewer)) > 0;
+            set["favourite_count"] = c.Scalar<long>("SELECT COUNT(*) FROM favourites WHERE beatmapset_id = @s", ("@s", id));
+            set["has_favourited"] = viewer != null && c.Scalar<long>("SELECT COUNT(*) FROM favourites WHERE beatmapset_id = @s AND user_id = @u", ("@s", id), ("@u", viewer)) > 0;
             set["related_tags"] = JArray.FromObject(Tags.ALL, serializer);
 
             if (!nested && set["beatmaps"] is JArray maps)
@@ -420,11 +427,11 @@ namespace XcOsu.Server.Api
                     m["playcount"] = pc;
                     m["passcount"] = ps;
                     total += pc;
-                    m["top_tag_ids"] = new JArray(c.Query("SELECT tag_id, COUNT(*) FROM beatmap_tags WHERE beatmap_id = $b GROUP BY tag_id ORDER BY 2 DESC LIMIT 10",
-                        r => new JObject { ["tag_id"] = r.GetInt64(0), ["count"] = r.GetInt32(1) }, ("$b", m.Value<int>("id"))));
+                    m["top_tag_ids"] = new JArray(c.Query("SELECT tag_id, COUNT(*) FROM beatmap_tags WHERE beatmap_id = @b GROUP BY tag_id ORDER BY 2 DESC LIMIT 10",
+                        r => new JObject { ["tag_id"] = r.GetInt64(0), ["count"] = r.GetInt32(1) }, ("@b", m.Value<int>("id"))));
                     m["current_user_tag_ids"] = viewer == null
                         ? new JArray()
-                        : new JArray(c.Query("SELECT tag_id FROM beatmap_tags WHERE beatmap_id = $b AND user_id = $u", r => r.GetInt64(0), ("$b", m.Value<int>("id")), ("$u", viewer)));
+                        : new JArray(c.Query("SELECT tag_id FROM beatmap_tags WHERE beatmap_id = @b AND user_id = @u", r => r.GetInt64(0), ("@b", m.Value<int>("id")), ("@u", viewer)));
                 }
 
                 set["play_count"] = total;
@@ -439,18 +446,30 @@ namespace XcOsu.Server.Api
             {
                 var req = ctx.Request;
                 int? me = uid(ctx);
+                string cacheKey = me + "|" + req.QueryString.Value;
+                lock (searchResponsesLock)
+                    if (searchResponses.TryGetValue(cacheKey, out var cached) && cached.at > DateTime.UtcNow - searchResponseTtl)
+                        return Results.Content(cached.json, "application/json", System.Text.Encoding.UTF8);
+
                 var result = await search.Search(req.Query, me, ct);
 
-                using var c = db.Open();
-                var decorated = new JArray(decorateListing(result.Sets, c, me));
-                return Json.Ok(new JObject
+                string json;
+                using (var c = db.Open())
+                    json = JsonConvert.SerializeObject(new JObject
+                    {
+                        ["beatmapsets"] = new JArray(decorateListing(result.Sets, c, me)),
+                        ["total"] = result.Total,
+                        ["cursor"] = result.Cursor,
+                        ["cursor_string"] = result.Cursor?.Value<int>("page").ToString(),
+                        ["search"] = new JObject { ["sort"] = req.Query["sort"].ToString() is { Length: > 0 } sort ? sort : "ranked_desc" },
+                    }, Json.SETTINGS);
+
+                lock (searchResponsesLock)
                 {
-                    ["beatmapsets"] = decorated,
-                    ["total"] = result.Total,
-                    ["cursor"] = result.Cursor,
-                    ["cursor_string"] = result.Cursor?.Value<int>("page").ToString(),
-                    ["search"] = new JObject { ["sort"] = req.Query["sort"].ToString() is { Length: > 0 } sort ? sort : "ranked_desc" },
-                });
+                    if (searchResponses.Count >= 256) searchResponses.Clear();
+                    searchResponses[cacheKey] = (DateTime.UtcNow, json);
+                }
+                return Results.Content(json, "application/json", System.Text.Encoding.UTF8);
             });
 
             api.MapGet("/beatmapsets/lookup", async (int beatmap_id, HttpContext ctx, Mirrors mirrors, Db db, CancellationToken ct) =>
@@ -508,17 +527,17 @@ namespace XcOsu.Server.Api
                 var p = await Json.Params(ctx.Request);
                 using var c = db.Open();
                 if (p("action") == "favourite")
-                    c.Exec("INSERT OR IGNORE INTO favourites (user_id, beatmapset_id) VALUES ($u, $s)", ("$u", u), ("$s", id));
+                    c.Exec("INSERT INTO favourites (user_id, beatmapset_id) VALUES (@u, @s) ON CONFLICT DO NOTHING", ("@u", u), ("@s", id));
                 else
-                    c.Exec("DELETE FROM favourites WHERE user_id = $u AND beatmapset_id = $s", ("$u", u), ("$s", id));
-                return Json.Ok(new { favourite_count = c.Scalar<long>("SELECT COUNT(*) FROM favourites WHERE beatmapset_id = $s", ("$s", id)) });
+                    c.Exec("DELETE FROM favourites WHERE user_id = @u AND beatmapset_id = @s", ("@u", u), ("@s", id));
+                return Json.Ok(new { favourite_count = c.Scalar<long>("SELECT COUNT(*) FROM favourites WHERE beatmapset_id = @s", ("@s", id)) });
             });
 
             api.MapGet("/me/beatmapset-favourites", (HttpContext ctx, Db db) =>
             {
                 if (uid(ctx) is not int u) return unauthorized();
                 using var c = db.Open();
-                return Json.Ok(new { beatmapset_ids = c.Query("SELECT beatmapset_id FROM favourites WHERE user_id = $u", r => r.GetInt32(0), ("$u", u)) });
+                return Json.Ok(new { beatmapset_ids = c.Query("SELECT beatmapset_id FROM favourites WHERE user_id = @u", r => r.GetInt32(0), ("@u", u)) });
             });
 
             api.MapGet("/beatmaps/lookup", async (HttpContext ctx, Mirrors mirrors, Db db, CancellationToken ct) =>
@@ -571,23 +590,23 @@ namespace XcOsu.Server.Api
             api.MapGet("/beatmaps/{id:int}/tags", (int id, Db db) =>
             {
                 using var c = db.Open();
-                return Json.Ok(c.Query("SELECT tag_id, COUNT(*) FROM beatmap_tags WHERE beatmap_id = $b GROUP BY tag_id", r => new { tag_id = r.GetInt64(0), count = r.GetInt32(1) }, ("$b", id)));
+                return Json.Ok(c.Query("SELECT tag_id, COUNT(*) FROM beatmap_tags WHERE beatmap_id = @b GROUP BY tag_id", r => new { tag_id = r.GetInt64(0), count = r.GetInt32(1) }, ("@b", id)));
             });
             api.MapPut("/beatmaps/{id:int}/tags/{tag:long}", (int id, long tag, HttpContext ctx, Db db) =>
             {
                 if (uid(ctx) is not int u) return unauthorized();
                 if (Tags.ALL.All(t => t.Id != tag)) return Json.Error("Unknown tag", 404);
                 using var c = db.Open();
-                if (c.Scalar<long>("SELECT COUNT(*) FROM scores WHERE user_id = $u AND beatmap_id = $b AND passed = 1", ("$u", u), ("$b", id)) == 0)
+                if (c.Scalar<long>("SELECT COUNT(*) FROM scores WHERE user_id = @u AND beatmap_id = @b AND passed = 1", ("@u", u), ("@b", id)) == 0)
                     return Json.Error("You must pass the beatmap before tagging it.", 403);
-                c.Exec("INSERT OR IGNORE INTO beatmap_tags (beatmap_id, tag_id, user_id) VALUES ($b, $t, $u)", ("$b", id), ("$t", tag), ("$u", u));
+                c.Exec("INSERT INTO beatmap_tags (beatmap_id, tag_id, user_id) VALUES (@b, @t, @u) ON CONFLICT DO NOTHING", ("@b", id), ("@t", tag), ("@u", u));
                 return Results.NoContent();
             });
             api.MapDelete("/beatmaps/{id:int}/tags/{tag:long}", (int id, long tag, HttpContext ctx, Db db) =>
             {
                 if (uid(ctx) is not int u) return unauthorized();
                 using var c = db.Open();
-                c.Exec("DELETE FROM beatmap_tags WHERE beatmap_id = $b AND tag_id = $t AND user_id = $u", ("$b", id), ("$t", tag), ("$u", u));
+                c.Exec("DELETE FROM beatmap_tags WHERE beatmap_id = @b AND tag_id = @t AND user_id = @u", ("@b", id), ("@t", tag), ("@u", u));
                 return Results.NoContent();
             });
         }
@@ -658,8 +677,8 @@ namespace XcOsu.Server.Api
             {
                 int ruleset = UsersService.RulesetId(ctx.Request.Query["mode"].ToString());
                 using var c = db.Open();
-                var ids = c.Query("SELECT id FROM scores WHERE beatmap_id = $b AND user_id = $u AND ruleset_id = $r AND passed = 1 AND playlist_item_id IS NULL ORDER BY total_score DESC",
-                    r => r.GetInt64(0), ("$b", id), ("$u", user), ("$r", ruleset));
+                var ids = c.Query("SELECT id FROM scores WHERE beatmap_id = @b AND user_id = @u AND ruleset_id = @r AND passed = 1 AND playlist_item_id IS NULL ORDER BY total_score DESC",
+                    r => r.GetInt64(0), ("@b", id), ("@u", user), ("@r", ruleset));
                 return Json.Ok(new { scores = Scores.Load(c, ids, accounts, users, withBeatmap: false) });
             });
 
@@ -708,9 +727,9 @@ namespace XcOsu.Server.Api
 
             var rows = c.Query($"""
                 SELECT s.id, s.user_id, s.mods FROM scores s JOIN users u ON u.id = s.user_id
-                WHERE s.beatmap_id = $b AND s.ruleset_id = $r AND s.passed = 1 AND s.ranked = 1 AND s.playlist_item_id IS NULL AND u.restricted = 0 {filter}
+                WHERE s.beatmap_id = @b AND s.ruleset_id = @r AND s.passed = 1 AND s.ranked = 1 AND s.playlist_item_id IS NULL AND u.restricted = 0 {filter}
                 ORDER BY s.total_score DESC, s.id ASC
-                """, r => (id: r.GetInt64(0), user: r.GetInt32(1), mods: r.GetString(2)), ("$b", beatmapId), ("$r", ruleset));
+                """, r => (id: r.GetInt64(0), user: r.GetInt32(1), mods: r.GetString(2)), ("@b", beatmapId), ("@r", ruleset));
 
             var seen = new HashSet<int>();
             var best = new List<long>();
@@ -759,10 +778,10 @@ namespace XcOsu.Server.Api
                             using var c = db.Open();
                             var board = c.Query($"""
                                 SELECT s.user_id, SUM(best) FROM (
-                                    SELECT user_id, MAX(total_score) AS best FROM scores WHERE ruleset_id = $r AND passed = 1 AND ranked = 1 AND playlist_item_id IS NULL GROUP BY user_id, beatmap_id) s
-                                JOIN users u ON u.id = s.user_id WHERE u.restricted = 0 {(country != null ? "AND u.country = $c" : "")}
+                                    SELECT user_id, MAX(total_score) AS best FROM scores WHERE ruleset_id = @r AND passed = 1 AND ranked = 1 AND playlist_item_id IS NULL GROUP BY user_id, beatmap_id) s
+                                JOIN users u ON u.id = s.user_id WHERE u.restricted = 0 {(country != null ? "AND u.country = @c" : "")}
                                 GROUP BY s.user_id ORDER BY 2 DESC
-                                """, r => r.GetInt32(0), ("$r", ruleset), ("$c", country));
+                                """, r => r.GetInt32(0), ("@r", ruleset), ("@c", country));
                             total = board.Count;
                             ids = board.Skip((page - 1) * 50).Take(50);
                         }
@@ -785,8 +804,8 @@ namespace XcOsu.Server.Api
                         var board = users.Leaderboard(ruleset);
                         var byCountry = accounts.GetMany(board.Select(e => e.userId)).ToDictionary(a => a.Id, a => a.Country);
                         using var c = db.Open();
-                        var playcounts = c.Query("SELECT u.country, COUNT(*), COALESCE(SUM(CASE WHEN s.ranked = 1 AND s.passed = 1 THEN s.total_score END), 0) FROM scores s JOIN users u ON u.id = s.user_id WHERE s.ruleset_id = $r GROUP BY u.country",
-                            r => (r.GetString(0), r.GetInt64(1), r.GetInt64(2)), ("$r", ruleset)).ToDictionary(r => r.Item1, r => (plays: r.Item2, score: r.Item3));
+                        var playcounts = c.Query("SELECT u.country, COUNT(*), COALESCE(SUM(CASE WHEN s.ranked = 1 AND s.passed = 1 THEN s.total_score END), 0) FROM scores s JOIN users u ON u.id = s.user_id WHERE s.ruleset_id = @r GROUP BY u.country",
+                            r => (r.GetString(0), r.GetInt64(1), r.GetInt64(2)), ("@r", ruleset)).ToDictionary(r => r.Item1, r => (plays: r.Item2, score: r.Item3));
                         var countries = board.GroupBy(e => byCountry.GetValueOrDefault(e.userId, "XX"))
                                              .Select(g => new CountryStatistics
                                              {
@@ -811,7 +830,7 @@ namespace XcOsu.Server.Api
                         var board = users.Leaderboard(ruleset).ToDictionary(e => e.userId, e => e.pp);
                         var ranking = teams.Select(t =>
                         {
-                            var members = c.Query("SELECT user_id FROM team_members WHERE team_id = $t", r => r.GetInt32(0), ("$t", t.id));
+                            var members = c.Query("SELECT user_id FROM team_members WHERE team_id = @t", r => r.GetInt32(0), ("@t", t.id));
                             return new
                             {
                                 team = new { t.id, t.name, short_name = t.shortName, flag_url = t.flag },
@@ -951,8 +970,8 @@ namespace XcOsu.Server.Api
                 {
                     if (uid(ctx) is not int u) return unauthorized();
                     using var c = db.Open();
-                    var targets = c.Query($"SELECT target_id FROM {table} WHERE user_id = $u", r => r.GetInt32(0), ("$u", u));
-                    var mutual = c.Query($"SELECT user_id FROM {table} WHERE target_id = $u", r => r.GetInt32(0), ("$u", u)).ToHashSet();
+                    var targets = c.Query($"SELECT target_id FROM {table} WHERE user_id = @u", r => r.GetInt32(0), ("@u", u));
+                    var mutual = c.Query($"SELECT user_id FROM {table} WHERE target_id = @u", r => r.GetInt32(0), ("@u", u)).ToHashSet();
                     return Json.Ok(accounts.GetMany(targets).Select(r =>
                     {
                         var t = users.Compact(r);
@@ -970,11 +989,11 @@ namespace XcOsu.Server.Api
                     bool mutual;
                     using (var c = db.Open())
                     {
-                        added = c.Exec($"INSERT OR IGNORE INTO {table} (user_id, target_id) VALUES ($u, $t)", ("$u", u), ("$t", t)) > 0;
+                        added = c.Exec($"INSERT INTO {table} (user_id, target_id) VALUES (@u, @t) ON CONFLICT DO NOTHING", ("@u", u), ("@t", t)) > 0;
                         // blocking someone removes the friendship both ways, like osu-web.
-                        if (table == "blocks") c.Exec("DELETE FROM friends WHERE (user_id = $u AND target_id = $t)", ("$u", u), ("$t", t));
-                        if (table == "friends") c.Exec("DELETE FROM blocks WHERE user_id = $u AND target_id = $t", ("$u", u), ("$t", t));
-                        mutual = c.Scalar<long>($"SELECT COUNT(*) FROM {table} WHERE user_id = $t AND target_id = $u", ("$u", u), ("$t", t)) > 0;
+                        if (table == "blocks") c.Exec("DELETE FROM friends WHERE (user_id = @u AND target_id = @t)", ("@u", u), ("@t", t));
+                        if (table == "friends") c.Exec("DELETE FROM blocks WHERE user_id = @u AND target_id = @t", ("@u", u), ("@t", t));
+                        mutual = c.Scalar<long>($"SELECT COUNT(*) FROM {table} WHERE user_id = @t AND target_id = @u", ("@u", u), ("@t", t)) > 0;
                     }
 
                     var target = users.Compact(row);
@@ -987,7 +1006,7 @@ namespace XcOsu.Server.Api
                 {
                     if (uid(ctx) is not int u) return unauthorized();
                     using var c = db.Open();
-                    c.Exec($"DELETE FROM {table} WHERE user_id = $u AND target_id = $t", ("$u", u), ("$t", target));
+                    c.Exec($"DELETE FROM {table} WHERE user_id = @u AND target_id = @t", ("@u", u), ("@t", target));
                     return Results.NoContent();
                 });
             }
@@ -1000,7 +1019,7 @@ namespace XcOsu.Server.Api
 
         private static void mapComments(RouteGroupBuilder api)
         {
-            JObject bundle(Microsoft.Data.Sqlite.SqliteConnection c, List<long> ids, string? type, long? commentableId, int? viewer, Accounts accounts, UsersService users,
+            JObject bundle(Npgsql.NpgsqlConnection c, List<long> ids, string? type, long? commentableId, int? viewer, Accounts accounts, UsersService users,
                            bool hasMore = false, long? parentId = null)
             {
                 var comments = ids.Count == 0
@@ -1034,7 +1053,7 @@ namespace XcOsu.Server.Api
                 var userIds = ordered.Select(x => x.Value<int>("user_id")).Concat(ordered.Select(x => x.Value<int?>("edited_by_id")).OfType<int>()).Distinct();
                 var votes = viewer == null || ids.Count == 0
                     ? new List<long>()
-                    : c.Query($"SELECT comment_id FROM comment_votes WHERE user_id = $u AND comment_id IN ({string.Join(',', ids)})", r => r.GetInt64(0), ("$u", viewer));
+                    : c.Query($"SELECT comment_id FROM comment_votes WHERE user_id = @u AND comment_id IN ({string.Join(',', ids)})", r => r.GetInt64(0), ("@u", viewer));
 
                 var meta = new JArray();
                 if (type != null && commentableId != null)
@@ -1044,8 +1063,8 @@ namespace XcOsu.Server.Api
                         ["current_user_attributes"] = new JObject { ["can_new_comment_reason"] = viewer == null ? "Please sign in to proceed." : null },
                     });
 
-                long total = type == null ? ordered.Count : c.Scalar<long>("SELECT COUNT(*) FROM comments WHERE commentable_type = $t AND commentable_id = $i AND deleted_at IS NULL", ("$t", type), ("$i", commentableId));
-                long topLevel = type == null ? ordered.Count : c.Scalar<long>("SELECT COUNT(*) FROM comments WHERE commentable_type = $t AND commentable_id = $i AND parent_id IS NULL", ("$t", type), ("$i", commentableId));
+                long total = type == null ? ordered.Count : c.Scalar<long>("SELECT COUNT(*) FROM comments WHERE commentable_type = @t AND commentable_id = @i AND deleted_at IS NULL", ("@t", type), ("@i", commentableId));
+                long topLevel = type == null ? ordered.Count : c.Scalar<long>("SELECT COUNT(*) FROM comments WHERE commentable_type = @t AND commentable_id = @i AND parent_id IS NULL", ("@t", type), ("@i", commentableId));
 
                 var top = ordered.Where(x => x["parent_id"]?.Type == JTokenType.Null || x.Value<long?>("parent_id") == parentId).ToList();
                 var included = ordered.Except(top).ToList();
@@ -1077,9 +1096,9 @@ namespace XcOsu.Server.Api
                 string order = q["sort"].ToString() switch { "old" => "created_at ASC", "top" => "(SELECT COUNT(*) FROM comment_votes v WHERE v.comment_id = comments.id) DESC, created_at DESC", _ => "created_at DESC" };
                 using var c = db.Open();
                 var top = c.Query($"""
-                    SELECT id FROM comments WHERE ($t IS NULL OR commentable_type = $t) AND ($i IS NULL OR commentable_id = $i)
-                      AND {(parent == null ? "parent_id IS NULL" : "parent_id = $p")} ORDER BY pinned DESC, {order} LIMIT 51 OFFSET $o
-                    """, r => r.GetInt64(0), ("$t", type), ("$i", commentable), ("$p", parent), ("$o", (page - 1) * 50));
+                    SELECT id FROM comments WHERE (@t::text IS NULL OR commentable_type = @t) AND (@i::bigint IS NULL OR commentable_id = @i)
+                      AND {(parent == null ? "parent_id IS NULL" : "parent_id = @p")} ORDER BY pinned DESC, {order} LIMIT 51 OFFSET @o
+                    """, r => r.GetInt64(0), ("@t", type), ("@i", commentable), ("@p", parent), ("@o", (page - 1) * 50));
                 bool hasMore = top.Count > 50;
                 top = top.Take(50).ToList();
                 var replies = top.Count == 0 ? new List<long>() : c.Query($"SELECT id FROM comments WHERE parent_id IN ({string.Join(',', top)}) ORDER BY created_at LIMIT 100", r => r.GetInt64(0));
@@ -1099,12 +1118,12 @@ namespace XcOsu.Server.Api
                 string now = DateTimeOffset.UtcNow.ToString("O");
                 using var c = db.Open();
                 if (type is not ("news_post" or "beatmapset" or "build") || commentable <= 0
-                    || (parent != null && c.Scalar<long>("SELECT COUNT(*) FROM comments WHERE id = $p AND commentable_type = $t AND commentable_id = $i AND deleted_at IS NULL", ("$p", parent), ("$t", type), ("$i", commentable)) != 1))
+                    || (parent != null && c.Scalar<long>("SELECT COUNT(*) FROM comments WHERE id = @p AND commentable_type = @t AND commentable_id = @i AND deleted_at IS NULL", ("@p", parent), ("@t", type), ("@i", commentable)) != 1))
                     return Json.Error("Invalid comment target", 422);
-                long id = c.Insert("INSERT INTO comments (commentable_type, commentable_id, parent_id, user_id, message, created_at, updated_at) VALUES ($t, $i, $p, $u, $m, $n, $n)",
-                    ("$t", type), ("$i", commentable), ("$p", parent), ("$u", u), ("$m", message.Length > 4000 ? message[..4000] : message), ("$n", now));
+                long id = c.Insert("INSERT INTO comments (commentable_type, commentable_id, parent_id, user_id, message, created_at, updated_at) VALUES (@t, @i, @p, @u, @m, @n, @n)",
+                    ("@t", type), ("@i", commentable), ("@p", parent), ("@u", u), ("@m", message.Length > 4000 ? message[..4000] : message), ("@n", now));
 
-                if (parent != null && (int?)c.Scalar<long?>("SELECT user_id FROM comments WHERE id = $p", ("$p", parent)) is int parentAuthor && parentAuthor != u)
+                if (parent != null && (int?)c.Scalar<long?>("SELECT user_id FROM comments WHERE id = @p", ("@p", parent)) is int parentAuthor && parentAuthor != u)
                     _ = notifications.Push(parentAuthor, "comment_new", type, commentable, "comment", u,
                         new JObject { ["comment_id"] = id, ["title"] = $"{type} #{commentable}", ["content"] = message, ["username"] = me.Username, ["reply_to"] = parent });
 
@@ -1116,8 +1135,8 @@ namespace XcOsu.Server.Api
                 if (uid(ctx) is not int u) return unauthorized();
                 var p = await Json.Params(ctx.Request);
                 using var c = db.Open();
-                c.Exec("UPDATE comments SET message = $m, edited_at = $n, edited_by_id = $u, updated_at = $n WHERE id = $i AND (user_id = $u OR $a = 1)",
-                    ("$m", (p("comment[message]") ?? "") is var edited && edited.Length > 4000 ? edited[..4000] : edited), ("$n", DateTimeOffset.UtcNow.ToString("O")), ("$u", u), ("$i", id), ("$a", accounts.Get(u)?.IsAdmin == true ? 1 : 0));
+                c.Exec("UPDATE comments SET message = @m, edited_at = @n, edited_by_id = @u, updated_at = @n WHERE id = @i AND (user_id = @u OR @a = 1)",
+                    ("@m", (p("comment[message]") ?? "") is var edited && edited.Length > 4000 ? edited[..4000] : edited), ("@n", DateTimeOffset.UtcNow.ToString("O")), ("@u", u), ("@i", id), ("@a", accounts.Get(u)?.IsAdmin == true ? 1 : 0));
                 return Json.Ok(bundle(c, new List<long> { id }, null, null, u, accounts, users));
             });
 
@@ -1125,8 +1144,8 @@ namespace XcOsu.Server.Api
             {
                 if (uid(ctx) is not int u) return unauthorized();
                 using var c = db.Open();
-                c.Exec("UPDATE comments SET deleted_at = $n WHERE id = $i AND (user_id = $u OR $a = 1)",
-                    ("$n", DateTimeOffset.UtcNow.ToString("O")), ("$i", id), ("$u", u), ("$a", accounts.Get(u)?.IsAdmin == true ? 1 : 0));
+                c.Exec("UPDATE comments SET deleted_at = @n WHERE id = @i AND (user_id = @u OR @a = 1)",
+                    ("@n", DateTimeOffset.UtcNow.ToString("O")), ("@i", id), ("@u", u), ("@a", accounts.Get(u)?.IsAdmin == true ? 1 : 0));
                 return Json.Ok(bundle(c, new List<long> { id }, null, null, u, accounts, users));
             });
 
@@ -1134,8 +1153,8 @@ namespace XcOsu.Server.Api
             {
                 if (uid(ctx) is not int u) return unauthorized();
                 using var c = db.Open();
-                if (c.Scalar<long>("SELECT user_id FROM comments WHERE id = $i", ("$i", id)) == u) return Json.Error("Can't vote on your own comment.", 422);
-                c.Exec("INSERT OR IGNORE INTO comment_votes (comment_id, user_id) VALUES ($i, $u)", ("$i", id), ("$u", u));
+                if (c.Scalar<long>("SELECT user_id FROM comments WHERE id = @i", ("@i", id)) == u) return Json.Error("Can't vote on your own comment.", 422);
+                c.Exec("INSERT INTO comment_votes (comment_id, user_id) VALUES (@i, @u) ON CONFLICT DO NOTHING", ("@i", id), ("@u", u));
                 return Json.Ok(bundle(c, new List<long> { id }, null, null, u, accounts, users));
             });
 
@@ -1143,7 +1162,7 @@ namespace XcOsu.Server.Api
             {
                 if (uid(ctx) is not int u) return unauthorized();
                 using var c = db.Open();
-                c.Exec("DELETE FROM comment_votes WHERE comment_id = $i AND user_id = $u", ("$i", id), ("$u", u));
+                c.Exec("DELETE FROM comment_votes WHERE comment_id = @i AND user_id = @u", ("@i", id), ("@u", u));
                 return Json.Ok(bundle(c, new List<long> { id }, null, null, u, accounts, users));
             });
         }
@@ -1157,9 +1176,10 @@ namespace XcOsu.Server.Api
             api.MapGet("/news/{slug}", (string slug, HttpContext ctx, IConfiguration config) =>
                 News.Show(config, slug, News.Locale(ctx)) is JObject post ? Json.Ok(post) : Json.Error("Post not found", 404));
 
-            api.MapGet("/changelog", (HttpContext ctx, Presence presence) => Json.Ok(News.Changelog(News.Locale(ctx), presence.Online.Count(e => e.Value.Connections > 0))));
-            api.MapGet("/changelog/{stream}/{version}", (string version, HttpContext ctx, Presence presence) =>
-                News.ChangelogBuild(News.Locale(ctx), version, presence.Online.Count(e => e.Value.Connections > 0)) is JObject build ? Json.Ok(build) : Json.Error("Build not found", 404));
+            api.MapGet("/changelog", (HttpContext ctx, Presence presence) =>
+                Json.Ok(News.Changelog(News.Locale(ctx), presence.Online.Count(e => e.Value.Connections > 0), ctx.Request.Query["stream"].FirstOrDefault())));
+            api.MapGet("/changelog/{stream}/{version}", (string stream, string version, HttpContext ctx, Presence presence) =>
+                News.ChangelogBuild(News.Locale(ctx), stream, version, presence.Online.Count(e => e.Value.Connections > 0)) is JObject build ? Json.Ok(build) : Json.Error("Build not found", 404));
 
             // default menu backgrounds for everyone: every image dropped into the site's backgrounds/ folder (no rebuild needed).
             api.MapGet("/seasonal-backgrounds", (IConfiguration config) =>
@@ -1192,11 +1212,11 @@ namespace XcOsu.Server.Api
                 {
                     using var c = db.Open();
                     string like = "%" + query.Replace("%", "").Replace("_", "\\_") + "%";
-                    total = c.Scalar<long>("SELECT COUNT(*) FROM users WHERE username LIKE $q ESCAPE '\\' AND restricted = 0", ("$q", like));
+                    total = c.Scalar<long>("SELECT COUNT(*) FROM users WHERE username LIKE @q ESCAPE '\\' AND restricted = 0", ("@q", like));
                     var ids = c.Query("""
-                        SELECT id FROM users WHERE username LIKE $q ESCAPE '\' AND restricted = 0
-                        ORDER BY CASE WHEN username = $exact THEN 0 ELSE 1 END, length(username), username LIMIT 20 OFFSET $o
-                        """, r => r.GetInt32(0), ("$q", like), ("$exact", query), ("$o", (page - 1) * 20));
+                        SELECT id FROM users WHERE username LIKE @q ESCAPE '\' AND restricted = 0
+                        ORDER BY CASE WHEN username = @exact THEN 0 ELSE 1 END, length(username), username LIMIT 20 OFFSET @o
+                        """, r => r.GetInt32(0), ("@q", like), ("@exact", query), ("@o", (page - 1) * 20));
                     found = accounts.GetMany(ids).Select(users.Compact).ToList();
                 }
 
@@ -1215,12 +1235,12 @@ namespace XcOsu.Server.Api
                 long reportId = long.TryParse(p("reportable_id"), out long parsedReportId) ? parsedReportId : 0;
                 if (reportId <= 0 || reportType is not ("user" or "score" or "comment" or "message" or "beatmapset"))
                     return Json.Error("Invalid report target", 422);
-                if (c.Scalar<long>("SELECT COUNT(*) FROM reports WHERE reporter_id = $u AND reportable_type = $t AND reportable_id = $i AND created_at > $at",
-                    ("$u", u), ("$t", reportType), ("$i", reportId), ("$at", DateTimeOffset.UtcNow.AddHours(-24).ToString("O"))) > 0)
+                if (c.Scalar<long>("SELECT COUNT(*) FROM reports WHERE reporter_id = @u AND reportable_type = @t AND reportable_id = @i AND created_at > @at",
+                    ("@u", u), ("@t", reportType), ("@i", reportId), ("@at", DateTimeOffset.UtcNow.AddHours(-24).ToString("O"))) > 0)
                     return Results.NoContent();
-                c.Exec("INSERT INTO reports (reporter_id, reportable_type, reportable_id, reason, comments, created_at) VALUES ($u, $t, $i, $r, $c, $n)",
-                    ("$u", u), ("$t", p("reportable_type") ?? "user"), ("$i", long.TryParse(p("reportable_id"), out long rid) ? rid : 0), ("$r", p("reason")),
-                    ("$c", p("comments")), ("$n", DateTimeOffset.UtcNow.ToString("O")));
+                c.Exec("INSERT INTO reports (reporter_id, reportable_type, reportable_id, reason, comments, created_at) VALUES (@u, @t, @i, @r, @c, @n)",
+                    ("@u", u), ("@t", p("reportable_type") ?? "user"), ("@i", long.TryParse(p("reportable_id"), out long rid) ? rid : 0), ("@r", p("reason")),
+                    ("@c", p("comments")), ("@n", DateTimeOffset.UtcNow.ToString("O")));
                 return Results.NoContent();
             });
 
@@ -1239,7 +1259,7 @@ namespace XcOsu.Server.Api
                 var jpeg = await SafeImages.Reencode(input.ToArray(), true, ctx.RequestAborted);
                 await SafeImages.WriteAtomic(Path.Combine(dir, hash + ".jpg"), jpeg, ctx.RequestAborted);
                 using var c = db.Open();
-                c.Exec("INSERT INTO screenshots (user_id, hash, created_at) VALUES ($u, $h, $n)", ("$u", u), ("$h", hash), ("$n", DateTimeOffset.UtcNow.ToString("O")));
+                c.Exec("INSERT INTO screenshots (user_id, hash, created_at) VALUES (@u, @h, @n)", ("@u", u), ("@h", hash), ("@n", DateTimeOffset.UtcNow.ToString("O")));
                 return Json.Ok(new { url = $"{users.PublicBase}/api/xc/ss/{hash}" });
             });
         }

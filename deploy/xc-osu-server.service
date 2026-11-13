@@ -1,14 +1,22 @@
 [Unit]
 Description=xc-osu! server (API v2 + spectator/multiplayer/metadata) — xc softworks
-After=network-online.target
-Wants=network-online.target
+# the server opens PostgreSQL over the local Unix socket (peer auth as the xc-osu role).
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
 
 [Service]
-User=admin
-Group=admin
+# Dedicated unprivileged account (created by deploy/setup-isolation.sh): a compromised server can only
+# touch its own data directory, never the other sites of this machine nor the admin account.
+User=xc-osu
+Group=xc-osu
+# data files stay readable/writable by the xc-osu group (admin is a member: backups, telemetry reports).
+UMask=0007
 WorkingDirectory=/var/www/osu/server/publish
-ExecStart=/home/admin/.dotnet/dotnet /var/www/osu/server/publish/xc-osu-server.dll
-Environment=DOTNET_ROOT=/home/admin/.dotnet
+# publish/ and verifier/ must be readable by the service account: deploy/restart-server.sh grants it after each swap.
+# root-owned copy of the .NET runtime (the SDK lives in /home/admin, which this service cannot see).
+ExecStart=/opt/xc-osu/dotnet/dotnet /var/www/osu/server/publish/xc-osu-server.dll
+Environment=DOTNET_ROOT=/opt/xc-osu/dotnet
+Environment=HOME=/var/lib/xc-osu/.home
 Environment=DataDirectory=/var/lib/xc-osu
 Environment=Urls=http://127.0.0.1:5080
 Environment=ASPNETCORE_ENVIRONMENT=Production
@@ -16,7 +24,32 @@ Environment=DOTNET_gcServer=0
 Environment=DOTNET_GCHeapHardLimit=0x30000000
 Restart=always
 RestartSec=3
+
+# --- sandbox ---
 NoNewPrivileges=true
+CapabilityBoundingSet=
+# whole file system read-only except the data directory
+ProtectSystem=strict
+ReadWritePaths=/var/lib/xc-osu
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+# the other sites under /var/www do not exist for this service: only its own binaries and the backgrounds folder.
+TemporaryFileSystem=/var/www:ro
+BindReadOnlyPaths=/var/www/osu/server/publish /var/www/osu/server/verifier /var/www/osu/site/backgrounds
+ProtectProc=invisible
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target
