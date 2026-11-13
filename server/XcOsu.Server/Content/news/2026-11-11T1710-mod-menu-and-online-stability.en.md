@@ -1,19 +1,17 @@
 # Mod menu, browsing and online stability
 
-## Progressive mod panels and beatmap cards
+## A mod menu that no longer hitches
 
-This update targets hitches when opening the browser mod menu. Preloaded panels now join the interface progressively: each column attaches one panel per update frame instead of finalising its entire list at once. Selection and search remain available as panels appear.
+Opening the mod menu could freeze the game while it built every panel at once. Panels now appear one by one, and searching and selecting stay usable while the menu fills.
 
-Beatmap browsing uses the same approach, attaching one card per frame for search results, subsequent pages and card-size changes. A new search cancels cards still waiting to appear so results from different searches cannot mix.
+Beatmap cards load the same way, one at a time, and a new search cancels the cards that have not appeared yet.
 
-This bounds the number of new interface trees finalised in one frame. Actual hitch reduction still needs measurement on the new build, especially on the first opening; garbage-collection pauses and the cost of an individual panel remain possible.
+## Disconnections
 
-## Cleaner disconnection
+Refreshing the friends list while the connection was closing could raise an error. It is ignored now.
 
-A friends refresh could race with connection teardown and raise a SignalR error. The client now ignores refreshes against a disposed connection and removes its friends-list subscription when disposed.
+## Error reports
 
-## More reliable error reports
+Some fatal errors were being dropped and network timings could come out negative. Both are fixed, so the next reports will be more useful.
 
-A fatal error immediately following a suppressed repeated warning is now retained in telemetry. Resource timing no longer produces negative network durations when the browser supplies incomplete timing data.
-
-Today's reports also include an exit during player loading with only a runtime finalizer stack. That trace cannot identify its cause, and this update does not claim to fix that particular exit. Future reports will help continue the investigation.
+One crash during player loading remains unexplained. The reports we get from now on will help find it.

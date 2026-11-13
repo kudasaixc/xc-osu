@@ -1,19 +1,17 @@
 # Menu des mods, navigation et stabilité en ligne
 
-## Un affichage progressif des mods et des beatmaps
+## Un menu des mods sans à-coups
 
-Cette mise à jour cible les à-coups à l’ouverture du menu des mods dans le navigateur. Les tuiles préchargées sont désormais ajoutées progressivement à l’interface : chaque colonne ajoute une tuile par frame, au lieu de finaliser toute sa liste en une seule fois. La sélection et la recherche restent disponibles pendant l’affichage progressif.
+L’ouverture du menu des mods pouvait figer le jeu le temps de tout construire d’un coup. Les tuiles apparaissent maintenant une par une, et la recherche comme la sélection restent utilisables pendant que le menu se remplit.
 
-La liste de beatmaps utilise le même principe, avec une carte ajoutée par frame. Cela s’applique aux résultats de recherche, aux pages suivantes et aux changements de taille des cartes. Une nouvelle recherche annule les cartes encore en attente pour éviter de mélanger deux recherches.
+Les cartes de beatmaps se chargent de la même façon, une à la fois, et une nouvelle recherche annule celles qui ne sont pas encore apparues.
 
-Ce changement réduit la quantité de nouvelles interfaces à finaliser dans une même frame. Le gain réel sur les saccades doit encore être mesuré sur le nouveau build, notamment lors de la toute première ouverture ; les pauses du ramasse-miettes et le temps de chargement d’une tuile individuelle restent possibles.
+## Déconnexions
 
-## Une déconnexion plus propre
+Rafraîchir la liste d’amis pendant la fermeture de la connexion pouvait déclencher une erreur. Elle est ignorée désormais.
 
-Un rafraîchissement de la liste d’amis pouvait partir pendant la fermeture de la connexion en ligne et produire une erreur SignalR. Le client ignore maintenant les rafraîchissements sur une connexion déjà détruite et détache son abonnement à la liste d’amis à sa fermeture.
+## Rapports d’erreur
 
-## Des rapports d’erreur plus fiables
+Certaines erreurs fatales étaient perdues et les durées réseau pouvaient sortir en négatif. Les deux sont corrigés, donc les prochains rapports seront plus utiles.
 
-Une erreur fatale survenant immédiatement après un avertissement répétitif filtré reste maintenant enregistrée dans la télémétrie. Les durées réseau ne deviennent plus négatives lorsque le navigateur fournit des informations partielles sur une ressource.
-
-L’analyse des rapports du jour a aussi relevé un arrêt pendant le chargement d’une partie, dont la pile ne contient que le finalizer du runtime. Cette trace ne permet pas d’identifier sa cause ; cette mise à jour ne prétend pas corriger cet arrêt précis. Les prochains rapports aideront à poursuivre le diagnostic.
+Un arrêt pendant le chargement d’une partie reste inexpliqué. Les rapports à venir aideront à le trouver.
