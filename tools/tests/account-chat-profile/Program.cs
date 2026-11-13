@@ -112,7 +112,7 @@ try
     check(accounts.Register("ResetUser", "reset@example.test", "old-password", "FR") == null, "Registration");
     int id = accounts.Verify("ResetUser", "old-password")!.Id;
     var oldTokens = accounts.IssueToken(id);
-    var recovery = new PasswordRecovery(db, config, NullLogger<PasswordRecovery>.Instance);
+    var recovery = new PasswordRecovery(db, config, NullLogger<PasswordRecovery>.Instance, accounts);
     check(recovery.IsConfigured, "Capture transport configured");
     await recovery.Request("nobody@example.test");
     check(!File.Exists(capture), "Unknown account must not receive mail");

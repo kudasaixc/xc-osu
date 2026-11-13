@@ -35,7 +35,7 @@ export async function register({ query, go, refreshShell }) {
       <form id="register" class="form">
         <label>${t('Username', 'Nom d’utilisateur')}<input name="username" autocomplete="username" required minlength="3" maxlength="15"><small>${t('3 to 15 characters: letters, digits, spaces, - _ [ ]', '3 à 15 caractères : lettres, chiffres, espaces, - _ [ ]')}</small></label>
         <label>E-mail<input name="email" type="email" autocomplete="email" required></label>
-        <label>${t('Password', 'Mot de passe')}<input name="password" type="password" autocomplete="new-password" required minlength="8"><small>${t('At least 8 characters', 'Au moins 8 caractères')}</small></label>
+        <label>${t('Password', 'Mot de passe')}<input name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="256"><small>${t('8 to 256 characters', '8 à 256 caractères')}</small></label>
         <button class="btn" type="submit">${t('Create my account', 'Créer mon compte')}</button> <span class="msg" role="alert"></span>
       </form>
       <p class="muted small"><a href="${L('/login')}">${t('I already have an account', 'J’ai déjà un compte')}</a></p></section>`,
@@ -66,8 +66,8 @@ export async function passwordReset({ hash }) {
       ${!status.available ? `<p role="status">${t('Email recovery is not available yet. Please contact xc softworks support.', 'La récupération par e-mail n’est pas encore disponible. Contacte le support xc softworks.')}</p>` : `
       <p>${token ? t('This link expires after 25 minutes and can be used once.', 'Ce lien expire après 25 minutes et ne peut servir qu’une seule fois.') : t('Enter your account email to receive a password reset link.', 'Entre l’adresse e-mail de ton compte pour recevoir un lien de réinitialisation.')}</p>
       <form id="password-recovery" class="form">
-      ${token ? `<label>${t('New password', 'Nouveau mot de passe')}<input name="password" type="password" autocomplete="new-password" minlength="8" maxlength="1024" required></label>
-      <label>${t('Confirm password', 'Confirme le mot de passe')}<input name="confirmation" type="password" autocomplete="new-password" minlength="8" maxlength="1024" required></label>` : `<label>E-mail<input name="email" type="email" autocomplete="email" maxlength="254" required></label>`}
+      ${token ? `<label>${t('New password', 'Nouveau mot de passe')}<input name="password" type="password" autocomplete="new-password" minlength="8" maxlength="256" required></label>
+      <label>${t('Confirm password', 'Confirme le mot de passe')}<input name="confirmation" type="password" autocomplete="new-password" minlength="8" maxlength="256" required></label>` : `<label>E-mail<input name="email" type="email" autocomplete="email" maxlength="254" required></label>`}
       <button class="btn" type="submit">${token ? t('Save password', 'Enregistrer le mot de passe') : t('Send reset link', 'Envoyer le lien')}</button><span class="msg" role="status"></span></form>`}
       <p><a href="${L('/login')}">${t('Back to sign in', 'Retour à la connexion')}</a></p></section>`,
     mount(view) {
@@ -91,13 +91,11 @@ export async function passwordReset({ hash }) {
 }
 
 
-const COUNTRIES = 'AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW'.split(' ');
 export async function settings({ go, refreshShell, hash }) {
   requireSignIn();
   const acct = await api('/api/xc/account');
   const pr = acct.profile || {};
   const field = (key, label, max = 100) => `<label>${esc(label)}<input name="${key}" value="${esc(pr[key] || '')}" maxlength="${max}"></label>`;
-  const countries = COUNTRIES.map((c) => [c, countryName(c)]).sort((a, b) => a[1].localeCompare(b[1], state.lang));
   const styles = [['mouse', t('Mouse', 'Souris')], ['keyboard', t('Keyboard', 'Clavier')], ['tablet', t('Tablet', 'Tablette')], ['touch', t('Touch screen', 'Écran tactile')]];
 
   return {
@@ -105,7 +103,11 @@ export async function settings({ go, refreshShell, hash }) {
     html: `<h1 class="page-title">${t('Settings', 'Réglages')}</h1>
       <p class="muted">${t('Signed in as', 'Connecté en tant que')} <a href="${L('/users/' + acct.id)}"><b>${esc(acct.username)}</b></a> · ${esc(acct.email)}</p>
 
-      <section class="panel"><button class="btn ghost" id="verify-email">${t('Confirm my email address', 'Confirmer mon adresse e-mail')}</button><span id="verify-email-msg" role="alert"></span></section>
+      ${acct.email_verified ? '' : `<section class="panel" id="email-confirm"><h2>${t('Confirm your email address', 'Confirme ton adresse e-mail')}</h2>
+        <p class="muted">${acct.email_confirmation_required
+          ? t('You can already play. Chat, comments, reports, your avatar, cover and me! page, teams and hosting multiplayer rooms unlock once your address is confirmed. Open the link we sent you; it is valid for 30 minutes.', 'Tu peux déjà jouer. Le chat, les commentaires, les signalements, ton avatar, ta bannière et ta page me!, les équipes et la création de salons multijoueur se débloquent une fois ton adresse confirmée. Ouvre le lien qu’on t’a envoyé ; il est valable 30 minutes.')
+          : t('A confirmed address is what lets you recover your account if you lose your password.', 'Une adresse confirmée te permet de récupérer ton compte si tu perds ton mot de passe.')}</p>
+        <div><button class="btn ghost" id="verify-email">${t('Send the confirmation email again', 'Renvoyer l’e-mail de confirmation')}</button> <span class="msg" id="verify-email-msg" role="alert"></span></div></section>`}
       <section class="panel" id="images"><h2>${t('Avatar and cover', 'Avatar et bannière')}</h2>
         <div class="images">
           <div><img id="avatar-img" class="avatar" src="${esc(avatarUrl(acct))}" width="120" height="120" alt="${t('Current avatar', 'Avatar actuel')}">
@@ -120,7 +122,7 @@ export async function settings({ go, refreshShell, hash }) {
 
       <form class="panel form" id="profile"><h2>${t('Profile', 'Profil')}</h2>
         <div class="form-grid">
-          <label>${t('Country', 'Pays')}<select name="country"><option value="XX">${t('Not shown', 'Non affiché')}</option>${countries.map(([c, name]) => `<option value="${c}"${c === acct.country ? ' selected' : ''}>${esc(name)}</option>`).join('')}</select></label>
+          <label>${t('Country', 'Pays')}<input value="${esc(acct.country && acct.country !== 'XX' ? countryName(acct.country) : t('Unknown', 'Inconnu'))}" disabled title="${t('Set from your connection when the account was created.', 'Défini d’après ta connexion à la création du compte.')}"></label>
           <label>${t('Default game mode', 'Mode de jeu par défaut')}<select name="playmode">${MODES.map((m) => `<option value="${m}"${m === acct.playmode ? ' selected' : ''}>${modeName(m)}</option>`).join('')}</select></label>
           ${field('location', t('Location', 'Lieu'))}${field('interests', t('Interests', 'Centres d’intérêt'))}${field('occupation', t('Occupation', 'Occupation'))}
           ${field('website', t('Website', 'Site web'))}${field('discord', 'Discord')}${field('twitter', 'Twitter')}
@@ -141,7 +143,7 @@ export async function settings({ go, refreshShell, hash }) {
       <form class="panel form" id="password"><h2>${t('Password', 'Mot de passe')}</h2>
         <div class="form-grid">
           <label>${t('Current password', 'Mot de passe actuel')}<input name="current" type="password" autocomplete="current-password" required></label>
-          <label>${t('New password', 'Nouveau mot de passe')}<input name="next" type="password" autocomplete="new-password" required minlength="8"><small>${t('At least 8 characters', 'Au moins 8 caractères')}</small></label>
+          <label>${t('New password', 'Nouveau mot de passe')}<input name="next" type="password" autocomplete="new-password" required minlength="8" maxlength="256"><small>${t('8 to 256 characters', '8 à 256 caractères')}</small></label>
         </div>
         <div><button class="btn" type="submit">${t('Change password', 'Changer le mot de passe')}</button> <span class="msg" role="status"></span></div>
       </form>
@@ -184,7 +186,7 @@ export async function settings({ go, refreshShell, hash }) {
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const body = {
-          country: form.country.value, playmode: form.playmode.value, pm_friends_only: form.pm_friends_only.checked,
+          playmode: form.playmode.value, pm_friends_only: form.pm_friends_only.checked,
           profile_hue: form.hue_default.checked ? null : Number(form.hue.value),
           playstyle: [...form.querySelectorAll('[name=playstyle]:checked')].map((c) => c.value), page: form.page.value,
         };
@@ -207,18 +209,40 @@ export async function settings({ go, refreshShell, hash }) {
         const fresh = await api('/api/xc/account');
         const mine = fresh.team_id ? await api('/api/xc/teams/' + fresh.team_id) : null;
         if (!mine?.id) {
-          const all = await api('/api/xc/teams');
           body.innerHTML = `<p class="muted">${t('You are not in a team.', 'Tu n’es dans aucune équipe.')}</p>
             <form class="form form-grid" id="team-create">
               <label>${t('Team name', 'Nom de l’équipe')}<input name="name" required minlength="2" maxlength="30"></label>
               <label>${t('Tag (2–4 letters or digits)', 'Tag (2 à 4 lettres ou chiffres)')}<input name="short_name" required pattern="[A-Za-z0-9]{2,4}" maxlength="4"></label>
               <div><button class="btn" type="submit">${t('Create team', 'Créer l’équipe')}</button></div>
             </form>
-            ${all.length ? `<form class="form form-grid" id="team-join"><label>${t('Or join an existing team', 'Ou rejoindre une équipe existante')}<select name="id">${all.map((tm) => `<option value="${tm.id}">[${esc(tm.short_name)}] ${esc(tm.name)} (${num(tm.members_count)})</option>`).join('')}</select></label><div><button class="btn ghost" type="submit">${t('Join', 'Rejoindre')}</button></div></form>` : ''}`;
+            <div class="form" id="team-join">
+              <label>${t('Or join an existing team', 'Ou rejoindre une équipe existante')}<input type="search" id="team-search" maxlength="30" autocomplete="off" placeholder="${t('Search by name or tag', 'Chercher par nom ou tag')}"></label>
+              <ul class="list" id="team-results"></ul>
+              <div><button class="btn ghost" type="button" id="team-more" hidden>${t('Show more', 'Afficher plus')}</button></div>
+            </div>`;
           const create = body.querySelector('#team-create');
           create.addEventListener('submit', async (e) => { e.preventDefault(); if (await act(create.querySelector('button'), teamMsg, () => api('/api/xc/teams', { method: 'POST', json: { name: create.name.value, short_name: create.short_name.value } }), t('Team created.', 'Équipe créée.'))) loadTeam(); });
-          const join = body.querySelector('#team-join');
-          join?.addEventListener('submit', async (e) => { e.preventDefault(); if (await act(join.querySelector('button'), teamMsg, () => api(`/api/xc/teams/${join.id.value}/join`, { method: 'POST' }), t('Team joined.', 'Équipe rejointe.'))) loadTeam(); });
+          // the list is paged server-side (50 per page): search narrows it, "show more" walks the rest.
+          const results = body.querySelector('#team-results'), more = body.querySelector('#team-more'), search = body.querySelector('#team-search');
+          let page = 1, run = 0;
+          const fill = async (reset) => {
+            const mineRun = ++run;
+            if (reset) page = 1;
+            const list = await api(`/api/xc/teams?page=${page}&q=${encodeURIComponent(search.value.trim())}`).catch(() => []);
+            if (mineRun !== run) return;
+            const rows = list.map((tm) => `<li class="score"><div class="score-main"><a class="score-map" href="${L('/teams/' + tm.id)}"><b>${esc(tm.name)}</b> <span class="team-tag">${esc(tm.short_name)}</span></a><span class="score-meta">${num(tm.members_count)} ${t('members', 'membres')}</span></div><button class="btn ghost" type="button" data-join="${tm.id}">${t('Join', 'Rejoindre')}</button></li>`).join('');
+            if (reset) results.innerHTML = rows || `<li class="muted">${search.value.trim() ? t('No team matches.', 'Aucune équipe ne correspond.') : t('No team exists yet.', 'Aucune équipe pour l’instant.')}</li>`;
+            else results.insertAdjacentHTML('beforeend', rows);
+            more.hidden = list.length < 50;
+          };
+          let timer;
+          search.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => fill(true), 250); });
+          more.addEventListener('click', () => { page++; fill(false); });
+          results.addEventListener('click', async (e) => {
+            const btn = e.target.closest('[data-join]');
+            if (btn && await act(btn, teamMsg, () => api(`/api/xc/teams/${btn.dataset.join}/join`, { method: 'POST' }), t('Team joined.', 'Équipe rejointe.'))) loadTeam();
+          });
+          await fill(true);
           return;
         }
         const leader = mine.leader_id === fresh.id;

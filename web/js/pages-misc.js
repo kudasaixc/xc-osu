@@ -109,15 +109,22 @@ export async function score({ params: [id] }) {
 
 // ---------------------------------------------------------------- teams
 const teamFlag = (team, size = 40) => `<img class="team-flag" src="${esc(team.flag_url || `/api/xc/team-flag/${team.id}`)}" height="${size}" alt="" loading="lazy">`;
-export async function teams({ query }) {
+export async function teams({ query, go }) {
   const page = Math.max(1, Number.parseInt(query.get('page') || '1', 10) || 1);
-  const list = await api('/api/xc/teams?page=' + page);
+  const q = (query.get('q') || '').trim().slice(0, 30);
+  const qs = q ? '&q=' + encodeURIComponent(q) : '';
+  const list = await api('/api/xc/teams?page=' + page + qs);
   return {
     title: t('Teams', 'Équipes'),
     html: `<h1 class="page-title">${t('Teams', 'Équipes')}</h1>
       <p class="muted">${t('A team puts a tag next to your name everywhere in the game.', 'Une équipe affiche un tag à côté de ton nom partout dans le jeu.')} <a href="${L('/home/account/edit')}#team">${t('Create or manage yours', 'Créer ou gérer la tienne')}</a></p>
+      <form class="form form-grid" id="team-filter" role="search"><label>${t('Find a team', 'Trouver une équipe')}<input type="search" name="q" value="${esc(q)}" maxlength="30" placeholder="${t('Name or tag', 'Nom ou tag')}"></label><div><button class="btn ghost" type="submit">${t('Search', 'Rechercher')}</button></div></form>
       <section class="panel">${list.length ? `<ul class="list">${list.map((team) => `<li class="score">${teamFlag(team, 28)}<div class="score-main"><a class="score-map" href="${L('/teams/' + team.id)}"><b>${esc(team.name)}</b> <span class="team-tag">${esc(team.short_name)}</span></a><span class="score-meta">${t('created', 'créée')} ${timeTag(team.created_at)}</span></div><span class="score-pp">${num(team.members_count)}<small> ${t('members', 'membres')}</small></span></li>`).join('')}</ul>`
-        : empty(t('No team exists yet. Be the first to create one from your settings.', 'Aucune équipe pour l’instant. Crée la première depuis tes réglages.'))}</section><nav>${page > 1 ? `<a class="btn ghost" href="${L('/teams')}?page=${page - 1}">←</a>` : ''} ${list.length === 50 ? `<a class="btn ghost" href="${L('/teams')}?page=${page + 1}">→</a>` : ''}</nav>`,
+        : empty(q ? t('No team matches this search.', 'Aucune équipe ne correspond à cette recherche.') : t('No team exists yet. Be the first to create one from your settings.', 'Aucune équipe pour l’instant. Crée la première depuis tes réglages.'))}</section><nav>${page > 1 ? `<a class="btn ghost" href="${L('/teams')}?page=${page - 1}${qs}">←</a>` : ''} ${list.length === 50 ? `<a class="btn ghost" href="${L('/teams')}?page=${page + 1}${qs}">→</a>` : ''}</nav>`,
+    mount(view) {
+      const filter = view.querySelector('#team-filter');
+      filter.addEventListener('submit', (e) => { e.preventDefault(); const value = filter.q.value.trim(); go('/teams' + (value ? '?q=' + encodeURIComponent(value) : '')); });
+    },
   };
 }
 export async function team({ params: [id], go }) {

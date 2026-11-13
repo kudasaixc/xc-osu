@@ -29,6 +29,9 @@ builder.Services.AddHttpClient("proxy", c => c.Timeout = TimeSpan.FromSeconds(30
 builder.Services.AddSingleton<Db>();
 builder.Services.AddHostedService<ProxyCacheMaintenance>();
 builder.Services.AddSingleton<Accounts>();
+// new accounts must confirm their address before anything social, unless nobody could ever receive the confirmation.
+Accounts.EmailConfirmationEnforced = builder.Configuration.GetValue<bool?>("Accounts:RequireConfirmedEmail") != false
+                                     && builder.Configuration.GetValue<bool?>("AccountMail:Enabled") != false;
 builder.Services.AddSingleton<PasswordRecovery>();
 builder.Services.AddSingleton<AccountMail>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AccountMail>());
@@ -37,6 +40,7 @@ builder.Services.AddSingleton<Users>();
 builder.Services.AddSingleton<Mirrors>();
 builder.Services.AddSingleton<BeatmapSearch>();
 builder.Services.AddSingleton<Performance>();
+builder.Services.AddSingleton<SessionConnections>();
 builder.Services.AddSingleton<Scores>();
 builder.Services.AddSingleton<Chat>();
 builder.Services.AddSingleton<RoomStore>();
@@ -47,6 +51,8 @@ builder.Services.AddSingleton<Matchmaking>();
 builder.Services.AddSingleton<DailyChallenge>();
 builder.Services.AddSingleton<Telemetry>();
 builder.Services.AddHostedService<Maintenance>();
+ReplayVerification.Configure(builder.Configuration);
+builder.Services.AddHostedService<ReplayVerification>();
 
 builder.Services.AddAuthentication(XcTokenAuthHandler.SCHEME)
        .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, XcTokenAuthHandler>(XcTokenAuthHandler.SCHEME, null);
@@ -139,14 +145,18 @@ Endpoints.Map(app);
 AccountEmail.Map(app);
 Proxy.Map(app);
 
-app.Map("/notifications", async (HttpContext ctx, Chat chat) =>
+app.Map("/notifications", async (HttpContext ctx, Chat chat, SessionConnections sessions) =>
 {
     if (!ctx.WebSockets.IsWebSocketRequest) return Results.BadRequest();
     if (ctx.User.UserId() is not int u) return Results.Unauthorized();
     using var connection = ConnectionLimits.Acquire(u, ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown");
     if (connection == null) return Results.StatusCode(429);
+    using var revoked = CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted);
+    using var bound = sessions.Register(u, ctx.User.SessionId(), () => { try { revoked.Cancel(); } catch (ObjectDisposedException) { } });
+    if (bound == null) return Results.Unauthorized();
     using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
-    await chat.Serve(ws, u, ctx.RequestAborted);
+    try { await chat.Serve(ws, u, revoked.Token); }
+    catch (OperationCanceledException) when (revoked.IsCancellationRequested) { ws.Abort(); }
     return Results.Empty;
 });
 

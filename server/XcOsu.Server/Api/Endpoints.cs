@@ -51,11 +51,19 @@ namespace XcOsu.Server.Api
                 bool browser = p("browser_session") == "1";
                 if (browser && !BrowserSession.SameOrigin(req)) return Results.StatusCode(403);
                 int? userId = null;
-                long? sessionExpiresAt = null;
+                (string access, string refresh)? pair = null;
+                string ip = req.HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                IResult limited()
+                {
+                    req.HttpContext.Response.Headers.RetryAfter = "60";
+                    return Json.Ok(new { error = "too_many_attempts", error_description = "Too many attempts. Please wait a minute.", message = "Too many attempts. Please wait a minute." }, 429);
+                }
 
                 switch (p("grant_type"))
                 {
                     case "password":
+                        // password guessing is what needs a tight per-address budget; the per-account budget lives in Accounts.Verify.
+                        if (!AbuseGuard.Allow("ip:login-password:" + ip, AbuseGuard.PASSWORD_SIGNINS_PER_IP, TimeSpan.FromMinutes(1))) return limited();
                         var row = accounts.Verify(p("username") ?? "", p("password") ?? "");
                         userId = row?.Id;
                         if (userId == null)
@@ -66,10 +74,15 @@ namespace XcOsu.Server.Api
                         break;
 
                     case "refresh_token":
-                        var refreshed = accounts.Refresh(p("refresh_token") is { Length: > 0 } supplied ? supplied : browser ? req.Cookies[BrowserSession.RefreshCookie] ?? "" : "");
-                        userId = refreshed?.UserId;
-                        sessionExpiresAt = refreshed?.SessionExpiresAt;
-                        if (userId == null || accounts.Get(userId.Value) is not { Restricted: false })
+                        // a refresh carries a 256-bit single-use secret: it cannot be guessed, so a whole campus or CGNAT behind one
+                        // address may refresh freely. Only failures are budgeted tightly.
+                        if (!AbuseGuard.Allow("ip:login-refresh:" + ip, AbuseGuard.REFRESHES_PER_IP, TimeSpan.FromMinutes(1))
+                            || AbuseGuard.Count("ip:login-refresh-failed:" + ip) >= AbuseGuard.FAILED_REFRESHES_PER_IP) return limited();
+                        var rotated = accounts.Rotate(p("refresh_token") is { Length: > 0 } supplied ? supplied : browser ? req.Cookies[BrowserSession.RefreshCookie] ?? "" : "");
+                        userId = rotated?.UserId;
+                        if (rotated != null) pair = (rotated.Value.access, rotated.Value.refresh);
+                        else AbuseGuard.Allow("ip:login-refresh-failed:" + ip, int.MaxValue, TimeSpan.FromMinutes(1));
+                        if (userId == null)
                             return Json.Ok(new { error = "invalid_grant", error_description = "The refresh token is invalid.", message = "The refresh token is invalid." }, 401);
                         break;
 
@@ -80,7 +93,7 @@ namespace XcOsu.Server.Api
                         return Json.Ok(new { error = "unsupported_grant_type" }, 400);
                 }
 
-                var (access, refresh) = accounts.IssueToken(userId.Value, sessionExpiresAt);
+                var (access, refresh) = pair ?? accounts.IssueToken(userId.Value);
                 req.HttpContext.Response.Headers.CacheControl = "no-store";
                 if (browser)
                 {
@@ -101,10 +114,17 @@ namespace XcOsu.Server.Api
                 return Json.Ok(new { });
             });
 
-            // second factor isn't used on xc-osu!, but keep the endpoints answering.
-            app.MapPost("/api/v2/session/verify", () => Results.NoContent());
-            app.MapPost("/api/v2/session/verify/reissue", () => Json.Ok(new { success = "ok" }));
-            app.MapPost("/api/v2/session/verify/mail-fallback", () => Json.Ok(new { success = "ok" }));
+            // xc-osu! has no second factor. Sessions are reported as verified (session_verified: true), so a client never needs
+            // these; if one calls them anyway it gets an explicit "unavailable" instead of a success that verified nothing.
+            IResult noSecondFactor() => Json.Ok(new
+            {
+                error = "Two-factor verification is not available on xc-osu!.",
+                message = "Two-factor verification is not available on xc-osu!.",
+                available = false,
+            }, 501);
+            app.MapPost("/api/v2/session/verify", noSecondFactor);
+            app.MapPost("/api/v2/session/verify/reissue", noSecondFactor);
+            app.MapPost("/api/v2/session/verify/mail-fallback", noSecondFactor);
             app.MapDelete("/api/v2/oauth/tokens/current", (HttpRequest req, Accounts accounts) =>
             {
                 string auth = req.Headers.Authorization.ToString();
@@ -1070,6 +1090,7 @@ namespace XcOsu.Server.Api
             {
                 if (uid(ctx) is not int u) return unauthorized();
                 if (accounts.Get(u) is not { } me || me.SilencedUntil > DateTimeOffset.UtcNow) return Json.Error("You can't comment right now.", 403);
+                if (accounts.NeedsEmailConfirmation(u)) return Json.Error(Accounts.CONFIRM_EMAIL_MESSAGE, 403);
                 var p = await Json.Params(ctx.Request);
                 string message = (p("comment[message]") ?? "").Trim();
                 string type = p("comment[commentable_type]") ?? "";
@@ -1182,9 +1203,10 @@ namespace XcOsu.Server.Api
                 return Json.Ok(new { user = new { data = found, total }, wiki_page = new { data = Array.Empty<object>(), total = 0 } });
             });
 
-            api.MapPost("/reports", async (HttpContext ctx, Db db) =>
+            api.MapPost("/reports", async (HttpContext ctx, Db db, Accounts accounts) =>
             {
                 if (uid(ctx) is not int u) return unauthorized();
+                if (accounts.NeedsEmailConfirmation(u)) return Json.Error(Accounts.CONFIRM_EMAIL_MESSAGE, 403);
                 var p = await Json.Params(ctx.Request);
                 using var c = db.Open();
                 if ((p("reason")?.Length ?? 0) > 100 || (p("comments")?.Length ?? 0) > 4000 || (p("reportable_type")?.Length ?? 0) > 40)

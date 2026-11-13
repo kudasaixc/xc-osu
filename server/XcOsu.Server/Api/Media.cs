@@ -78,6 +78,7 @@ namespace XcOsu.Server.Api
                     ["id"] = row.Id, ["username"] = row.Username, ["email"] = row.Email, ["country"] = row.Country, ["playmode"] = row.Playmode,
                     ["avatar_url"] = users.AvatarUrl(row), ["cover_url"] = users.CoverUrl(row), ["profile"] = JObject.Parse(row.ProfileJson),
                     ["team_id"] = users.Team(row.Id)?.Id,
+                    ["email_verified"] = accounts.EmailVerified(row.Id), ["email_confirmation_required"] = accounts.NeedsEmailConfirmation(row.Id),
                 });
             });
 
@@ -86,6 +87,10 @@ namespace XcOsu.Server.Api
                 if (ctx.User.UserId() is not int u || accounts.Get(u) is not AccountRow row) return Json.Error("unauthorized", 401);
                 var body = await Json.Body<JObject>(ctx.Request);
                 if (body == null) return Json.Error("invalid body");
+                // preferences stay editable; text shown to other players waits for a confirmed address.
+                if (new[] { "location", "interests", "occupation", "twitter", "discord", "website", "page" }.Any(k => body[k] is JValue { Type: not JTokenType.Null })
+                    && accounts.NeedsEmailConfirmation(u))
+                    return Json.Error(Accounts.CONFIRM_EMAIL_MESSAGE, 403);
                 var profile = JObject.Parse(row.ProfileJson);
                 foreach (string key in new[] { "location", "interests", "occupation", "twitter", "discord", "website" })
                     if (body[key] is JValue v)
@@ -107,8 +112,7 @@ namespace XcOsu.Server.Api
                 c.Exec("UPDATE users SET profile_json = $p WHERE id = $u", ("$p", profile.ToString(Formatting.None)), ("$u", u));
                 if (body.Value<string>("playmode") is "osu" or "taiko" or "fruits" or "mania")
                     c.Exec("UPDATE users SET playmode = $m WHERE id = $u", ("$m", body.Value<string>("playmode")), ("$u", u));
-                if (body.Value<string>("country") is { Length: 2 } cc && cc.All(char.IsAsciiLetter))
-                    c.Exec("UPDATE users SET country = $c WHERE id = $u", ("$c", cc.ToUpperInvariant()), ("$u", u));
+                // the country is set from the connection when the account is created and is not editable: rankings by country rely on it.
                 return Results.NoContent();
             });
 
@@ -118,7 +122,7 @@ namespace XcOsu.Server.Api
                 var p = await Json.Params(ctx.Request);
                 if (!Accounts.VerifyPassword(p("current_password") ?? "", row.PasswordHash)) return Json.Error("Current password is incorrect.", 403);
                 string next = p("new_password") ?? "";
-                if (next.Length < 8 || next.Length > 256) return Json.Error("New password must be at least 8 characters.", 422);
+                if (next.Length is < Accounts.PASSWORD_MIN or > Accounts.PASSWORD_MAX) return Json.Error(Accounts.PASSWORD_RULE, 422);
                 using var c = db.Open();
                 c.Exec("BEGIN IMMEDIATE");
                 c.Exec("UPDATE users SET password_hash = $h WHERE id = $u", ("$h", Accounts.HashPassword(next)), ("$u", u));
@@ -126,6 +130,7 @@ namespace XcOsu.Server.Api
                 c.Exec("DELETE FROM tokens WHERE user_id = $u", ("$u", u));
                 c.Exec("DELETE FROM account_challenges WHERE user_id = $u AND purpose = 'reset'", ("$u", u));
                 c.Exec("COMMIT");
+                accounts.NotifyRevoked(u);
                 return Results.NoContent();
             });
         }
@@ -133,6 +138,7 @@ namespace XcOsu.Server.Api
         private static async Task<IResult> upload(HttpContext ctx, Db db, string folder, string versionColumn, long maxBytes)
         {
             if (ctx.User.UserId() is not int u) return Json.Error("unauthorized", 401);
+            if (ctx.RequestServices.GetRequiredService<Accounts>().NeedsEmailConfirmation(u)) return Json.Error(Accounts.CONFIRM_EMAIL_MESSAGE, 403);
             if (!ctx.Request.HasFormContentType) return Json.Error("Send the image as multipart form field \"file\".", 422);
             var form = await ctx.Request.ReadFormAsync();
             var file = form.Files["file"] ?? form.Files.FirstOrDefault();

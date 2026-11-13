@@ -23,6 +23,9 @@ namespace XcOsu.Server.Services
         /// <summary>Raised after a score is stored.</summary>
         public event Func<SubmittedScore, Task>? Submitted;
 
+        /// <summary>Raised with the score id once its replay is on disk.</summary>
+        public event Action<long>? ReplayAttached;
+
         public const int TOKEN_LIFETIME_HOURS = 24;
 
         /// <summary>lazer's standardised score is ≤ 1,000,000 × mod multiplier; anything far above is not a legitimate play.</summary>
@@ -155,9 +158,11 @@ namespace XcOsu.Server.Services
                     throw new SubmitException("Account unavailable", 403);
                 id = c.Insert("""
                     INSERT INTO scores (user_id, beatmap_id, ruleset_id, playlist_item_id, total_score, accuracy, max_combo, rank, passed, pp, ranked, mods, data, ended_at, started_at,
-                                        has_replay, total_hits, play_seconds, legacy_total_score)
-                    VALUES ($u, $b, $r, $p, $ts, $a, $mc, $rk, $ps, $pp, $rd, $m, $d, $e, $st, 0, $th, $sec, $lts)
+                                        has_replay, total_hits, play_seconds, legacy_total_score, replay_due)
+                    VALUES ($u, $b, $r, $p, $ts, $a, $mc, $rk, $ps, $pp, $rd, $m, $d, $e, $st, 0, $th, $sec, $lts, $due)
                     """,
+                    // a ranked pass has to back its numbers with a replay (see ReplayVerification).
+                    ("$due", ranked && score.Passed && ReplayVerification.ReplayGraceSeconds is int grace ? DateTimeOffset.UtcNow.ToUnixTimeSeconds() + grace : null),
                     ("$u", userId), ("$b", beatmapId), ("$r", score.RulesetID), ("$p", playlistItemId), ("$ts", score.TotalScore), ("$a", score.Accuracy),
                     ("$mc", score.MaxCombo), ("$rk", Users.RankString(score.Rank)), ("$ps", score.Passed ? 1 : 0), ("$pp", pp), ("$rd", ranked ? 1 : 0),
                     ("$m", JsonConvert.SerializeObject(score.Mods)), ("$d", "{}"), ("$e", score.EndedAt.ToString("O")), ("$st", score.StartedAt?.ToString("O")),
@@ -243,6 +248,7 @@ namespace XcOsu.Server.Services
             if (scoreId == null) return;
             File.WriteAllBytes(Path.Combine(ReplayDirectory, $"{scoreId}.osr"), osr);
             c.Exec("UPDATE scores SET has_replay = 1 WHERE id = $i", ("$i", scoreId));
+            ReplayAttached?.Invoke(scoreId.Value);
         }
 
         /// <summary>Counts a replay download towards the score owner's "replays watched by others".</summary>
@@ -277,7 +283,9 @@ namespace XcOsu.Server.Services
             int status = BeatmapStatus(map);
             List<(long id, string data, int ranked)> rows;
             using (var c = db.Open())
-                rows = c.Query("SELECT id, data, ranked FROM scores WHERE beatmap_id = $b AND playlist_item_id IS NULL", r => (r.GetInt64(0), r.GetString(1), r.GetInt32(2)), ("$b", beatmapId));
+                // a score refused by replay verification stays refused whatever happens to the beatmap.
+                rows = c.Query($"SELECT id, data, ranked FROM scores WHERE beatmap_id = $b AND playlist_item_id IS NULL AND verification NOT IN ({ReplayVerification.MISMATCH}, {ReplayVerification.MISSING_REPLAY})",
+                    r => (r.GetInt64(0), r.GetString(1), r.GetInt32(2)), ("$b", beatmapId));
 
             foreach (var (id, data, wasRanked) in rows)
             {

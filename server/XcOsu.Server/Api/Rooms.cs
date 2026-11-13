@@ -73,6 +73,7 @@ namespace XcOsu.Server.Api
             api.MapPost("/rooms", async (HttpContext ctx, RoomStore store, UsersService users, Accounts accounts, Mirrors mirrors, Chat chat) =>
             {
                 if (uid(ctx) is not int u) return Json.Error("unauthorized", 401);
+                if (accounts.NeedsEmailConfirmation(u)) return Json.Error(Accounts.CONFIRM_EMAIL_MESSAGE, 403);
                 var body = await Json.Body<JObject>(ctx.Request);
                 if (body == null) return Json.Error("invalid room");
 

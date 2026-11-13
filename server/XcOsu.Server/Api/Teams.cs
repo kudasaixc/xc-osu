@@ -48,7 +48,17 @@ namespace XcOsu.Server.Api
             {
                 using var c = db.Open();
                 int page = Math.Clamp(int.TryParse(req.Query["page"], out var requested) ? requested : 1, 1, 100000);
-                var ids = c.Query("SELECT id FROM teams ORDER BY id LIMIT 50 OFFSET $offset", r => r.GetInt64(0), ("$offset", (page - 1) * 50));
+                // ?q= narrows by name or tag so a team beyond the first page stays reachable; the response stays a plain array and
+                // the paging facts travel in headers, so existing callers are unaffected.
+                string q = (req.Query["q"].ToString() ?? "").Trim();
+                if (q.Length > 30) q = q[..30];
+                string like = "%" + q.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
+                const string filter = "($q = '' OR name LIKE $like ESCAPE '\\' OR short_name LIKE $like ESCAPE '\\')";
+                long total = c.Scalar<long>("SELECT COUNT(*) FROM teams WHERE " + filter, ("$q", q), ("$like", like));
+                var ids = c.Query("SELECT id FROM teams WHERE " + filter + " ORDER BY id LIMIT 50 OFFSET $offset", r => r.GetInt64(0),
+                    ("$q", q), ("$like", like), ("$offset", (page - 1) * 50));
+                req.HttpContext.Response.Headers["X-Total-Count"] = total.ToString();
+                req.HttpContext.Response.Headers["X-Has-More"] = ((long)page * 50 < total) ? "1" : "0";
                 return Json.Ok(new JArray(ids.Select(id => teamJson(c, users, accounts, id, false))));
             });
 
@@ -62,6 +72,7 @@ namespace XcOsu.Server.Api
             app.MapPost("/api/xc/teams", async (HttpContext ctx, Db db, Users users, Accounts accounts) =>
             {
                 if (ctx.User.UserId() is not int u || accounts.Get(u) is not { Restricted: false }) return Json.Error("unauthorized", 401);
+                if (accounts.NeedsEmailConfirmation(u)) return Json.Error(Accounts.CONFIRM_EMAIL_MESSAGE, 403);
                 var p = await Json.Params(ctx.Request);
                 string? name = p("name")?.Trim(), shortName = p("short_name")?.Trim().ToUpperInvariant();
                 if (validate(name, shortName) is string error) return Json.Error(error, 422);
@@ -94,6 +105,7 @@ namespace XcOsu.Server.Api
             app.MapPost("/api/xc/teams/{id:long}/join", (long id, HttpContext ctx, Db db, Users users, Accounts accounts) =>
             {
                 if (ctx.User.UserId() is not int u || accounts.Get(u) is not { Restricted: false }) return Json.Error("unauthorized", 401);
+                if (accounts.NeedsEmailConfirmation(u)) return Json.Error(Accounts.CONFIRM_EMAIL_MESSAGE, 403);
                 using var c = db.Open();
                 if (c.Scalar<long>("SELECT COUNT(*) FROM teams WHERE id = $t", ("$t", id)) == 0) return Json.Error("Team not found", 404);
                 if (teamOf(c, u) != null) return Json.Error("Leave your current team first.", 422);

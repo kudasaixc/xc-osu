@@ -3,24 +3,23 @@ using osu.Framework.Screens;
 using osu.Game.Beatmaps;
 using osu.Game.Beatmaps.Formats;
 using osu.Game.IO;
-using osu.Game.Online.API.Requests.Responses;
-using osu.Game.Replays;
-using osu.Game.Replays.Legacy;
 using osu.Game.Rulesets;
 using osu.Game.Rulesets.Mods;
 using osu.Game.Rulesets.Osu;
-using osu.Game.Rulesets.Osu.Replays;
-using osu.Game.Rulesets.Replays;
 using osu.Game.Scoring;
+using osu.Game.Scoring.Legacy;
 using osu.Game.Screens.Play;
 using osu.Game.Tests;
 using osu.Game.Tests.Visual;
 
-if (args.Length != 2) throw new ArgumentException("Usage: verifier <job.json> <result.json>");
-var job = JsonConvert.DeserializeObject<Job>(File.ReadAllText(args[0]))!;
-using var input = new LineBufferedReader(new MemoryStream(Convert.FromBase64String(job.Beatmap)));
-var map = Decoder.GetDecoder<Beatmap>(input).Decode(input);
+// Replays a recorded score through the real gameplay code, headless and faster than real time, and writes what the
+// replay actually achieves. The server compares that with what the client claimed; nothing the client computed is reused.
+if (args.Length != 3) throw new ArgumentException("Usage: verifier <beatmap.osu> <replay.osr> <result.json>");
+Beatmap map;
+using (var input = new LineBufferedReader(File.OpenRead(args[0])))
+    map = Decoder.GetDecoder<Beatmap>(input).Decode(input);
 map.BeatmapInfo.Ruleset = new OsuRuleset().RulesetInfo;
+byte[] osr = File.ReadAllBytes(args[1]);
 using var host = new CleanRunHeadlessGameHost(realtime: false);
 var runner = new OsuTestScene.OsuTestSceneTestRunner();
 Exception? failure = null;
@@ -29,39 +28,34 @@ var execution = Task.Run(() =>
     try
     {
         while (!runner.IsLoaded) Thread.Sleep(10);
-        runner.RunTestBlocking(new VerificationScene(job, map, args[1]));
+        runner.RunTestBlocking(new VerificationScene(map, osr, args[2]));
     }
     catch (Exception e) { failure = e; }
     finally { host.Exit(); }
 });
 host.Run(runner);
 await execution;
-if (failure != null) throw failure;
+// exit codes rather than an unhandled exception: an abort would leave a core dump behind for every bad replay.
+if (failure != null) { Console.Error.WriteLine(failure); return 2; }
+if (!File.Exists(args[2])) { Console.Error.WriteLine("The simulation produced no result."); return 3; }
+return 0;
 
-public sealed record Job(string Beatmap, SoloScoreInfo Score, List<LegacyReplayFrame> Frames);
 public partial class VerificationScene : RateAdjustedBeatmapTestScene
 {
     protected override Ruleset CreateRuleset() => new OsuRuleset();
-    public VerificationScene(Job job, Beatmap map, string output)
+
+    public VerificationScene(Beatmap map, byte[] osr, string output)
     {
         VerificationPlayer? player = null;
         AddStep("load beatmap and replay", () =>
         {
-            Beatmap.Value = CreateWorkingBeatmap(map);
+            var working = CreateWorkingBeatmap(map);
+            Beatmap.Value = working;
             Ruleset.Value = new OsuRuleset().RulesetInfo;
-            var ruleset = new OsuRuleset();
-            var mods = job.Score.Mods.Select(m => m.ToMod(ruleset)).ToArray();
-            SelectedMods.Value = mods;
-            var info = job.Score.ToScoreInfo(mods, map.BeatmapInfo);
-            info.Ruleset = ruleset.RulesetInfo;
-            // Never use the client's FrameHeader to reset the server's score processor.
-            var replay = new Replay { Frames = job.Frames.Select(f =>
-            {
-                var converted = new OsuReplayFrame { Time = f.Time };
-                converted.FromLegacy(f, map);
-                return (ReplayFrame)converted;
-            }).ToList() };
-            LoadScreen(player = new VerificationPlayer(new Score { ScoreInfo = info, Replay = replay }));
+            var score = new ReplayDecoder(working).Parse(new MemoryStream(osr));
+            score.ScoreInfo.Ruleset = new OsuRuleset().RulesetInfo;
+            SelectedMods.Value = score.ScoreInfo.Mods;
+            LoadScreen(player = new VerificationPlayer(score));
         });
         AddUntilStep("player loaded", () => player?.IsCurrentScreen() == true);
         AddUntilStep("simulation finished", () => player!.GameplayState.HasCompleted || player.GameplayState.HasFailed);
@@ -76,7 +70,14 @@ public partial class VerificationScene : RateAdjustedBeatmapTestScene
             }));
         });
     }
+
+    private sealed class ReplayDecoder(WorkingBeatmap working) : LegacyScoreDecoder
+    {
+        protected override Ruleset GetRuleset(int rulesetId) => rulesetId == 0 ? new OsuRuleset() : throw new NotSupportedException("Only osu! replays are simulated.");
+        protected override WorkingBeatmap GetBeatmap(string md5Hash) => working;
+    }
 }
+
 public partial class VerificationPlayer(Score score) : ReplayPlayer(score, new PlayerConfiguration { AutomaticallySkipIntro = true, ShowLeaderboard = false })
 {
     // ReplayPlayer normally suppresses failure until its final frame; verification must use ordinary gameplay rules.

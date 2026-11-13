@@ -21,7 +21,7 @@ public static class PasswordReset
         {
             var p = await Json.Params(ctx.Request);
             string password = p("password") ?? "";
-            if (password.Length < 8 || password.Length > 1024) return Json.Error("Use a password between 8 and 1024 characters.", 422);
+            if (password.Length is < Accounts.PASSWORD_MIN or > Accounts.PASSWORD_MAX) return Json.Error(Accounts.PASSWORD_RULE, 422);
             return recovery.Complete(p("token") ?? "", password)
                 ? Json.Ok(new { message = "Password updated. Sign in again with your new password." })
                 : Json.Error("This reset link is invalid or expired. Request a new one.", 422);

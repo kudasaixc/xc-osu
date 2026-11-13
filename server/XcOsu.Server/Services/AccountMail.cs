@@ -6,7 +6,7 @@ using XcOsu.Server.Data;
 namespace XcOsu.Server.Services;
 
 // Account emails use the same local sendmail transport as sportsbook.
-public sealed class AccountMail(Db db, IConfiguration config, ILogger<AccountMail> log) : BackgroundService
+public sealed class AccountMail(Db db, IConfiguration config, ILogger<AccountMail> log, Accounts accounts) : BackgroundService
 {
     private readonly Channel<(string Email, string Purpose)> queue = Channel.CreateBounded<(string, string)>(100);
     public bool Request(string email, string purpose)
@@ -19,7 +19,7 @@ public sealed class AccountMail(Db db, IConfiguration config, ILogger<AccountMai
 
     public bool Consume(string token, string purpose, string? password = null)
     {
-        if (purpose is not ("verify" or "reset") || token.Length != 64 || !token.All(Uri.IsHexDigit) || (purpose == "reset" && (password == null || password.Length is < 8 or > 256))) return false;
+        if (purpose is not ("verify" or "reset") || token.Length != 64 || !token.All(Uri.IsHexDigit) || (purpose == "reset" && (password == null || password.Length is < Accounts.PASSWORD_MIN or > Accounts.PASSWORD_MAX))) return false;
         using var c = db.Open();
         using var tx = c.BeginTransaction();
         long? user = c.Scalar<long?>("DELETE FROM account_challenges WHERE token_hash = $t AND purpose = $p AND expires_at > $now AND EXISTS (SELECT 1 FROM users WHERE id = account_challenges.user_id AND restricted = 0 AND ($p = 'verify' OR email_verified = 1)) RETURNING user_id",
@@ -35,6 +35,7 @@ public sealed class AccountMail(Db db, IConfiguration config, ILogger<AccountMai
         }
         c.Exec("DELETE FROM account_challenges WHERE user_id = $u AND purpose = $p", ("$u", user), ("$p", purpose));
         tx.Commit();
+        if (purpose == "reset") accounts.NotifyRevoked((int)user.Value);
         return true;
     }
 
@@ -55,25 +56,13 @@ public sealed class AccountMail(Db db, IConfiguration config, ILogger<AccountMai
                     ("$t", Accounts.TokenHash(token)), ("$u", user), ("$p", request.Purpose), ("$e", DateTimeOffset.UtcNow.AddMinutes(30).ToUnixTimeSeconds()));
                 string origin = (config["PublicUrl"] ?? "https://osu.xcsoftworks.com").TrimEnd('/');
                 string link = origin + "/api/xc/account/email/" + request.Purpose + "?token=" + token;
-                string body = "xc-osu!\n\n" + (request.Purpose == "verify" ? "Confirme ton adresse email :" : "Reinitialise ton mot de passe :") + "\n" + link
+                string body = "xc-osu!\n\n" + (request.Purpose == "verify" ? "Confirme ton adresse email / Confirm your email address:" : "Reinitialise ton mot de passe :") + "\n" + link
                     + "\n\nCe lien expire dans 30 minutes. Ignore ce message si tu n'es pas a l'origine de la demande.";
-                var start = new ProcessStartInfo("/usr/sbin/sendmail") { RedirectStandardInput = true, UseShellExecute = false };
-                start.ArgumentList.Add("-t"); start.ArgumentList.Add("-i"); start.ArgumentList.Add("-fnoreply@xcsoftworks.com");
-                using var process = Process.Start(start) ?? throw new IOException("Mail transport unavailable");
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
                 timeout.CancelAfter(TimeSpan.FromSeconds(20));
-                try
-                {
-                    await process.StandardInput.WriteAsync(("From: xc-osu! <noreply@xcsoftworks.com>\nTo: " + request.Email
-                        + "\nSubject: xc-osu! - Compte\nMIME-Version: 1.0\nContent-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: base64\n\n"
-                        + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(body))).AsMemory(), timeout.Token);
-                    process.StandardInput.Close();
-                    await process.WaitForExitAsync(timeout.Token);
-                    if (process.ExitCode != 0) log.LogWarning("Account email delivery failed");
-                }
-                finally { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+                await MailTransport.Send(config, request.Email, request.Purpose == "verify" ? "xc-osu! - Confirme ton adresse / Confirm your email" : "xc-osu! - Compte", body, timeout.Token);
             }
-            catch (Exception) when (!stoppingToken.IsCancellationRequested) { log.LogWarning("Account email processing failed"); }
+            catch (Exception e) when (!stoppingToken.IsCancellationRequested) { log.LogWarning("Account email delivery failed ({ErrorType})", e.GetType().Name); }
         }
     }
 }

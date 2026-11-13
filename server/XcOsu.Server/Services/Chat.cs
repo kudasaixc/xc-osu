@@ -220,6 +220,7 @@ namespace XcOsu.Server.Services
             var sender = accounts.Get(senderId);
             if (sender == null) return "unknown user";
             if (sender.Restricted) return "Your account is restricted.";
+            if (accounts.NeedsEmailConfirmation(senderId)) return Accounts.CONFIRM_EMAIL_MESSAGE;
             if (sender.SilencedUntil is DateTimeOffset until && until > DateTimeOffset.UtcNow) return $"You are silenced until {until:u}.";
 
             using var c = db.Open();

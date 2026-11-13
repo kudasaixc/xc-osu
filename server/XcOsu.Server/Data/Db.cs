@@ -302,9 +302,18 @@ namespace XcOsu.Server.Data
                 """);
 
             addColumn(c, "users", "email_verified INTEGER NOT NULL DEFAULT 0");
+            // replay verification: 0 pending, 1 verified, 2 replay does not reproduce the score, 3 could not be simulated, 4 no replay delivered.
+            addColumn(c, "scores", "verification INTEGER NOT NULL DEFAULT 0");
+            addColumn(c, "scores", "replay_due INTEGER");
             exec(c, "CREATE TABLE IF NOT EXISTS account_challenges (token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, purpose TEXT NOT NULL, expires_at INTEGER NOT NULL)");
             addColumn(c, "tokens", "refresh_expires_at INTEGER NOT NULL DEFAULT 0");
             addColumn(c, "tokens", "session_expires_at INTEGER NOT NULL DEFAULT 0");
+            // every token pair belongs to one session; a rotation keeps the id, a sign-out or revocation ends it.
+            addColumn(c, "tokens", "session_id TEXT");
+            exec(c, "UPDATE tokens SET session_id = lower(hex(randomblob(16))) WHERE session_id IS NULL");
+            exec(c, "CREATE INDEX IF NOT EXISTS ix_tokens_session ON tokens(session_id)");
+            // accounts created before email confirmation became a condition keep their abilities; new ones must confirm.
+            addColumn(c, "users", "verification_required INTEGER NOT NULL DEFAULT 0");
             // Preserve existing sessions while migrating usable secrets to digests.
             using (var tx = c.BeginTransaction())
             {

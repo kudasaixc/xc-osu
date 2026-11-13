@@ -13,6 +13,15 @@ namespace XcOsu.Server.Api
             "catboy.best", "central.catboy.best", "api.nerinyan.moe", "osu.direct",
         };
 
+        // Mirrors hand downloads over to their own storage hosts (dl.nerinyan.moe, storage.osu.direct, ...): a redirect may stay
+        // inside the family of an allowed host, and nowhere else. Proxy:RedirectHosts adds exact hosts for a mirror's external CDN.
+        private static readonly string[] redirect_suffixes = { ".ppy.sh", ".catboy.best", ".nerinyan.moe", ".osu.direct" };
+        private static HashSet<string> extra_redirect_hosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        public static bool RedirectAllowed(string host) =>
+            allowed_hosts.Contains(host) || extra_redirect_hosts.Contains(host)
+            || redirect_suffixes.Any(suffix => host.EndsWith(suffix, StringComparison.OrdinalIgnoreCase));
+
         private const long max_bytes = 256L * 1024 * 1024;
 
         internal static readonly SemaphoreSlim cache_gate = new(1, 1);
@@ -21,6 +30,7 @@ namespace XcOsu.Server.Api
         {
             string cacheDir = Path.Combine(app.Configuration["DataDirectory"] ?? "data", "proxy-cache");
             Directory.CreateDirectory(cacheDir);
+            extra_redirect_hosts = new HashSet<string>(app.Configuration.GetSection("Proxy:RedirectHosts").Get<string[]>() ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
 
             app.MapGet("/api/xc/proxy", async (HttpContext ctx, IHttpClientFactory factory, string u) =>
             {
@@ -110,9 +120,11 @@ namespace XcOsu.Server.Api
         {
             for (int redirects = 0; redirects < 5; redirects++)
             {
-                // the first hop must be an allowed host; mirrors legitimately redirect downloads to their CDNs, so later hops
-                // only need to be plain https (private / loopback targets are refused by PublicNetworkHandler at connect time).
-                if (uri.Scheme != "https" || !uri.IsDefaultPort || uri.UserInfo.Length != 0 || (redirects == 0 && !allowed_hosts.Contains(uri.Host)))
+                // the first hop must be an allowed host and every redirect must stay with that mirror's own hosts, so an open
+                // redirect upstream cannot turn this into a general-purpose fetcher (private / loopback targets are additionally
+                // refused by PublicNetworkHandler at connect time).
+                if (uri.Scheme != "https" || !uri.IsDefaultPort || uri.UserInfo.Length != 0
+                    || !(redirects == 0 ? allowed_hosts.Contains(uri.Host) : RedirectAllowed(uri.Host)))
                     throw new BadHttpRequestException("Invalid upstream", 403);
                 var response = await http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ct);
                 if ((int)response.StatusCode is not (301 or 302 or 303 or 307 or 308)) return response;

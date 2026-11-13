@@ -200,6 +200,8 @@ namespace XcOsu.Server.Services
             _ => 0,
         };
 
+        public string OsuFilePath(int beatmapId) => Path.Combine(osuCache, $"{beatmapId}.osu");
+
         /// <summary>Raw .osu file, cached on disk (needed for pp computation).</summary>
         public async Task<byte[]?> GetOsuFile(int beatmapId, CancellationToken ct)
         {

@@ -98,6 +98,7 @@ namespace XcOsu.Server.Hubs
 
         public async Task<MultiplayerRoom> CreateRoom(MultiplayerRoom room)
         {
+            if (accounts.NeedsEmailConfirmation(me)) throw new HubException(Accounts.CONFIRM_EMAIL_MESSAGE);
             validateSettings(room.Settings);
             if (room.Playlist.Count is < 1 or > 100) throw new HubException("A room needs 1 to 100 playlist items.");
             if (room.Settings.MatchType.IsMatchmakingType()) throw new HubException("Quick play and ranked play rooms are created by the matchmaker.");
