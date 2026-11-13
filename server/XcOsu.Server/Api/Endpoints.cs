@@ -30,6 +30,7 @@ namespace XcOsu.Server.Api
             mapMisc(api);
             Rooms.Map(api);
             Media.Map(app);
+            AccountData.Map(app);
             Teams.Map(app);
         }
 

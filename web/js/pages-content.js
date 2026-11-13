@@ -56,7 +56,7 @@ export async function newsPost({ params: [slug] }) {
 
 // ---------------------------------------------------------------- wiki
 // reading order of the index; pages not listed come after, in alphabetical order
-const ORDER = ['Getting_started', 'Performance', 'Sound', 'Controls', 'Beatmaps', 'Online_play', 'Account', 'Troubleshooting', 'Reporting_a_problem', 'Privacy'];
+const ORDER = ['Getting_started', 'Performance', 'Sound', 'Controls', 'Beatmaps', 'Online_play', 'Account', 'Troubleshooting', 'Reporting_a_problem', 'Privacy', 'Legal'];
 const rank = (path) => { const i = ORDER.indexOf(path); return i < 0 ? ORDER.length : i; };
 
 /** /wiki, /wiki/Sound, /wiki/fr/Sound, /help/wiki/… (the language in the address is ignored: the site's own language is used). */

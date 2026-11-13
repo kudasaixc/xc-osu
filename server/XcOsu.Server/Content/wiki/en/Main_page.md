@@ -34,7 +34,7 @@ New here? [Getting started](/wiki/Getting_started) covers what you need, creatin
 
 # Help
 
-[Troubleshooting](/wiki/Troubleshooting) • [Reporting a problem](/wiki/Reporting_a_problem) • [Privacy](/wiki/Privacy)
+[Troubleshooting](/wiki/Troubleshooting) • [Reporting a problem](/wiki/Reporting_a_problem) • [Privacy](/wiki/Privacy) • [Legal](/wiki/Legal)
 
 </div>
 </div>

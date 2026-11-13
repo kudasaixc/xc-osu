@@ -1,5 +1,44 @@
 [
  {
+  "version": "2026.1113.6",
+  "stream": "nanbeige",
+  "date": "2026-11-13T22:30:00Z",
+  "entries": [
+   {
+    "category": "Account",
+    "category_fr": "Compte",
+    "type": "add",
+    "title": "You can download everything xc-osu! keeps about your account as a JSON file, from Settings → Your data",
+    "title_fr": "Tu peux télécharger tout ce que xc-osu! garde sur ton compte dans un fichier JSON, depuis Réglages → Tes données",
+    "major": true
+   },
+   {
+    "category": "Account",
+    "category_fr": "Compte",
+    "type": "add",
+    "title": "You can delete your account yourself: your scores, replays, screenshots, friends, private conversations and messages go with it, immediately",
+    "title_fr": "Tu peux supprimer ton compte toi-même : tes scores, replays, captures, amis, conversations privées et messages partent avec, immédiatement",
+    "major": true
+   },
+   {
+    "category": "Wiki",
+    "category_fr": "Wiki",
+    "type": "add",
+    "title": "The Privacy page now lists what is kept, for how long and on what basis, and how to use your rights; a new Legal page covers licences and trademarks",
+    "title_fr": "La page Vie privée dit maintenant ce qui est gardé, combien de temps et sur quelle base, et comment exercer tes droits ; une nouvelle page Mentions légales couvre les licences et les marques",
+    "major": false
+   },
+   {
+    "category": "Infrastructure",
+    "category_fr": "Infrastructure",
+    "type": "add",
+    "title": "The database and uploaded files are backed up every night, and the last seven days are kept",
+    "title_fr": "La base de données et les fichiers envoyés sont sauvegardés chaque nuit, et les sept derniers jours sont gardés",
+    "major": false
+   }
+  ]
+ },
+ {
   "version": "2026.1113.5",
   "stream": "nanbeige",
   "date": "2026-11-13T21:05:00Z",

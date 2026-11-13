@@ -34,7 +34,7 @@ Tu débarques ? [Premiers pas](/wiki/Getting_started) explique ce qu'il te faut,
 
 # Aide
 
-[Dépannage](/wiki/Troubleshooting) • [Signaler un problème](/wiki/Reporting_a_problem) • [Vie privée](/wiki/Privacy)
+[Dépannage](/wiki/Troubleshooting) • [Signaler un problème](/wiki/Reporting_a_problem) • [Vie privée](/wiki/Privacy) • [Mentions légales](/wiki/Legal)
 
 </div>
 </div>

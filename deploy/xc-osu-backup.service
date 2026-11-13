@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily local copy of the xc-osu database and player files (kept 7 days)
+
+[Service]
+Type=oneshot
+User=postgres
+UMask=0077
+ExecStart=/bin/sh -c 'pg_dump -Fc xc_osu > /var/backups/xc-osu/xc_osu-$(date +%%F).dump.tmp && mv /var/backups/xc-osu/xc_osu-$(date +%%F).dump.tmp /var/backups/xc-osu/xc_osu-$(date +%%F).dump'
+# avatars, covers, replays and screenshots are a few MB: archived as root, then everything older than a week goes.
+ExecStart=+/bin/sh -c 'tar czf /var/backups/xc-osu/files-$(date +%%F).tar.gz --ignore-failed-read -C /var/lib/xc-osu avatars covers replays screenshots; find /var/backups/xc-osu -type f -mtime +6 -delete'

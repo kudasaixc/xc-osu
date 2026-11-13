@@ -50,3 +50,7 @@ pointed with `Database__ConnectionString`. The former SQLite files are loaded on
 ## Licence
 
 MIT, see `LICENSE`. Upstream components keep their own licences (`osu/LICENCE`, `osu-framework/LICENCE`, `native/realm-dotnet/LICENSE`, …).
+
+The game resources pulled in through `ppy.osu.Game.Resources` ([osu-resources](https://github.com/ppy/osu-resources), © ppy Pty Ltd) are
+under CC BY-NC 4.0, so any deployment must stay non-commercial. "osu!" and "ppy" are trademarks of ppy Pty Ltd and are not
+covered by any of these licences.

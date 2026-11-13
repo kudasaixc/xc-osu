@@ -1,5 +1,5 @@
 // xc-osu! web: sign in, registration, account settings. xc softworks (kudasaixc)
-import { L, state, t, esc, num, countryName, MODES, modeName, api, signIn, signOut, loadMe, signedIn, requireSignIn, renderUserText, act, userLink, avatarUrl, ApiError } from './core.js';
+import { L, state, t, esc, num, countryName, MODES, modeName, api, signIn, signOut, loadMe, signedIn, requireSignIn, renderUserText, act, userLink, avatarUrl, ApiError, download } from './core.js';
 
 /** Only follow "next" back to a page of this site. */
 const nextPath = (query) => { const n = query.get('next') || ''; return n.startsWith('/') && !n.startsWith('//') && !n.startsWith('/login') ? n : '/'; };
@@ -150,7 +150,20 @@ export async function settings({ go, refreshShell, hash }) {
 
       <section class="panel"><h2>${t('Session', 'Session')}</h2>
         <p class="muted">${t('Signing out here does not sign you out of the game.', 'Se déconnecter ici ne te déconnecte pas du jeu.')}</p>
-        <button type="button" class="btn ghost" id="logout">${t('Sign out of this site', 'Se déconnecter de ce site')}</button></section>`,
+        <button type="button" class="btn ghost" id="logout">${t('Sign out of this site', 'Se déconnecter de ce site')}</button></section>
+
+      <section class="panel" id="data"><h2>${t('Your data', 'Tes données')}</h2>
+        <p class="muted">${t('Download everything xc-osu! keeps about your account (profile, scores, comments, messages…) as a JSON file.', 'Télécharge tout ce que xc-osu! garde sur ton compte (profil, scores, commentaires, messages…) dans un fichier JSON.')} <a href="${L('/wiki/Privacy')}">${t('Privacy', 'Confidentialité')}</a></p>
+        <div><button type="button" class="btn ghost" id="export">${t('Download my data', 'Télécharger mes données')}</button> <span class="msg" role="status"></span></div>
+        <form class="form" id="delete-account" style="margin-top:18px">
+          <h3>${t('Delete my account', 'Supprimer mon compte')}</h3>
+          <p class="muted">${t('This erases your account, scores, replays, screenshots, friends, private messages and messages sent, right away and for good. Comments that received replies stay as “deleted”. It cannot be undone.', 'Ceci efface ton compte, tes scores, replays, captures, amis, messages privés et messages envoyés, tout de suite et pour de bon. Les commentaires qui ont reçu des réponses restent sous la forme « supprimé ». C’est irréversible.')}</p>
+          <div class="form-grid">
+            <label>${t('Password', 'Mot de passe')}<input name="password" type="password" autocomplete="current-password" required></label>
+            <label>${t('Type your username to confirm', 'Tape ton pseudo pour confirmer')}<input name="confirm" autocomplete="off" required></label>
+          </div>
+          <div><button class="btn ghost danger" type="submit">${t('Delete my account for good', 'Supprimer mon compte définitivement')}</button> <span class="msg" role="status"></span></div>
+        </form></section>`,
 
     mount(view) {
       // ---- images
@@ -202,6 +215,18 @@ export async function settings({ go, refreshShell, hash }) {
       });
 
       view.querySelector('#logout').addEventListener('click', async () => { await signOut(); refreshShell(); go('/'); });
+
+      // ---- data export and account deletion
+      const exp = view.querySelector('#export');
+      exp.addEventListener('click', () => act(exp, exp.nextElementSibling, () => download('/api/xc/account/export', `xc-osu-account-${state.me.id}.json`)));
+      const del = view.querySelector('#delete-account');
+      del.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (!confirm(t('Delete your account for good?', 'Supprimer ton compte définitivement ?'))) return;
+        if (await act(del.querySelector('button'), del.querySelector('.msg'), () => api('/api/xc/account/delete', { method: 'POST', json: { password: del.password.value, confirm: del.confirm.value.trim() } }))) {
+          await signOut(); refreshShell(); go('/');
+        }
+      });
 
       // ---- team
       const body = view.querySelector('#team-body'), teamMsg = view.querySelector('#team-msg');
