@@ -1,17 +1,17 @@
 # Mod menu, browsing and online stability
 
-## A mod menu that no longer hitches
+## The mod menu no longer hitches
 
-Opening the mod menu could freeze the game while it built every panel at once. Panels now appear one by one, and searching and selecting stay usable while the menu fills.
+Opening the browser mod menu could freeze the game for a moment: every panel was built and finalised at once. Preloaded panels now join the interface progressively, one per update frame, and the list stays searchable while it fills.
 
-Beatmap cards load the same way, one at a time, and a new search cancels the cards that have not appeared yet.
+Beatmap browsing does the same with its cards, and a new search cancels the cards still waiting to appear, so results from two searches cannot mix. The real gain still has to be measured on a fresh build: a garbage-collection pause or the cost of one heavy panel can still show.
 
-## Disconnections
+## Cleaner disconnections
 
-Refreshing the friends list while the connection was closing could raise an error. It is ignored now.
+A friends-list refresh could race with connection teardown and raise a SignalR error. Refreshes against a disposed connection are ignored now, and the subscription is dropped when the connection is.
 
 ## Error reports
 
-Some fatal errors were being dropped and network timings could come out negative. Both are fixed, so the next reports will be more useful.
+A fatal error right after a suppressed repeated warning used to be lost. It is kept now. Resource timing no longer produces negative network durations when the browser returns incomplete timing data.
 
-One crash during player loading remains unexplained. The reports we get from now on will help find it.
+One exit during player loading came with a trace that only shows the runtime finalizer. That one is still unexplained, and this update does not pretend otherwise.
