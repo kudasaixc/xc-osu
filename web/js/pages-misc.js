@@ -6,6 +6,38 @@ import { setCard, commentThread } from './pages-beatmap.js';
 const rowUser = (row) => row.user || row.User;
 
 // ---------------------------------------------------------------- home
+// The engineering story is told in English on purpose: it is the language the stack speaks.
+const FEAT = `
+      <section class="feat" lang="en" aria-labelledby="feat-title">
+        <header class="feat-head">
+          <p class="eyebrow"><span class="feat-dot" aria-hidden="true"></span>Under the hood</p>
+          <h2 id="feat-title">This is not a web demo.<br><span class="feat-em">It is osu!lazer itself, compiled to WebAssembly.</span></h2>
+          <p class="feat-lead">A desktop rhythm game expects a graphics card, several threads, a real database and a native audio library. A browser tab offers none of that. So the game's own code was kept, and the entire platform underneath it was rebuilt until lazer ran on the web — no install, no plugin, no emulator, no streaming video, no “lite” mode. The game is executing on your machine.</p>
+        </header>
+        <ul class="feat-grid">
+          <li class="feat-card"><p class="feat-k">01 · The source</p><b>The real game, not a remake</b>
+            <p>Every hit circle, slider and pp value comes from the actual osu!lazer source tree that desktop players already run. The browser is a new platform, not a new game.</p></li>
+          <li class="feat-card"><p class="feat-k">02 · The runtime</p><b>C# ahead-of-time compiled to WebAssembly</b>
+            <p>The .NET 10 runtime is compiled ahead of time into WebAssembly, so lazer's C# runs as machine code the browser executes directly — no interpreter crawling through the gameplay loop.</p></li>
+          <li class="feat-card"><p class="feat-k">03 · The renderer</p><b>WebGL2, driven by the original renderer</b>
+            <p>The framework's draw loop talks to a WebGL2 context through a hand-written platform layer. Even the shader compiler — a native library on desktop — was compiled to WebAssembly.</p></li>
+          <li class="feat-card"><p class="feat-k">04 · The threads</p><b>Real threads, inside a browser</b>
+            <p>Cross-origin isolation unlocks WebAssembly threads: drawing, game logic, audio and input each get a dedicated worker. The page's main thread stays idle while the game runs.</p></li>
+          <li class="feat-card"><p class="feat-k">05 · The database</p><b>Realm's own engine, compiled to Wasm</b>
+            <p>Lazer stores beatmaps and settings in Realm. Rather than a look-alike, Realm's C++ core was compiled to WebAssembly with a filesystem that gives it the locking and memory mapping it expects — the same database format as desktop.</p></li>
+          <li class="feat-card"><p class="feat-k">06 · The audio</p><b>BASS, replaced by an engine of our own</b>
+            <p>Desktop lazer plays sound through BASS, which does not exist on the web. xcbass keeps the same API, with its own decoders and its own tempo and pitch processing, feeding a WebAudio worklet.</p></li>
+        </ul>
+        <dl class="feat-nums">
+          <div><dt>of WebAssembly engine, brotli-compressed and streamed from the edge</dt><dd>~230 MB</dd></div>
+          <div><dt>dedicated threads — draw, update, audio and input</dt><dd>4</dd></div>
+          <div><dt>from key press to hit sound, end to end</dt><dd>~63 ms</dd></div>
+          <div><dt>installs, plugins, app stores</dt><dd>0</dd></div>
+        </dl>
+        <p class="feat-foot"><span>Behind the tab: a full lazer-compatible server — scores, pp, rankings, multiplayer and spectator — on ASP.NET Core and PostgreSQL.</span>
+          <a href="${L('/news/2026-11-09-how-lazer-fits-in-a-tab')}">How a desktop rhythm game fits in a tab →</a></p>
+      </section>`;
+
 export async function home() {
   const [ranking, news] = await Promise.all([
     v2('/rankings/osu/performance').catch(() => ({ ranking: [] })),
@@ -15,8 +47,9 @@ export async function home() {
   return {
     title: '',
     html: `<section class="hero"><div>
-        <h1>${me ? t(`Welcome back, ${esc(me.username)}`, `Content de te revoir, ${esc(me.username)}`) : t('The rhythm game, in your browser', 'Le jeu de rythme, dans ton navigateur')}</h1>
-        <p>${t('Profiles, rankings, beatmaps and teams of the xc-osu! community. Nothing to install: the game runs in a tab.', 'Profils, classements, beatmaps et équipes de la communauté xc-osu!. Rien à installer : le jeu tourne dans un onglet.')}</p>
+        <p class="eyebrow">osu!lazer · compiled to WebAssembly</p>
+        <h1>${me ? t(`Welcome back, ${esc(me.username)}`, `Content de te revoir, ${esc(me.username)}`) : t('A full osu!lazer client, in a browser tab.', 'Un client osu!lazer complet, dans un onglet.')}</h1>
+        <p>${t('The real lazer source, compiled to WebAssembly and streamed to your browser. No installer, no plugin, no emulator — one click and the game boots in your tab.', 'Le vrai code de lazer, compilé en WebAssembly et envoyé à ton navigateur. Aucun installateur, aucun plugin, aucun émulateur — un clic et le jeu démarre dans ton onglet.')}</p>
         <p class="hero-actions"><a class="btn play" href="/">${t('Play now', 'Jouer maintenant')}</a>
           ${me ? `<a class="btn ghost" href="${L('/users/' + me.id)}">${t('My profile', 'Mon profil')}</a>` : `<a class="btn ghost" href="${L('/register')}">${t('Create an account', 'Créer un compte')}</a>`}</p></div>
         <svg class="hero-art" viewBox="0 0 340 200" aria-hidden="true">
@@ -31,6 +64,7 @@ export async function home() {
           <circle class="approach" cx="298" cy="168" r="27" fill="none" stroke="hsl(200 90% 70%)" stroke-width="3"/>
         </svg>
       </section>
+      ${FEAT}
       <div class="cols">
         <section class="panel"><h2>${t('Top players', 'Meilleurs joueurs')}</h2>
           ${ranking.ranking.length ? `<ol class="list">${ranking.ranking.slice(0, 8).map((row, i) => `<li class="score"><span class="pos">#${i + 1}</span><div class="score-main">${userLink(rowUser(row))}</div><span class="score-acc">${num(row.hit_accuracy, 2)} %</span><span class="score-pp">${num(row.pp)}<small>pp</small></span></li>`).join('')}</ol>

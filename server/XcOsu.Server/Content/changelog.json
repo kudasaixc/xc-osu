@@ -1,5 +1,20 @@
 [
  {
+  "version": "2026.1113.3",
+  "stream": "nanbeige",
+  "date": "2026-11-13T17:00:00Z",
+  "entries": [
+   {
+    "category": "Website",
+    "category_fr": "Site web",
+    "type": "add",
+    "title": "The home page now tells how the browser build works: lazer's own C# compiled ahead of time to WebAssembly, WebGL2 rendering, real threads, Realm and an audio engine of our own",
+    "title_fr": "La page d’accueil raconte désormais comment fonctionne la version navigateur : le C# de lazer compilé en amont en WebAssembly, le rendu WebGL2, de vrais threads, Realm et un moteur audio maison",
+    "major": false
+   }
+  ]
+ },
+ {
   "version": "2026.1113.2",
   "stream": "nanbeige",
   "date": "2026-11-13T16:45:00Z",

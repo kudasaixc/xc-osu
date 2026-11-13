@@ -6,7 +6,8 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 src="$root/web"; dst="${XC_WEB_DST:-$root/site/web}"
 
-for f in "$src"/js/*.js; do node --check "$f"; done
+# the site is plain ES modules with no package.json, so check them as modules
+for f in "$src"/js/*.js; do node --input-type=module --check < "$f" || { echo "syntax error in $f" >&2; exit 1; }; done
 hash="$(cd "$src" && find js data fonts web.css -type f | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -c1-12)"
 
 mkdir -p "$dst/a/$hash"
