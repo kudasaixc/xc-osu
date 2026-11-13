@@ -27,8 +27,8 @@ namespace XcOsu.Server.Api
             var members = c.Query("SELECT user_id FROM team_members WHERE team_id = @t", r => r.GetInt32(0), ("@t", id));
             team["members_count"] = members.Count;
             if (withMembers)
-                team["members"] = new JArray(members.Select(accounts.Get).OfType<AccountRow>().Where(r => !r.Restricted)
-                                                    .Select(r => JObject.FromObject(users.Compact(r), Newtonsoft.Json.JsonSerializer.Create(Json.SETTINGS))));
+                team["members"] = new JArray(accounts.GetMany(members, c).Where(r => !r.Restricted)
+                                                    .Select(r => JObject.FromObject(users.Compact(r, c), Newtonsoft.Json.JsonSerializer.Create(Json.SETTINGS))));
             return team;
         }
 

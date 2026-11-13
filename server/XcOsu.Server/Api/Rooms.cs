@@ -307,11 +307,11 @@ namespace XcOsu.Server.Api
                     GROUP BY user_id ORDER BY SUM(best) DESC, user_id
                     """, r => (user: r.GetInt32(0), total: r.GetInt64(1), acc: r.GetDouble(2), count: r.GetInt32(3)));
 
-                var accountsById = accounts.GetMany(rows.Select(r => r.user)).ToDictionary(a => a.Id);
+                var accountsById = accounts.GetMany(rows.Select(r => r.user), c).ToDictionary(a => a.Id);
                 var board = rows.Select((r, i) => new
                 {
                     user_id = r.user,
-                    user = accountsById.TryGetValue(r.user, out var a) ? users.Compact(a) : null,
+                    user = accountsById.TryGetValue(r.user, out var a) ? users.Compact(a, c) : null,
                     total_score = r.total,
                     accuracy = r.acc,
                     completed = r.count,

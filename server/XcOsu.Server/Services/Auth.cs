@@ -39,8 +39,12 @@ namespace XcOsu.Server.Services
         public AccountRow? Get(int id)
         {
             using var c = db.Open();
-            return c.Query($"SELECT {COLUMNS} FROM users WHERE id = @id", Map, ("@id", id)).FirstOrDefault();
+            return Get(id, c);
         }
+
+        /// <summary>Same as <see cref="Get(int)"/> on a connection the caller already holds (never take a second one from the pool).</summary>
+        public AccountRow? Get(int id, Npgsql.NpgsqlConnection c) =>
+            c.Query($"SELECT {COLUMNS} FROM users WHERE id = @id", Map, ("@id", id)).FirstOrDefault();
 
         public AccountRow? GetByName(string name)
         {
@@ -53,6 +57,13 @@ namespace XcOsu.Server.Services
             var list = ids.Distinct().ToList();
             if (list.Count == 0) return new List<AccountRow>();
             using var c = db.Open();
+            return GetMany(list, c);
+        }
+
+        public List<AccountRow> GetMany(IEnumerable<int> ids, Npgsql.NpgsqlConnection c)
+        {
+            var list = ids.Distinct().ToList();
+            if (list.Count == 0) return new List<AccountRow>();
             return c.Query($"SELECT {COLUMNS} FROM users WHERE id IN ({string.Join(',', list)})", Map);
         }
 

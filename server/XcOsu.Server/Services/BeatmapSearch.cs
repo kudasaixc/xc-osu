@@ -270,8 +270,16 @@ namespace XcOsu.Server.Services
 
         private void loadPersonal(SearchQuery q)
         {
-            using var c = db.Open();
             int viewer = q.Viewer!.Value;
+
+            // statistics take their own connection: ask for them before holding ours.
+            if (q.Recommended)
+            {
+                double pp = (double)(users.Statistics(viewer, q.Mode ?? 0).PP ?? 0);
+                q.RecommendedStars = pp > 0 ? Math.Pow(pp, 0.4) * 0.195 : 1.0;
+            }
+
+            using var c = db.Open();
 
             if (q.Played != null)
                 q.PlayedIds = c.Query("SELECT DISTINCT beatmap_id FROM beatmap_playcounts WHERE user_id = @u", r => r.GetInt32(0), ("@u", viewer)).ToHashSet();
@@ -283,12 +291,6 @@ namespace XcOsu.Server.Services
                 foreach (var (beatmap, rank) in c.Query("SELECT DISTINCT ON (beatmap_id) beatmap_id, rank FROM scores WHERE user_id = @u AND passed = 1 AND (@r < 0 OR ruleset_id = @r) ORDER BY beatmap_id, total_score DESC, id",
                              r => (r.GetInt32(0), r.GetString(1)), ("@u", viewer), ("@r", q.Mode ?? -1)))
                     q.RankByBeatmap[beatmap] = rank;
-            }
-
-            if (q.Recommended)
-            {
-                double pp = (double)(users.Statistics(viewer, q.Mode ?? 0).PP ?? 0);
-                q.RecommendedStars = pp > 0 ? Math.Pow(pp, 0.4) * 0.195 : 1.0;
             }
         }
     }

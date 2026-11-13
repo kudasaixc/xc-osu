@@ -41,15 +41,18 @@ namespace XcOsu.Server.Services
         private readonly Dictionary<int, (DateTime at, APITeam? team)> teamCache = new Dictionary<int, (DateTime, APITeam?)>();
         private readonly object teamLock = new object();
 
-        public APITeam? Team(int userId)
+        public APITeam? Team(int userId) => Team(userId, null);
+
+        /// <summary>The user's team; <paramref name="held"/> is a connection the caller already holds, reused on a cache miss.</summary>
+        public APITeam? Team(int userId, Npgsql.NpgsqlConnection? held)
         {
             lock (teamLock)
                 if (teamCache.TryGetValue(userId, out var cached) && cached.at > DateTime.UtcNow.AddSeconds(-30))
                     return cached.team;
 
             APITeam? team;
-            using (var c = db.Open())
-                team = c.Query("SELECT t.id, t.name, t.short_name, t.flag_url FROM teams t JOIN team_members m ON m.team_id = t.id WHERE m.user_id = @u",
+            using (var own = held == null ? db.Open() : null)
+                team = (held ?? own!).Query("SELECT t.id, t.name, t.short_name, t.flag_url FROM teams t JOIN team_members m ON m.team_id = t.id WHERE m.user_id = @u",
                     r => new APITeam { Id = r.GetInt32(0), Name = r.GetString(1), ShortName = r.GetString(2), FlagUrl = r.IsDBNull(3) ? null : r.GetString(3) }, ("@u", userId)).FirstOrDefault();
 
             lock (teamLock) teamCache[userId] = (DateTime.UtcNow, team);
@@ -61,7 +64,9 @@ namespace XcOsu.Server.Services
             lock (teamLock) teamCache.Clear();
         }
 
-        public APIUser Compact(AccountRow row)
+        public APIUser Compact(AccountRow row) => Compact(row, null);
+
+        public APIUser Compact(AccountRow row, Npgsql.NpgsqlConnection? held)
         {
             var profile = JObject.Parse(string.IsNullOrEmpty(row.ProfileJson) ? "{}" : row.ProfileJson);
             return new APIUser
@@ -80,7 +85,7 @@ namespace XcOsu.Server.Services
                 PlayMode = row.Playmode,
                 AvatarUrl = AvatarUrl(row),
                 CoverUrl = CoverUrl(row),
-                Team = Team(row.Id),
+                Team = Team(row.Id, held),
                 PMFriendsOnly = profile.Value<bool?>("pm_friends_only") ?? false,
                 LastVisit = presence.IsOnline(row.Id) ? DateTimeOffset.UtcNow : row.LastVisit,
             };
@@ -400,17 +405,26 @@ namespace XcOsu.Server.Services
         private readonly object countryLock = new object();
 
         /// <summary>All non-restricted users with pp, unsorted (cached briefly).</summary>
-        public List<(int userId, double pp)> Leaderboard(int rulesetId)
+        /// <remarks>
+        /// While one thread rebuilds the board, the others keep reading the previous one instead of queueing behind
+        /// it: a queue of requests that each hold a pooled connection is how the pool ran dry. Only a cold cache (or
+        /// <paramref name="waitForFresh"/>) waits for the rebuild.
+        /// </remarks>
+        public List<(int userId, double pp)> Leaderboard(int rulesetId, bool waitForFresh = false)
         {
+            List<(int, double)>? stale = null;
             lock (leaderboardLock)
             {
-                if (leaderboardCache.TryGetValue(rulesetId, out var cached) && cached.at > DateTime.UtcNow.AddSeconds(-30))
-                    return cached.list;
+                if (leaderboardCache.TryGetValue(rulesetId, out var cached))
+                {
+                    if (cached.at > DateTime.UtcNow.AddSeconds(-30) && !waitForFresh) return cached.list;
+                    stale = cached.list;
+                }
             }
 
-            // computed outside every lock, and on a connection of its own: a thread waiting here may hold a pooled
-            // connection, so the thread doing the refresh must never need one from under the same lock.
-            leaderboardRefresh.Wait();
+            if (!leaderboardRefresh.Wait(stale != null && !waitForFresh ? 0 : Timeout.Infinite))
+                return stale!;
+
             try
             {
                 lock (leaderboardLock)
@@ -419,19 +433,25 @@ namespace XcOsu.Server.Services
                         return cached.list;
                 }
 
-                List<(int, double)> list;
+                // every best score of every player in one pass; summed per player in the same order as Bests() so the
+                // total is the exact value a profile computes (ranks compare these doubles with >).
+                var rows = new List<(int userId, double pp)>();
                 using (var c = db.Open())
+                    rows = c.Query("""
+                        SELECT user_id, pp FROM (
+                            SELECT DISTINCT ON (s.user_id, s.beatmap_id) s.user_id, s.id, s.pp FROM scores s JOIN users u ON u.id = s.user_id
+                            WHERE s.ruleset_id = @r AND s.passed = 1 AND s.pp IS NOT NULL AND s.ranked = 1 AND u.restricted = 0
+                            ORDER BY s.user_id, s.beatmap_id, s.pp DESC, s.id) b
+                        ORDER BY user_id, pp DESC, id
+                        """, r => (r.GetInt32(0), r.GetDouble(1)), ("@r", rulesetId));
+
+                var list = new List<(int, double)>();
+                for (int i = 0; i < rows.Count;)
                 {
-                    var ids = c.Query("""
-                        SELECT DISTINCT s.user_id FROM scores s JOIN users u ON u.id = s.user_id
-                        WHERE s.ruleset_id = @r AND s.pp IS NOT NULL AND u.restricted = 0
-                        """, r => r.GetInt32(0), ("@r", rulesetId));
-                    list = new List<(int, double)>();
-                    foreach (int id in ids)
-                    {
-                        var bests = Bests(c, id, rulesetId);
-                        if (bests.Count > 0) list.Add((id, WeightedPp(bests)));
-                    }
+                    int user = rows[i].userId, start = i;
+                    while (i < rows.Count && rows[i].userId == user) i++;
+                    var bests = rows.GetRange(start, i - start).Select(e => new BestScore(0, 0, e.pp, 0)).ToList();
+                    list.Add((user, WeightedPp(bests)));
                 }
 
                 lock (leaderboardLock) leaderboardCache[rulesetId] = (DateTime.UtcNow, list);
@@ -443,21 +463,23 @@ namespace XcOsu.Server.Services
             }
         }
 
+        /// <summary>Marks every board stale: the next read rebuilds it (readers meanwhile keep the previous one).</summary>
         public void InvalidateLeaderboard()
         {
-            lock (leaderboardLock) leaderboardCache.Clear();
+            lock (leaderboardLock)
+                foreach (var key in leaderboardCache.Keys.ToList())
+                    leaderboardCache[key] = (DateTime.MinValue, leaderboardCache[key].list);
         }
 
         /// <summary>Records today's rank for every ranked user (also keeps rank_highest up to date).</summary>
         public void SnapshotRanks()
         {
-            InvalidateLeaderboard();
             string day = DateTime.UtcNow.ToString("yyyy-MM-dd");
 
             // every board first, then the inserts: a connection is never held while Leaderboard refreshes.
             var boards = new List<(int ruleset, List<(int userId, double pp)> board)>();
             for (int ruleset = 0; ruleset < RULESET_NAMES.Length; ruleset++)
-                boards.Add((ruleset, Leaderboard(ruleset).OrderByDescending(e => e.pp).ToList()));
+                boards.Add((ruleset, Leaderboard(ruleset, waitForFresh: true).OrderByDescending(e => e.pp).ToList()));
 
             using var c = db.Open();
             foreach (var (ruleset, board) in boards)

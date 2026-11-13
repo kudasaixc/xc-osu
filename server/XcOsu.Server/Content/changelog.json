@@ -1,5 +1,36 @@
 [
  {
+  "version": "2026.1113.5",
+  "stream": "nanbeige",
+  "date": "2026-11-13T21:05:00Z",
+  "entries": [
+   {
+    "category": "Infrastructure",
+    "category_fr": "Infrastructure",
+    "type": "fix",
+    "title": "The server no longer holds two database connections at once inside a single request, so it cannot run out of connections and freeze under heavy load",
+    "title_fr": "Le serveur n’ouvre plus deux connexions à la base de données dans une même requête : il ne peut plus en manquer et se figer sous forte charge",
+    "major": false
+   },
+   {
+    "category": "Rankings",
+    "category_fr": "Classements",
+    "type": "fix",
+    "title": "The performance ranking is computed in a single query instead of one per player, and while it refreshes the previous ranking is served instead of making requests wait",
+    "title_fr": "Le classement de performance est calculé en une seule requête au lieu d’une par joueur, et pendant son rafraîchissement l’ancien classement reste servi au lieu de faire attendre les requêtes",
+    "major": false
+   },
+   {
+    "category": "Infrastructure",
+    "category_fr": "Infrastructure",
+    "type": "fix",
+    "title": "Team rankings and friend lists also load with far fewer database queries, and the server logs no longer fill up with one line per request",
+    "title_fr": "Le classement des équipes et la liste d’amis se chargent aussi avec beaucoup moins de requêtes, et les journaux du serveur ne se remplissent plus d’une ligne par requête",
+    "major": false
+   }
+  ]
+ },
+ {
   "version": "2026.1113.4",
   "stream": "nanbeige",
   "date": "2026-11-13T18:25:00Z",

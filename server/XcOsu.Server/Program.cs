@@ -20,7 +20,9 @@ ThreadPool.SetMinThreads(Math.Max(minWorkers, 128), Math.Max(minIo, 64));
 builder.WebHost.UseUrls(builder.Configuration["Urls"] ?? "http://127.0.0.1:5080");
 builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 18 * 1024 * 1024);
 builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(o => { o.MultipartBodyLengthLimit = 17 * 1024 * 1024; o.ValueCountLimit = 64; o.ValueLengthLimit = 65536; o.MultipartHeadersCountLimit = 16; });
-builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
+// a line per request (routing, results, outgoing mirror calls) costs more under load than it tells us; our own logs stay at Information.
+builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
+builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
 builder.Logging.AddSimpleConsole(o => { o.SingleLine = true; o.TimestampFormat = "HH:mm:ss "; });
 
 builder.Services.AddHttpClient("mirrors", c =>

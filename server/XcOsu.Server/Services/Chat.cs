@@ -45,11 +45,11 @@ namespace XcOsu.Server.Services
             if (row.Type == "PM")
             {
                 int other = row.A == viewer ? row.B ?? 0 : row.A ?? 0;
-                var o = accounts.Get(other);
+                var o = accounts.Get(other, c);
                 if (o != null)
                 {
                     ch.Name = o.Username;
-                    ch.Users.Add(users.Compact(o));
+                    ch.Users.Add(users.Compact(o, c));
                 }
             }
 
@@ -148,12 +148,12 @@ namespace XcOsu.Server.Services
                 """, ("@c", channelId), ("@u", userId)) > 0;
         }
 
-        private Message toMessage((long id, int channel, int sender, string content, bool action, string ts, string uuid) m, Dictionary<int, APIUser> cache)
+        private Message toMessage((long id, int channel, int sender, string content, bool action, string ts, string uuid) m, Dictionary<int, APIUser> cache, Npgsql.NpgsqlConnection? held = null)
         {
             if (!cache.TryGetValue(m.sender, out var u))
             {
-                var row = accounts.Get(m.sender);
-                cache[m.sender] = u = row != null ? users.Compact(row) : new APIUser { Id = m.sender, Username = "?" };
+                var row = held != null ? accounts.Get(m.sender, held) : accounts.Get(m.sender);
+                cache[m.sender] = u = row != null ? users.Compact(row, held) : new APIUser { Id = m.sender, Username = "?" };
             }
 
             return new Message(m.id)
@@ -177,7 +177,7 @@ namespace XcOsu.Server.Services
                 ("@c", channelId), ("@s", since ?? 0), ("@l", limit));
             rows.Reverse();
             var cache = new Dictionary<int, APIUser>();
-            return rows.Select(m => toMessage(m, cache)).ToList();
+            return rows.Select(m => toMessage(m, cache, c)).ToList();
         }
 
         public Message Post(int channelId, int senderId, string content, bool isAction, string? uuid)
@@ -228,7 +228,7 @@ namespace XcOsu.Server.Services
             if (pm != default)
             {
                 int other = pm.Item1 == senderId ? pm.Item2 : pm.Item1;
-                return PmRestriction(senderId, other);
+                return PmRestriction(senderId, other, c);
             }
 
             if (c.Scalar<long>("SELECT moderated FROM chat_channels WHERE id = @c", ("@c", channelId)) == 1 && !sender.IsAdmin)
@@ -239,11 +239,16 @@ namespace XcOsu.Server.Services
         public string? PmRestriction(int sender, int target)
         {
             using var c = db.Open();
+            return PmRestriction(sender, target, c);
+        }
+
+        private string? PmRestriction(int sender, int target, Npgsql.NpgsqlConnection c)
+        {
             if (c.Scalar<long>("SELECT COUNT(*) FROM blocks WHERE user_id = @t AND target_id = @u", ("@t", target), ("@u", sender)) > 0)
                 return "You cannot message this user.";
             if (c.Scalar<long>("SELECT COUNT(*) FROM blocks WHERE user_id = @u AND target_id = @t", ("@t", target), ("@u", sender)) > 0)
                 return "You have blocked this user.";
-            var t = accounts.Get(target);
+            var t = accounts.Get(target, c);
             if (t == null) return "User not found.";
             if (Newtonsoft.Json.Linq.JObject.Parse(t.ProfileJson).Value<bool?>("pm_friends_only") == true
                 && c.Scalar<long>("SELECT COUNT(*) FROM friends WHERE user_id = @t AND target_id = @u", ("@t", target), ("@u", sender)) == 0)

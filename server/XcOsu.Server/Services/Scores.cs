@@ -239,7 +239,7 @@ namespace XcOsu.Server.Services
 
         public void AddEvent(Npgsql.NpgsqlConnection c, int userId, string type, JObject payload, string? at = null)
         {
-            var row = accounts.Get(userId);
+            var row = accounts.Get(userId, c);
             if (row != null) payload["user"] ??= new JObject { ["username"] = row.Username, ["url"] = $"/users/{userId}" };
             c.Exec("INSERT INTO user_events (user_id, type, json, created_at) VALUES (@u, @t, @j, @c)",
                 ("@u", userId), ("@t", type), ("@j", payload.ToString(Formatting.None)), ("@c", at ?? DateTimeOffset.UtcNow.ToString("O")));
@@ -332,8 +332,8 @@ namespace XcOsu.Server.Services
                 s.Processed = true;
                 if (!userCache.TryGetValue(s.UserID, out var u))
                 {
-                    var acc = accounts.Get(s.UserID);
-                    userCache[s.UserID] = u = acc != null ? users.Compact(acc) : new APIUser { Id = s.UserID, Username = "?" };
+                    var acc = accounts.Get(s.UserID, c);
+                    userCache[s.UserID] = u = acc != null ? users.Compact(acc, c) : new APIUser { Id = s.UserID, Username = "?" };
                 }
 
                 s.User = u;
