@@ -6,6 +6,13 @@
    {
     "category": "Launcher",
     "category_fr": "Lanceur",
+    "title": "The Launch button gets a pink-to-violet gradient with a shine and lift on hover; the progress bar fills with animated stripes and turns green when the engine is ready",
+    "title_fr": "Le bouton Lancer passe en dégradé rose-violet avec reflet et soulèvement au survol ; la barre de progression se remplit avec des rayures animées et passe au vert quand le moteur est prêt",
+    "type": "misc"
+   },
+   {
+    "category": "Launcher",
+    "category_fr": "Lanceur",
     "type": "misc",
     "title": "On wide screens the Play tab shows a launch panel beside the title: a large Launch button and a download/cache progress bar",
     "title_fr": "Sur grand écran, l'onglet Jouer affiche un panneau de lancement à côté du titre : un gros bouton Lancer et une barre de progression du téléchargement ou du cache"
