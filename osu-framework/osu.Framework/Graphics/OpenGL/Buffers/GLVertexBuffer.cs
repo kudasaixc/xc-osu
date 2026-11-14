@@ -67,7 +67,7 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
             int size = Size * STRIDE;
 
             vboId = GL.GenBuffer();
-            GL.BindBuffer(BufferTarget.ArrayBuffer, vboId);
+            Renderer.BindArrayBuffer(vboId);
             GL.BufferData(BufferTarget.ArrayBuffer, (IntPtr)size, ref getMemory().Span[0], usage);
 
             GLVertexUtils<T>.SetAttributes();
@@ -142,7 +142,7 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
 
             int countVertices = endIndex - startIndex;
 
-            GL.BindBuffer(BufferTarget.ArrayBuffer, vboId);
+            Renderer.BindArrayBuffer(vboId);
             GL.BufferSubData(BufferTarget.ArrayBuffer, startIndex * STRIDE, (IntPtr)(countVertices * STRIDE), ref getMemory().Span[startIndex]);
 
             FrameStatistics.Add(StatisticsCounterType.VerticesUpl, countVertices);
@@ -174,7 +174,9 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
             if (isInitialised)
             {
                 GL.DeleteBuffer(vboId);
+                Renderer.NotifyBufferDeleted(vboId);
                 GL.DeleteVertexArray(vaoId);
+                Renderer.NotifyVertexArrayDeleted(vaoId);
             }
 
             memoryOwner?.Dispose();

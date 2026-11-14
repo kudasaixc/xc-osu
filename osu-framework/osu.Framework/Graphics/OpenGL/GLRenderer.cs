@@ -65,6 +65,11 @@ namespace osu.Framework.Graphics.OpenGL
         private bool? lastBlendingEnabledState;
         private int lastBoundVertexArray;
 
+        // xc-osu: every GL call is a wasm -> JS transition on the web, and a frame of masked UI is several hundred draw calls.
+        // These track state that used to be re-sent for every single draw call.
+        private int lastBoundArrayBuffer;
+        private readonly int[] lastBoundUniformBufferBases = new int[16];
+
         protected override void Initialise(IGraphicsSurface graphicsSurface)
         {
             if (graphicsSurface.Type != GraphicsSurfaceType.OpenGL)
@@ -118,6 +123,8 @@ namespace osu.Framework.Graphics.OpenGL
         {
             lastBlendingEnabledState = null;
             lastBoundVertexArray = 0;
+            lastBoundArrayBuffer = 0;
+            Array.Clear(lastBoundUniformBufferBases);
             boundUniformBuffers.Clear();
 
             // Seems to be required on some drivers as the context is lost from the draw thread.
@@ -147,6 +154,42 @@ namespace osu.Framework.Graphics.OpenGL
 
             FrameStatistics.Increment(StatisticsCounterType.VBufBinds);
             return true;
+        }
+
+        /// <summary>
+        /// Binds a buffer to the array buffer target, skipping the call when it is already bound.
+        /// </summary>
+        public void BindArrayBuffer(int vboId)
+        {
+            if (lastBoundArrayBuffer == vboId)
+                return;
+
+            lastBoundArrayBuffer = vboId;
+            GL.BindBuffer(BufferTarget.ArrayBuffer, vboId);
+        }
+
+        /// <summary>
+        /// Forgets a deleted vertex array (deleting the bound one unbinds it).
+        /// </summary>
+        public void NotifyVertexArrayDeleted(int vaoId)
+        {
+            if (lastBoundVertexArray == vaoId)
+                lastBoundVertexArray = 0;
+        }
+
+        /// <summary>
+        /// Forgets a deleted buffer, so that a later buffer reusing its name is not mistaken for it.
+        /// </summary>
+        public void NotifyBufferDeleted(int id)
+        {
+            if (lastBoundArrayBuffer == id)
+                lastBoundArrayBuffer = 0;
+
+            for (int i = 0; i < lastBoundUniformBufferBases.Length; i++)
+            {
+                if (lastBoundUniformBufferBases[i] == id)
+                    lastBoundUniformBufferBases[i] = 0;
+            }
         }
 
         protected override void SetShaderImplementation(IShader shader) => GL.UseProgram((GLShader)shader);
@@ -285,8 +328,19 @@ namespace osu.Framework.Graphics.OpenGL
                 }
                 else
                 {
-                    GL.UniformBlockBinding(glShader, index, currentUniformBinding);
-                    GL.BindBufferBase(BufferRangeTarget.UniformBuffer, currentUniformBinding, buffer.Id);
+                    // The block -> binding point mapping is program state: it only has to be sent when it changes.
+                    // (Re-sending it also made ANGLE re-validate the program on every draw call.)
+                    if (glShader.SetUniformBlockBinding(index, currentUniformBinding))
+                        GL.UniformBlockBinding(glShader, index, currentUniformBinding);
+
+                    if ((uint)currentUniformBinding >= (uint)lastBoundUniformBufferBases.Length)
+                        GL.BindBufferBase(BufferRangeTarget.UniformBuffer, currentUniformBinding, buffer.Id);
+                    else if (lastBoundUniformBufferBases[currentUniformBinding] != buffer.Id)
+                    {
+                        lastBoundUniformBufferBases[currentUniformBinding] = buffer.Id;
+                        GL.BindBufferBase(BufferRangeTarget.UniformBuffer, currentUniformBinding, buffer.Id);
+                    }
+
                     currentUniformBinding++;
                 }
             }

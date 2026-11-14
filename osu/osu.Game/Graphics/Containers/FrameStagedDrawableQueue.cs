@@ -20,6 +20,14 @@ namespace osu.Game.Graphics.Containers
             foreach (var item in items) pending.Enqueue(item);
         }
 
+        /// <summary>
+        /// Appends trees after the ones still pending (for paged lists, where earlier pages must not be dropped).
+        /// </summary>
+        public void Enqueue(IEnumerable<T> items)
+        {
+            foreach (var item in items) pending.Enqueue(item);
+        }
+
         public void AttachNext(Action<T> attach)
         {
             if (pending.TryDequeue(out var item)) attach(item);

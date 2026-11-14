@@ -227,16 +227,50 @@ namespace osu.Game.Overlays
 
             sectionsLoadingTask = LoadComponentsAsync(loadableSections, sections =>
             {
+                // xc-osu: attaching every section in one frame ran all their LoadComplete/first updates at once
+                // (184 ms on average when opening settings in the browser). One section per frame instead.
+                if (OperatingSystem.IsBrowser())
+                {
+                    pendingSections.Replace(sections);
+                    return;
+                }
+
                 SectionsContainer.AddRange(sections);
-                SectionsContainer.Footer.FadeInFromZero(fade_in_duration, Easing.OutQuint);
-                SectionsContainer.SearchContainer.FadeInFromZero(fade_in_duration, Easing.OutQuint);
-
-                loading.Hide();
-
-                SearchTextBox.Current.BindValueChanged(term => SectionsContainer.SearchTerm = term.NewValue, true);
-
-                loadSidebarButtons();
+                finishLoadingSections();
             });
+        }
+
+        private readonly FrameStagedDrawableQueue<SettingsSection> pendingSections = new FrameStagedDrawableQueue<SettingsSection>();
+
+        protected override void Update()
+        {
+            base.Update();
+
+            if (pendingSections.Count == 0)
+                return;
+
+            pendingSections.AttachNext(SectionsContainer.Add);
+
+            if (pendingSections.Count == 0)
+                finishLoadingSections();
+        }
+
+        private void finishLoadingSections()
+        {
+            SectionsContainer.Footer.FadeInFromZero(fade_in_duration, Easing.OutQuint);
+            SectionsContainer.SearchContainer.FadeInFromZero(fade_in_duration, Easing.OutQuint);
+
+            loading.Hide();
+
+            SearchTextBox.Current.BindValueChanged(term => SectionsContainer.SearchTerm = term.NewValue, true);
+
+            loadSidebarButtons();
+        }
+
+        protected override void Dispose(bool isDisposing)
+        {
+            pendingSections.Dispose();
+            base.Dispose(isDisposing);
         }
 
         private void loadSidebarButtons()

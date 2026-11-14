@@ -120,6 +120,22 @@ namespace osu.Framework.Graphics.OpenGL.Shaders
             IsBound = false;
         }
 
+        private readonly Dictionary<int, int> uniformBlockBindings = new Dictionary<int, int>();
+
+        /// <summary>
+        /// Records the binding point of a uniform block.
+        /// </summary>
+        /// <returns>Whether the binding point changed, and so has to be sent to the program.</returns>
+        internal bool SetUniformBlockBinding(int index, int binding)
+        {
+            // Blocks start out bound to point 0, but that is tracked as unknown so the first use always sends it.
+            if (uniformBlockBindings.TryGetValue(index, out int current) && current == binding)
+                return false;
+
+            uniformBlockBindings[index] = binding;
+            return true;
+        }
+
         public int? GetUniformBlockIndex(string name) => uniformBlocks.TryGetValue(name, out int index) ? index : null;
 
         public virtual void BindUniformBlock(string blockName, IUniformBuffer buffer)

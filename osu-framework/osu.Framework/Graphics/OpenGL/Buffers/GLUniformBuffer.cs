@@ -53,7 +53,7 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
 
             GL.BindBuffer(BufferTarget.UniformBuffer, uboId);
             GL.BufferData(BufferTarget.UniformBuffer, size, ref data, BufferUsageHint.DynamicDraw);
-            GL.BindBuffer(BufferTarget.UniformBuffer, 0);
+            // xc-osu: the generic binding is left as is; everything that uses it binds first, and this runs once per masking change.
 
             FrameStatistics.Increment(StatisticsCounterType.UniformUpl);
         }
@@ -77,6 +77,7 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
                 return;
 
             GL.DeleteBuffer(uboId);
+            renderer.NotifyBufferDeleted(uboId);
             uboId = -1;
         }
 

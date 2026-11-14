@@ -1,5 +1,39 @@
 [
  {
+  "version": "2026.1114.2",
+  "date": "2026-11-14T18:45:00Z",
+  "entries": [
+   {
+    "category": "Performance",
+    "category_fr": "Performances",
+    "type": "fix",
+    "title": "Fewer WebGL calls per draw: uniform block bindings and buffer binds are only sent when they change, which lightens the mod select, beatmap listing, chat, profile and settings screens",
+    "title_fr": "Moins d'appels WebGL par rendu : les liaisons de blocs uniformes et de buffers ne sont renvoyées que lorsqu'elles changent, ce qui allège la sélection de mods, la liste des beatmaps, le chat, le profil et les paramètres"
+   },
+   {
+    "category": "Settings",
+    "category_fr": "Paramètres",
+    "type": "fix",
+    "title": "Opening settings for the first time no longer freezes the game: sections appear one per frame",
+    "title_fr": "La première ouverture des paramètres ne fige plus le jeu : les sections apparaissent une par image"
+   },
+   {
+    "category": "Profile",
+    "category_fr": "Profil",
+    "type": "fix",
+    "title": "Opening a profile stutters less: scores, beatmaps and recent activity are added one item per frame",
+    "title_fr": "L'ouverture d'un profil saccade moins : scores, beatmaps et activité récente sont ajoutés un élément par image"
+   },
+   {
+    "category": "News",
+    "category_fr": "News",
+    "type": "fix",
+    "title": "News cards are added one per frame instead of a whole page at once",
+    "title_fr": "Les cartes de news sont ajoutées une par image au lieu d'une page entière d'un coup"
+   }
+  ]
+ },
+ {
   "version": "2026.1114.1",
   "date": "2026-11-14T13:30:00Z",
   "entries": [

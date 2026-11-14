@@ -18,6 +18,7 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
 
         public int Id { get; }
 
+        private readonly GLRenderer renderer;
         private readonly TData[] data;
         private readonly int elementSize;
 
@@ -25,6 +26,7 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
         {
             Trace.Assert(ThreadSafety.IsDrawThread);
 
+            this.renderer = renderer;
             Id = GL.GenBuffer();
             Size = renderer.UseStructuredBuffers ? ssboSize : uboSize;
             data = new TData[Size];
@@ -84,6 +86,7 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
         public void Dispose()
         {
             GL.DeleteBuffer(Id);
+            renderer.NotifyBufferDeleted(Id);
         }
     }
 }

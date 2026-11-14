@@ -321,3 +321,25 @@ keys `_framework/<fingerprinted name>`) served by `https://cdn.xcsoftworks.com/`
   repository. A token limited to *Account → Workers R2 Storage → Edit* is enough for deployments.
 - Checked in headless Chromium: 181 engine files from the CDN and a normal boot; with the CDN host blocked, 181
   fallbacks and the same boot.
+
+## Overlay and menu stutters (2026-11-14, telemetry 2026-11-11 → 14)
+
+AOT telemetry showed overlays being draw-bound (mod select ≈15 ms of draw per frame, beatmap listing 10–13, chat 12.5,
+profile 9–11, settings 10, against 2.4 on the main menu) and update spikes when content arrives (settings first open
+≈184 ms on average, profile ≈212 ms with a maximum of 889, beatmap listing ≈267 ms, song select entry ≈96 ms).
+
+- **GL state cache** (`osu-framework/.../OpenGL/GLRenderer.cs`, `GLShader.cs`, `GLVertexBuffer.cs`,
+  `GLUniformBuffer.cs`, `GLShaderStorageBufferObject.cs`): every masking change flushes the batch, so a masked
+  scrolling list is several hundred draw calls a frame, and each draw call re-sent `uniformBlockBinding`,
+  `bindBufferBase`, an `ARRAY_BUFFER` bind and a UBO unbind (each a wasm → JS call, with ANGLE re-validating the program
+  on every `uniformBlockBinding`). The block → binding point is now cached per program and the indexed UBO bindings and
+  array buffer are cached in the renderer, reset in `BeginFrame` and cleared when a buffer or VAO is deleted. Any new
+  code that binds `ARRAY_BUFFER` or an indexed uniform buffer directly must go through the renderer, or the cache goes
+  stale.
+- **Staged attaches** (`FrameStagedDrawableQueue`, browser only): settings sections, profile subsection items and news
+  cards are attached one per frame, as beatmap listing cards and mod panels already were. `Enqueue` appends (paged
+  lists), `Replace` drops what is still pending.
+- Not done yet: comments (the "more" counter reads the attached children), chat channel switching, song select entry,
+  allocation rates in the beatmap listing, settings, PlayerLoader and gameplay (GC pauses of 28–68 ms).
+- Checked: framework and osu.Game Release builds, the stutter-policy and performance-history tests, and an interpreter
+  build in headless Chromium. Gains are to be read from the next AOT build's telemetry; none are claimed in advance.

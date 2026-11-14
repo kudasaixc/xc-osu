@@ -10,6 +10,7 @@ using System.Threading;
 using osu.Framework.Allocation;
 using osu.Framework.Graphics;
 using osu.Framework.Graphics.Containers;
+using osu.Game.Graphics.Containers;
 using osu.Game.Graphics.UserInterface;
 using osu.Game.Online.API.Requests.Responses;
 using osuTK;
@@ -78,15 +79,29 @@ namespace osu.Game.Overlays.News.Displays
         public void AddPosts(IEnumerable<APINewsPost> posts, bool morePostsAvailable) => Schedule(() =>
             LoadComponentsAsync(posts.Select(p => new NewsCard(p)).ToList(), loaded =>
             {
-                content.AddRange(loaded);
+                // xc-osu: one news card per frame in the browser rather than the whole page at once.
+                if (OperatingSystem.IsBrowser())
+                    pendingCards.Enqueue(loaded);
+                else
+                    content.AddRange(loaded);
+
                 showMore.IsLoading = false;
                 showMore.Alpha = morePostsAvailable ? 1 : 0;
             }, (cancellationToken = new CancellationTokenSource()).Token)
         );
 
+        private readonly FrameStagedDrawableQueue<NewsCard> pendingCards = new FrameStagedDrawableQueue<NewsCard>();
+
+        protected override void Update()
+        {
+            base.Update();
+            pendingCards.AttachNext(content.Add);
+        }
+
         protected override void Dispose(bool isDisposing)
         {
             cancellationToken?.Cancel();
+            pendingCards.Dispose();
             base.Dispose(isDisposing);
         }
     }

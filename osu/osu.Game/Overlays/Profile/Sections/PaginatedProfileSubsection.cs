@@ -1,6 +1,7 @@
 ﻿// Copyright (c) ppy Pty Ltd <contact@ppy.sh>. Licensed under the MIT Licence.
 // See the LICENCE file in the repository root for full licence text.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -98,6 +99,7 @@ namespace osu.Game.Overlays.Profile.Sections
             retrievalRequest?.Cancel();
 
             CurrentPage = null;
+            pendingItems.Dispose();
             ItemsContainer.Clear();
 
             if (e.NewValue?.User != null)
@@ -149,9 +151,22 @@ namespace osu.Game.Overlays.Profile.Sections
                 moreButton.FadeTo(hasMore ? 1 : 0);
                 moreButton.IsLoading = false;
 
-                ItemsContainer.AddRange(drawables);
+                // xc-osu: a profile opens with every subsection landing its first page in the same frame
+                // (212 ms on average, up to 889 ms in the browser). Items are attached one per frame instead.
+                if (OperatingSystem.IsBrowser())
+                    pendingItems.Enqueue(drawables);
+                else
+                    ItemsContainer.AddRange(drawables);
             }, cancellationTokenSource.Token);
         });
+
+        private readonly FrameStagedDrawableQueue<Drawable> pendingItems = new FrameStagedDrawableQueue<Drawable>();
+
+        protected override void Update()
+        {
+            base.Update();
+            pendingItems.AttachNext(ItemsContainer.Add);
+        }
 
         protected virtual int GetCount(APIUser user) => 0;
 
@@ -167,6 +182,7 @@ namespace osu.Game.Overlays.Profile.Sections
         {
             retrievalRequest?.Cancel();
             loadCancellation?.Cancel();
+            pendingItems.Dispose();
             base.Dispose(isDisposing);
         }
     }
