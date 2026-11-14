@@ -1,5 +1,61 @@
 [
  {
+  "version": "2026.1114.1",
+  "date": "2026-11-14T13:30:00Z",
+  "entries": [
+   {
+    "category": "Launcher",
+    "category_fr": "Lanceur",
+    "type": "misc",
+    "title": "On wide screens the Play tab shows a launch panel beside the title: a large Launch button and a download/cache progress bar",
+    "title_fr": "Sur grand écran, l'onglet Jouer affiche un panneau de lancement à côté du titre : un gros bouton Lancer et une barre de progression du téléchargement ou du cache"
+   },
+   {
+    "category": "Launcher",
+    "category_fr": "Lanceur",
+    "type": "misc",
+    "title": "Launcher polish (on /dev/): the Play screen puts the game and the Launch button first, larger and higher-contrast text, wider Status and Options",
+    "title_fr": "Finitions du lanceur (sur /dev/) : l'écran Jouer met le jeu et le bouton Lancer en avant, texte plus grand et plus contrasté, Statut et Options plus larges"
+   },
+   {
+    "category": "Launcher",
+    "category_fr": "Lanceur",
+    "type": "misc",
+    "title": "News reads like a feed: big titles, a short summary, and the full list of changes folded away",
+    "title_fr": "Les news se lisent comme un fil : grands titres, résumé court et liste des changements repliée"
+   },
+   {
+    "category": "Launcher",
+    "category_fr": "Lanceur",
+    "type": "misc",
+    "title": "Status explains its indicators: a legend for done / in progress / not started, and colour-coded issue severity",
+    "title_fr": "Le statut explique ses indicateurs : légende fait / en cours / pas commencé et gravité des problèmes en couleur"
+   }
+  ]
+ },
+ {
+  "version": "2026.1114.0",
+  "date": "2026-11-14T11:15:00Z",
+  "entries": [
+   {
+    "category": "Launcher",
+    "category_fr": "Lanceur",
+    "type": "add",
+    "title": "Redesigned launcher (testing on /dev/): a bigger Play screen with the Launch button always at the bottom, easier-to-read news and status",
+    "title_fr": "Lanceur repensé (en test sur /dev/) : un écran Jouer plus grand avec le bouton Lancer toujours en bas, des news et un statut plus lisibles",
+    "major": true
+   },
+   {
+    "category": "Launcher",
+    "category_fr": "Lanceur",
+    "type": "misc",
+    "title": "Options show the essential settings first; every other setting is still there under Advanced settings",
+    "title_fr": "Les options montrent d'abord l'essentiel ; tous les autres réglages restent là, sous Réglages avancés",
+    "major": false
+   }
+  ]
+ },
+ {
   "version": "2026.1113.6",
   "stream": "nanbeige",
   "date": "2026-11-13T22:30:00Z",

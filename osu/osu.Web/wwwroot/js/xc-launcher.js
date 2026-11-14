@@ -1,5 +1,5 @@
 // xc-osu! launcher: xc softworks (kudasaixc)
-// Game-launcher layout: icon rail (Play / News / Status / Options), one tab at a time, bottom bar with download + Play.
+// Game-launcher layout: top bar (Play / News / Status / Options), one tab at a time, bottom bar whose Launch button fills with the download.
 // The background is a canvas of approach circles closing onto hit circles to a slow beat.
 // Each option maps to a real mechanism (runtime config, environment variable read by the engine, WebGL context
 // attribute, AudioContext option, or canvas resolution); see buildLaunch().
@@ -49,6 +49,8 @@ export const OPTIONS = [
   toggle('autoLaunch', 'launcher', false),
   select('lang', 'launcher', 'en', ['en', 'fr'], { label: (v) => v === 'fr' ? 'Français' : 'English' }),
 ];
+// the settings most people change sit at the top of Options; everything else is folded under Advanced
+const ESSENTIAL = new Set(['frameSync', 'renderScale', 'fullscreen', 'audioLatency', 'lang', 'autoLaunch']);
 const SECTIONS = ['perf', 'cpu', 'mem', 'gfx', 'audio', 'diag', 'net', 'launcher'];
 const NOT_PRESET = new Set(['telemetry', 'server', 'autoLaunch', 'lang', 'perfPos', 'startGate', 'fullscreen']);
 
@@ -188,41 +190,35 @@ export class Launcher {
 
   render() {
     const t = this.t;
-    const icon = {
-      play: '<path d="M8 5.5v13l11-6.5z"/>',
-      news: '<path d="M5 5h14v14H5z M8 9h8 M8 12h8 M8 15h5" fill="none"/>',
-      status: '<circle cx="12" cy="12" r="7.5" fill="none"/><path d="M12 12V4.5A7.5 7.5 0 0 1 19.5 12z"/>',
-      options: '<path d="M4 7h10 M18 7h2 M4 17h2 M10 17h10" fill="none"/><circle cx="16" cy="7" r="2" fill="none"/><circle cx="8" cy="17" r="2" fill="none"/>',
-    };
     const nav = ['play', 'news', 'status', 'options'].map((k) => `
-      <button type="button" class="rail-btn" role="tab" id="tab-${k}" aria-controls="pane-${k}" data-tab="${k}">
-        <svg viewBox="0 0 24 24" aria-hidden="true" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="currentColor">${icon[k]}</svg>
-        <span>${t('nav.' + k)}</span></button>`).join('');
+      <button type="button" class="ln-tab" role="tab" id="tab-${k}" aria-controls="pane-${k}" data-tab="${k}">${t('nav.' + k)}</button>`).join('');
     this.root.innerHTML = `
       <div class="ln-art" id="ln-art" aria-hidden="true"></div>
       <canvas class="ln-bg" id="ln-bg" aria-hidden="true"></canvas>
-      <nav class="rail" role="tablist" aria-orientation="vertical">
-        <div class="rail-logo" title="xc-osu!">xc</div>
-        ${nav}
-        <a class="rail-btn rail-site" id="ln-site" href="https://osu.xcsoftworks.com/web/" target="_blank" rel="noopener" title="osu.xcsoftworks.com/web">
+      <header class="ln-top">
+        <span class="ln-brand"><span class="ln-logo" title="xc-osu!">xc</span><b>xc-osu!</b></span>
+        <nav class="ln-tabs" role="tablist">${nav}</nav>
+        <a class="ln-site" id="ln-site" href="https://osu.xcsoftworks.com/web/" target="_blank" rel="noopener" title="osu.xcsoftworks.com/web">
           <svg viewBox="0 0 24 24" aria-hidden="true" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"><circle cx="12" cy="12" r="8"/><path d="M4 12h16 M12 4c2.6 2.4 2.6 13.6 0 16 M12 4c-2.6 2.4-2.6 13.6 0 16"/></svg>
           <span>${t('nav.site')}</span></a>
-      </nav>
+      </header>
       <main class="stage">
         <section class="pane" id="pane-play" role="tabpanel" aria-labelledby="tab-play">
+          <div class="hero">
           <header class="pane-head">
-            <h1 class="title"><span id="ln-ver">osu!lazer</span><small id="ln-ahead"></small></h1>
+            <p class="ver"><span id="ln-ver">osu!lazer</span><small id="ln-ahead"></small></p>
+            <h1 class="title">${t('play.hero')}</h1>
             <p class="lede">${t('play.lede')}</p>
             <p class="hello" id="ln-hello">${this.hello()}</p>
-            <div id="ln-gpuwarn" role="alert" hidden style="margin:14px 0 0;padding:12px 16px;border-radius:10px;border:1px solid var(--warn);background:rgba(232,176,74,.12);font-size:14px;line-height:1.5;max-width:760px"></div>
+            <div id="ln-gpuwarn" role="alert" hidden style="margin:16px 0 0;padding:12px 16px;border-left:3px solid var(--l-warn);background:hsl(45 100% 57% / .1);font-size:15px;line-height:1.55;max-width:640px"></div>
           </header>
-          <div class="grid-2">
-            <div class="panel"><h2>${t('spec.title')}</h2><dl class="spec" id="ln-spec"></dl></div>
-            <div class="stack">
-              <div class="panel"><h2>${t('play.latest')}</h2><div id="ln-latest"><p class="muted">${t('news.loading')}</p></div></div>
-              <div class="panel"><h2>${t('issues.title')}</h2><ul class="issue-mini" id="ln-issues-mini"></ul>
-                <button type="button" class="link" data-goto="status">${t('play.allissues')}</button></div>
-            </div>
+          <div class="launch-slot" id="ln-slot"></div>
+          </div>
+          <div class="ln-strip">
+            <section><h2>${t('play.latest')}</h2><div id="ln-latest"><p class="muted">${t('news.loading')}</p></div></section>
+            <section><h2>${t('issues.title')}</h2><ul class="issue-mini" id="ln-issues-mini"></ul>
+              <button type="button" class="link" data-goto="status">${t('play.allissues')}</button></section>
+            <details class="ln-specs"><summary>${t('spec.title')}</summary><dl class="spec" id="ln-spec"></dl></details>
           </div>
         </section>
 
@@ -233,48 +229,56 @@ export class Launcher {
 
         <section class="pane" id="pane-status" role="tabpanel" aria-labelledby="tab-status">
           <header class="pane-head"><h1 class="title">${t('nav.status')}</h1></header>
-          <div class="panel" style="margin-bottom:20px"><h2>${t('history.title')}</h2><p>${t('history.help')}</p><div id="ln-performance" style="overflow:auto">${t('news.loading')}</div></div>
-          <div class="grid-2">
-            <div class="panel"><h2>${t('port.title')}</h2><div id="ln-gauge" class="meter"></div><table class="port" id="ln-port"></table></div>
-            <div class="stack">
-              <div class="panel"><h2>${t('issues.title')} <span id="ln-asof" class="muted"></span></h2><ul id="ln-issues" class="issues"></ul></div>
-              <div class="panel"><h2>${t('build.title')}</h2><div id="ln-build" class="build"><p class="muted">${t('news.loading')}</p></div></div>
-              <div class="panel"><h2>${t('sys.title')}</h2><dl id="ln-sys" class="sys"></dl></div>
-            </div>
+          <div class="st-top">
+            <section><h2>${t('port.title')}</h2><div id="ln-gauge" class="meter"></div></section>
+            <section><h2>${t('issues.title')} <span id="ln-asof" class="muted"></span></h2><ul id="ln-issues" class="issues"></ul></section>
           </div>
+          <div class="sect-2 sect">
+            <section><h2>${t('build.title')}</h2><div id="ln-build" class="build"><p class="muted">${t('news.loading')}</p></div></section>
+            <section><h2>${t('sys.title')}</h2><dl id="ln-sys" class="sys"></dl></section>
+          </div>
+          <section class="sect"><h2>${t('port.detail')}</h2><p class="legend"><span class="st-done"><span class="dot"></span>${t('port.done')}</span><span class="st-partial"><span class="dot"></span>${t('port.partial')}</span><span class="st-todo"><span class="dot"></span>${t('port.todo')}</span></p><table class="port" id="ln-port"></table></section>
+          <section class="sect"><h2>${t('history.title')}</h2><p class="muted">${t('history.help')}</p><div id="ln-performance">${t('news.loading')}</div></section>
         </section>
 
         <section class="pane" id="pane-options" role="tabpanel" aria-labelledby="tab-options">
-          <header class="pane-head row">
-            <h1 class="title">${t('nav.options')}</h1>
-            <span class="head-actions"><button type="button" class="btn" id="ln-export" title="${esc(t('backup.export.hint'))}">${t('backup.export')}</button><button type="button" class="btn" id="ln-import" title="${esc(t('backup.import.hint'))}">${t('backup.import')}</button><input type="file" id="ln-import-file" accept=".xcbak" hidden><button type="button" class="btn danger" id="ln-wipe" title="${esc(t('wipe.hint'))}">${t('wipe.btn')}</button><button type="button" class="btn" id="ln-reset">${t('opt.reset')}</button></span>
-          </header>
-          <label>Mot de passe de sauvegarde (facultatif pour exporter, requis pour importer une sauvegarde chiffrée)<input type="password" id="ln-backup-password" autocomplete="off" maxlength="256"></label>
-          <p class="backup-status" id="ln-backup-status" role="status" hidden></p>
-          <div class="presets"><span class="muted">${t('presets')}</span><div id="ln-presets" class="chips" role="group"></div></div>
+          <header class="pane-head"><h1 class="title">${t('nav.options')}</h1></header>
+          <section class="presets sect"><h2>${t('presets')}</h2><div id="ln-presets" class="chips" role="group"></div></section>
           <div id="ln-opts" class="opt-grid"></div>
-          <div class="panel cmd"><h2>${t('cmd')}</h2><code id="ln-cmd"></code></div>
+          <details class="adv" id="ln-data"><summary>${t('opt.data')}</summary>
+            <div class="data-row">
+              <label>${t('backup.password')}<input type="password" id="ln-backup-password" autocomplete="off" maxlength="256"></label>
+              <button type="button" class="btn" id="ln-export" title="${esc(t('backup.export.hint'))}">${t('backup.export')}</button>
+              <button type="button" class="btn" id="ln-import" title="${esc(t('backup.import.hint'))}">${t('backup.import')}</button>
+              <input type="file" id="ln-import-file" accept=".xcbak" hidden>
+            </div>
+            <p class="backup-status" id="ln-backup-status" role="status" hidden></p>
+            <div class="data-row"><button type="button" class="btn" id="ln-reset">${t('opt.reset')}</button><button type="button" class="btn danger" id="ln-wipe" title="${esc(t('wipe.hint'))}">${t('wipe.btn')}</button></div>
+            <div class="cmd"><h2>${t('cmd')}</h2><code id="ln-cmd"></code></div>
+          </details>
         </section>
       </main>
       <footer class="dock">
-        <div class="dock-bar"><i id="ln-dl-bar"></i></div>
         <div class="dock-dl" id="ln-dl">
           <strong id="ln-dl-state">${this.blocked ? t('launch.blocked') : t('dl.idle')}</strong>
+          <span class="dl-pct" id="ln-dl-pct"></span>
+          <span class="dl-track" aria-hidden="true"><i id="ln-dl-fill"></i></span>
           <span id="ln-dl-files"></span><span id="ln-dl-size"></span><span id="ln-dl-speed"></span>
           ${this.blocked ? `<span class="bad">${esc(t('launch.noisolation'))}</span>` : ''}
         </div>
         <div class="dock-right">
           <div class="dock-meta"><span id="ln-dock-preset"></span><span class="muted" id="ln-play-sub">${t('launch.sub', esc(this.build))}</span></div>
-          <button type="button" id="ln-play" class="play"${this.blocked ? ' disabled' : ''}><span id="ln-play-label">${this.blocked ? t('launch.blocked') : t('launch.play')}</span></button>
+          <button type="button" id="ln-play" class="play"${this.blocked ? ' disabled' : ''}><i id="ln-dl-bar" aria-hidden="true"></i><span id="ln-play-label">${this.blocked ? t('launch.blocked') : t('launch.play')}</span></button>
         </div>
       </footer>`;
     this.renderOptions();
     this.root.querySelectorAll('[data-tab]').forEach((b) => b.onclick = () => this.show(b.dataset.tab));
     this.root.querySelectorAll('[data-goto]').forEach((b) => b.onclick = () => this.show(b.dataset.goto));
-    this.root.querySelector('.rail').onkeydown = (e) => {
-      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    this.root.querySelector('.ln-tabs').onkeydown = (e) => {
+      const fwd = e.key === 'ArrowDown' || e.key === 'ArrowRight', back = e.key === 'ArrowUp' || e.key === 'ArrowLeft';
+      if (!fwd && !back) return;
       const tabs = ['play', 'news', 'status', 'options'], i = tabs.indexOf(this.tab);
-      this.show(tabs[(i + (e.key === 'ArrowDown' ? 1 : 3)) % 4], true); e.preventDefault();
+      this.show(tabs[(i + (fwd ? 1 : 3)) % 4], true); e.preventDefault();
     };
     this.root.querySelector('#ln-play').onclick = () => this.launch();
     this.root.querySelector('#ln-reset').onclick = () => { const keep = { lang: this.o.lang }; this.o = { ...defaults(), ...keep }; this.changed(true); };
@@ -377,13 +381,28 @@ export class Launcher {
       if (on && focus) b.focus();
     });
     this.root.querySelectorAll('.pane').forEach((p) => p.hidden = p.id !== 'pane-' + tab);
+    this.root.dataset.tab = tab;
     this.root.querySelector('.stage').scrollTop = 0;
+    this.placeDock();
+  }
+
+  // On wide screens the Play tab hosts the download + Launch panel beside the title, like a game launcher;
+  // every other tab (and narrow screens) keeps it as the bottom bar.
+  placeDock() {
+    const dock = this.root.querySelector('.dock'), slot = this.root.querySelector('#ln-slot');
+    if (!dock || !slot) return;
+    this.wideMq ||= matchMedia('(min-width: 1024px)');
+    if (!this.wideMq.onchange) this.wideMq.onchange = () => this.placeDock();
+    const hero = this.tab === 'play' && this.wideMq.matches;
+    if (hero && dock.parentNode !== slot) slot.append(dock);
+    else if (!hero && dock.parentNode !== this.root) this.root.append(dock);
+    dock.classList.toggle('in-hero', hero);
   }
 
   // A tiny playfield in the empty band beside the Play title: approach circles close onto numbered hit circles
   // on a slow beat, and you can click them for a judgement. The xc logo pulses on the same beat.
   startBackground() {
-    const cv = this.root.querySelector('#ln-bg'), ctx = cv.getContext('2d'), logo = this.root.querySelector('.rail-logo');
+    const cv = this.root.querySelector('#ln-bg'), ctx = cv.getContext('2d'), logo = this.root.querySelector('.ln-logo');
     const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
     const BEAT = 60000 / 92, APPROACH = 1100, FADE = 260, R = 30;
     const JUDGE = [[80, '300', '#66ccff'], [140, '100', '#88dd22'], [200, '50', '#ffcc22']];
@@ -394,6 +413,11 @@ export class Launcher {
     const band = () => {
       const head = this.root.querySelector('#pane-play .pane-head'), c = cv.getBoundingClientRect();
       if (!head || this.tab !== 'play') return null;
+      const dock = this.root.querySelector('#ln-slot > .dock');
+      if (dock) { // circles play in the space above the launch panel
+        const d = dock.getBoundingClientRect(), y0 = head.getBoundingClientRect().top - c.top + 10, y1 = d.top - c.top - 24;
+        return y1 - y0 > 2 * R + 40 ? { x0: d.left - c.left + R + 10, x1: d.right - c.left - R - 10, y0: y0 + R, y1: y1 - R } : null;
+      }
       const h = head.getBoundingClientRect();
       const x0 = Math.max(h.left - c.left + Math.min(h.width, 640) + 60, c.width * .55), x1 = c.width - 60;
       const y0 = h.top - c.top + 10, y1 = h.bottom - c.top - 10;
@@ -420,7 +444,7 @@ export class Launcher {
       } catch { }
     };
     this.root.addEventListener('pointerdown', (e) => {
-      if (this.tab !== 'play' || e.target.closest('button, a, input, select, label, .panel')) return;
+      if (this.tab !== 'play' || e.target.closest('button, a, input, select, label, summary, .panel, .ln-strip, .dock')) return;
       const c = cv.getBoundingClientRect(), x = e.clientX - c.left, y = e.clientY - c.top, now = performance.now();
       const n = notes.find((n) => !n.hit && Math.hypot(n.x - x, n.y - y) <= R * 1.15);
       if (!n) return;
@@ -474,10 +498,12 @@ export class Launcher {
   renderOptions() {
     const t = this.t, o = this.o;
     const host = this.root.querySelector('#ln-opts');
-    host.innerHTML = SECTIONS.map((sec) => `
-      <section class="panel opt-sec" data-sec="${sec}"><h2>${t('sec.' + sec)}</h2>
-        ${OPTIONS.filter((x) => x.sec === sec).map((x) => this.optHtml(x)).join('')}
-      </section>`).join('');
+    const sec = (k, keys) => `<section class="opt-sec" data-sec="${k}"><h2>${t('sec.' + k)}</h2>${keys.map((x) => this.optHtml(x)).join('')}</section>`;
+    host.innerHTML = `<div class="ess">${OPTIONS.filter((x) => ESSENTIAL.has(x.key)).map((x) => this.optHtml(x)).join('')}</div>
+      <details class="adv"${this.advOpen ? ' open' : ''}><summary>${t('opt.advanced')}</summary><div class="adv-body">
+        ${SECTIONS.map((k) => [k, OPTIONS.filter((x) => x.sec === k && !ESSENTIAL.has(x.key))]).filter(([k, keys]) => keys.length || k === 'diag').map(([k, keys]) => sec(k, keys)).join('')}
+      </div></details>`;
+    host.querySelector('.adv').ontoggle = (e) => { this.advOpen = e.target.open; };
     for (const x of OPTIONS) {
       const el = host.querySelector(`[data-key="${x.key}"]`);
       const ev = x.type === 'range' || x.type === 'text' ? 'input' : 'change';
@@ -577,7 +603,9 @@ export class Launcher {
     q('#ln-dl-files').textContent = t('dl.files', s.done ? s.total : s.loaded, s.total || '…');
     q('#ln-dl-size').textContent = s.bytes ? fmtBytes(s.bytes) : '';
     q('#ln-dl-speed').textContent = s.done ? (s.network === 0 || !s.bytes ? t('dl.cached') : '') : s.speed ? t('dl.speed', fmtBytes(s.speed)) : '';
-    q('#ln-dl-bar').style.width = (s.done ? 100 : frac * 100).toFixed(1) + '%';
+    const pct = s.done ? 100 : frac * 100;
+    q('#ln-dl-bar').style.width = q('#ln-dl-fill').style.width = pct.toFixed(1) + '%';
+    q('#ln-dl-pct').textContent = Math.floor(pct) + ' %';
     this.root.classList.toggle('dl-done', !!s.done);
     if (!this.blocked) q('#ln-play-label').textContent = s.done ? t('launch.play') : t('launch.wait', Math.floor(frac * 100));
   }
@@ -599,11 +627,11 @@ export class Launcher {
         <div class="post-meta"><time datetime="${esc(p.date)}">${esc(new Date(p.date + 'T12:00:00').toLocaleDateString(lang, { day: 'numeric', month: 'long', year: 'numeric' }))}</time>${p.tag ? `<span class="tag">${esc(p.tag)}</span>` : ''}</div>
         <h3>${esc(tr(p.title, lang))}</h3>
         ${tr(p.body, lang) ? `<p>${esc(tr(p.body, lang))}</p>` : ''}
-        ${(p.items || []).length ? `<ul>${p.items.map((i) => `<li>${esc(tr(i, lang))}</li>`).join('')}</ul>` : ''}
+        ${(p.items || []).length ? `<details class="more"><summary>${t('news.more', p.items.length)}</summary><ul>${p.items.map((i) => `<li>${esc(tr(i, lang))}</li>`).join('')}</ul></details>` : ''}
       </article>`;
     const posts = data.posts || [];
     this.root.querySelector('#ln-posts').innerHTML = posts.map((p) => `<div class="panel">${post(p)}</div>`).join('');
-    this.root.querySelector('#ln-latest').innerHTML = posts.length ? posts.slice(0, 3).map(post).join('<hr class="news-divider">') + `<button type="button" class="link" data-goto="news">${t('play.allnews', posts.length)}</button>` : '';
+    this.root.querySelector('#ln-latest').innerHTML = posts.length ? posts.slice(0, 2).map(post).join('<hr class="news-divider">') + `<button type="button" class="link" data-goto="news">${t('play.allnews', posts.length)}</button>` : '';
     this.root.querySelector('#ln-latest [data-goto]')?.addEventListener('click', () => this.show('news'));
 
     // completion: done = 1, in progress = 0.5, weighted
