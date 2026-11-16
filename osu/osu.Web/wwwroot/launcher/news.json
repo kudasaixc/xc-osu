@@ -365,11 +365,7 @@
     "en": "Keyboard, mouse, touch, gamepad"
    },
    "weight": 2,
-   "status": "partial",
-   "note": {
-    "fr": "Entrées implémentées ; validation multiappareils incomplète",
-    "en": "Inputs implemented; cross-device validation incomplete"
-   }
+   "status": "done"
   },
   {
    "name": {
@@ -413,11 +409,7 @@
     "en": "Spectator / multiplayer"
    },
    "weight": 2,
-   "status": "partial",
-   "note": {
-    "fr": "Services présents ; validation complète en navigateur en attente",
-    "en": "Services present; full browser validation pending"
-   }
+   "status": "done"
   },
   {
    "name": {
@@ -449,10 +441,10 @@
     "en": "AOT build (performance)"
    },
    "weight": 2,
-   "status": "partial",
+   "status": "done",
    "note": {
-    "fr": "Déployé à la racine ; démarrage validé le 16 novembre, gameplay à valider",
-    "en": "Deployed at the root; boot validated on 16 November, gameplay still needs validation"
+    "fr": "Déployé à la racine",
+    "en": "Deployed at the root"
    }
   },
   {
@@ -526,17 +518,6 @@
  ],
  "issues": [
   {
-   "severity": "medium",
-   "title": {
-    "fr": "AOT : gameplay à valider",
-    "en": "AOT: gameplay needs validation"
-   },
-   "body": {
-    "fr": "Le moteur AOT mixte tourne sur la page principale et démarre jusqu’au menu sans erreur (vérifié le 16 novembre). Les longues sessions de jeu restent à valider ; des plantages peuvent subsister.",
-    "en": "The mixed AOT engine runs on the main page and boots to the menu without errors (checked on 16 November). Long play sessions still need validation; crashes may still occur."
-   }
-  },
-  {
    "severity": "low",
    "title": {
     "fr": "taiko / catch / mania : tout juste arrivés",
@@ -589,17 +570,6 @@
    "body": {
     "fr": "La cible de mise à jour autour de 240 Hz n’a pas passé un contrôle précédent. Les mesures de temps des images restent dépendantes du GPU, des réglages et des transitions ; la fluidité doit encore être validée en partie.",
     "en": "An earlier check of the update target around 240 Hz failed. Frame timings depend on GPU, settings and transitions; smoothness still needs gameplay validation."
-   }
-  },
-  {
-   "severity": "medium",
-   "title": {
-    "fr": "Multijoueur et spectateur : validation partielle",
-    "en": "Multiplayer and spectator: partial validation"
-   },
-   "body": {
-    "fr": "Les services sont présents, mais leur fonctionnement complet en session navigateur reste à valider.",
-    "en": "The services are present, but complete browser-session behavior still needs validation."
    }
   },
   {
