@@ -308,6 +308,19 @@ export function startTelemetry(options, build, log) {
   let lastCheckpoint = '', stallSent = false;
   const pastAttach = new Set(['attached', 'gate-shown', 'start-click', 'gate-open']);
   globalThis.xcTelemetryCheckpoint = name => { lastCheckpoint = name; event('boot-checkpoint', { name }); persist(); void send(); };
+  // a tab killed by the OS (iOS: "this webpage was reloaded because a problem occurred") never reaches pagehide:
+  // until the window attaches, keep the console tail and the wasm heap size in the live marker for the next launch
+  let tailTimer = 0;
+  log.on(() => {
+    if (pastAttach.has(lastCheckpoint) || tailTimer) return;
+    tailTimer = setTimeout(() => {
+      tailTimer = 0;
+      if (pastAttach.has(lastCheckpoint)) { delete live.tail; delete live.heap; delete live.cp; saveLive(); return; }
+      try { live.tail = scrubLines((log.lines || []).slice(-25).map(l => (l.level === 'log' ? '' : l.level + ': ') + l.text).join('\n'), 25, 2500); } catch { }
+      live.heap = globalThis.xcWasmBytes?.(); live.cp = lastCheckpoint;
+      saveLive();
+    }, 250);
+  });
   function leaving(e) {
     if (lastCheckpoint && !pastAttach.has(lastCheckpoint) && !stallSent) {
       stallSent = true;
@@ -334,7 +347,7 @@ export function startTelemetry(options, build, log) {
   for (const old of previous.slice(-4)) {
     event('unclean-exit', { name: old.scr || 'unknown', ov: old.ov || '', prev: old.sid, build: old.build,
       up: Math.round((old.at - old.started) / 1000), ago: Math.round((Date.now() - old.at) / 1000),
-      hidden: old.hidden ? 1 : 0, fatal: old.fatal });
+      hidden: old.hidden ? 1 : 0, fatal: old.fatal, cp: old.cp, heap: old.heap, tail: old.tail });
   }
   setInterval(send, 2000);
   send();
