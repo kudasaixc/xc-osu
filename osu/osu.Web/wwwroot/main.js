@@ -222,6 +222,7 @@ try {
   console.warn('[launch] persistent storage unavailable, running in memory', e);
   boot.stage('storage', 'fail', 'in memory');
 }
+globalThis.xcTelemetryCheckpoint?.('storage-done');
 
 let syncing = false, dirty = false;
 function flush() {
@@ -439,4 +440,5 @@ const ui = installUi(rt, canvas, {
 globalThis.xcFlushStorage = flush;
 boot.stage('host', 'active');
 say(`starting the game (${((performance.now() - t0) / 1000).toFixed(2)} s after the download finished)`);
+globalThis.xcTelemetryCheckpoint?.('main-start');
 await rt.runMain();

@@ -304,8 +304,17 @@ export function startTelemetry(options, build, log) {
     closeBlock();
     try { navigator.sendBeacon('/api/xc/tm', new Blob([packet(batch)], { type: 'text/plain' })); } catch { }
   }
-  globalThis.xcTelemetryCheckpoint = name => { event('boot-checkpoint', { name }); persist(); void send(); };
+  // leaving before the window attached (iOS sessions stall there without any error): report the last console lines once
+  let lastCheckpoint = '', stallSent = false;
+  const pastAttach = new Set(['attached', 'gate-shown', 'start-click', 'gate-open']);
+  globalThis.xcTelemetryCheckpoint = name => { lastCheckpoint = name; event('boot-checkpoint', { name }); persist(); void send(); };
   function leaving(e) {
+    if (lastCheckpoint && !pastAttach.has(lastCheckpoint) && !stallSent) {
+      stallSent = true;
+      let tail;
+      try { tail = scrubLines((log.lines || []).slice(-60).map(l => (l.level === 'log' ? '' : l.level + ': ') + l.text).join('\n'), 60, 7000); } catch { }
+      event('boot-stall', { name: lastCheckpoint, tail, up: Math.round((Date.now() - started) / 1000) });
+    }
     const closing = e?.type === 'pagehide';
     event('lifecycle', { name: closing ? 'pagehide' : 'hidden' });
     if (closing && !live.end) live.end = 'pagehide';
