@@ -51,7 +51,14 @@ export function countryName(code) {
 export const countryChip = (code) => (code && code !== 'XX' ? `<span class="cc" title="${esc(countryName(code))}">${esc(code)}</span>` : '');
 
 export const MODES = ['osu', 'taiko', 'fruits', 'mania'];
-export const modeName = (m) => ({ osu: 'Standard', taiko: 'Taiko', fruits: 'Catch', mania: 'Mania' }[m] || m);
+export const modeName = (m) => ({ osu: 'osu!', taiko: 'osu!taiko', fruits: 'osu!catch', mania: 'osu!mania' }[m] || m);
+const MODE_GLYPH = {
+  osu: '<circle cx="12" cy="12" r="5"/>',
+  taiko: '<circle cx="12" cy="12" r="5"/><path d="M12 7v10"/>',
+  fruits: '<circle cx="9" cy="14" r="3"/><circle cx="15" cy="9" r="3"/>',
+  mania: '<path d="M8 7v10M12 7v10M16 7v10"/>',
+};
+export const modeIcon = (m) => MODE_GLYPH[m] ? `<svg class="mode-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/>${MODE_GLYPH[m]}</svg>` : '';
 export const modeOfInt = (i) => MODES[i] || 'osu';
 
 // ---------------------------------------------------------------- session + API

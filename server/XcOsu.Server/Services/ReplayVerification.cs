@@ -84,7 +84,7 @@ namespace XcOsu.Server.Services
             {
                 // replays recorded before this service existed, or while it was down.
                 using (var c = db.Open())
-                    foreach (long id in c.Query("SELECT id FROM scores WHERE has_replay = 1 AND verification = 0 AND ruleset_id = 0 ORDER BY id", r => r.GetInt64(0)))
+                    foreach (long id in c.Query("SELECT id FROM scores WHERE has_replay = 1 AND verification = 0 AND ruleset_id BETWEEN 0 AND 3 ORDER BY id", r => r.GetInt64(0)))
                         queue.Writer.TryWrite(id);
 
                 var sweep = sweepMissing(stoppingToken);
@@ -130,7 +130,7 @@ namespace XcOsu.Server.Services
 
             string? replay = scores.ReplayPath(scoreId);
             if (replay == null) return;
-            if (row.ruleset != 0) { conclude(scoreId, UNVERIFIABLE, "ruleset is not simulated"); return; }
+            if (Performance.Ruleset(row.ruleset) == null) { conclude(scoreId, UNVERIFIABLE, "ruleset is not simulated"); return; }
             // a beatmap the mirrors cannot serve right now is tried again after the next restart.
             if (await mirrors.GetOsuFile(row.beatmap, ct) == null) { log.LogWarning("score {Score}: beatmap {Beatmap} unavailable, verification postponed", scoreId, row.beatmap); return; }
 

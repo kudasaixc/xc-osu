@@ -1,5 +1,5 @@
 // xc-osu! web: beatmap listing, beatmap page, comments. xc softworks (kudasaixc)
-import { L, WEB, state, t, esc, num, clock, dateText, timeTag, MODES, modeName, v2, userLink, avatar, stars, statusChip, scoreRow, sanitize, empty, act, signedIn, NeedSignIn } from './core.js';
+import { L, WEB, state, t, esc, num, clock, dateText, timeTag, MODES, modeName, modeIcon, v2, userLink, avatar, stars, statusChip, scoreRow, sanitize, empty, act, signedIn, NeedSignIn } from './core.js';
 
 const cover = (set, kind = 'card') => esc(set?.covers?.[kind] || set?.covers?.cover || '');
 
@@ -17,6 +17,17 @@ export function setCard(set) {
 }
 
 // ---------------------------------------------------------------- listing
+// the settings each ruleset actually uses (taiko ignores CS/AR, mania's CS is its key count)
+const diffStats = (map) => {
+  const cell = (k, v) => `<div><dt>${k}</dt><dd>${v}</dd></div>`;
+  const od = cell('OD', num(map.accuracy, 1)), hp = cell('HP', num(map.drain, 1));
+  switch (map.mode) {
+    case 'taiko': return od + hp;
+    case 'mania': return cell(t('Keys', 'Touches'), `${num(map.cs)}K`) + od + hp;
+    default: return cell('CS', num(map.cs, 1)) + cell('AR', num(map.ar, 1)) + od + hp;
+  }
+};
+
 export async function listing({ query, go }) {
   const q = query.get('q') || '', m = query.get('m') ?? '', s = query.get('s') || '';
   const statuses = [['', t('Has leaderboard', 'Avec classement')], ['ranked', t('Ranked', 'Classées')], ['qualified', t('Qualified', 'Qualifiées')], ['loved', 'Loved'], ['pending', t('Pending', 'En attente')], ['graveyard', t('Graveyard', 'Cimetière')], ['any', t('Any', 'Toutes')]];
@@ -77,8 +88,11 @@ export async function beatmapset({ params: [id], hash }) {
   const set = await v2('/beatmapsets/' + id);
   const all = [...(set.beatmaps || []), ...(set.converts || [])].sort((a, b) => a.mode_int - b.mode_int || Number(a.convert) - Number(b.convert) || a.difficulty_rating - b.difficulty_rating);
   const native = all.filter((b) => !b.convert);
+  // like osu-web: one tab per mode the set can be played in (osu! sets convert to every mode), difficulties of that mode only.
+  const setModes = MODES.filter((m) => all.some((b) => b.mode === m));
+  const hardest = (mode) => all.filter((b) => b.mode === mode).at(-1);
   const [hashMode, hashId] = hash.split('/');
-  const picked = all.find((b) => String(b.id) === hashId && (!hashMode || b.mode === hashMode)) || native.find((b) => b.mode === hashMode) || native.at(-1) || all[0];
+  const picked = all.find((b) => String(b.id) === hashId && (!hashMode || b.mode === hashMode)) || (hashMode && hardest(hashMode)) || native.at(-1) || all[0];
 
   return {
     title: `${set.artist} – ${set.title}`,
@@ -99,8 +113,9 @@ export async function beatmapset({ params: [id], hash }) {
       </header>
 
       <section class="panel">
+        ${setModes.length > 1 ? `<nav class="tabs sub" id="set-modes" aria-label="${t('Game mode', 'Mode de jeu')}">${setModes.map((m) => `<a href="${WEB}/beatmapsets/${set.id}#${m}" data-mode="${m}"${m === picked?.mode ? ' aria-current="page"' : ''}>${modeIcon(m)}${modeName(m)}</a>`).join('')}</nav>` : ''}
         <div class="diffs" id="diffs" role="tablist" aria-label="${t('Difficulties', 'Difficultés')}">
-          ${all.map((b) => `<button type="button" role="tab" class="diff" data-id="${b.id}" data-mode="${esc(b.mode)}" title="${esc(b.version)}${b.convert ? ' (convert)' : ''}"><span class="diff-mode">${esc(modeName(b.mode))}${b.convert ? '*' : ''}</span>${stars(b.difficulty_rating)}</button>`).join('') || empty(t('This set has no difficulty.', 'Ce set n’a aucune difficulté.'))}
+          ${all.map((b) => `<button type="button" role="tab" class="diff" data-id="${b.id}" data-mode="${esc(b.mode)}" title="${esc(b.version)}${b.convert ? ` (${t('converted', 'convertie')})` : ''}"${b.mode === picked?.mode ? '' : ' hidden'}><span class="diff-mode">${esc(b.version)}</span>${stars(b.difficulty_rating)}</button>`).join('') || empty(t('This set has no difficulty.', 'Ce set n’a aucune difficulté.'))}
         </div>
         <div id="diff-detail"></div>
       </section>
@@ -123,7 +138,8 @@ export async function beatmapset({ params: [id], hash }) {
       const detail = view.querySelector('#diff-detail'), board = view.querySelector('#board');
       let boardRequest = 0;
       const show = async (map, push) => {
-        for (const b of view.querySelectorAll('.diff')) b.setAttribute('aria-selected', String(b.dataset.id === String(map.id) && b.dataset.mode === map.mode));
+        for (const b of view.querySelectorAll('.diff')) { b.hidden = b.dataset.mode !== map.mode; b.setAttribute('aria-selected', String(b.dataset.id === String(map.id) && b.dataset.mode === map.mode)); }
+        for (const a of view.querySelectorAll('#set-modes a')) if (a.dataset.mode === map.mode) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
         if (push) history.replaceState(null, '', `${WEB}/beatmapsets/${set.id}#${map.mode}/${map.id}`);
         detail.innerHTML = `<h2 class="diff-name">${esc(map.version)} ${stars(map.difficulty_rating)}${map.convert ? ` <span class="muted small">${t('converted', 'convertie')}</span>` : ''}</h2>
           <dl class="stat-grid">
@@ -131,8 +147,7 @@ export async function beatmapset({ params: [id], hash }) {
             <div><dt>BPM</dt><dd>${num(map.bpm ?? set.bpm, 1)}</dd></div>
             <div><dt>${t('Max combo', 'Combo max')}</dt><dd>${map.max_combo ? num(map.max_combo) + 'x' : '-'}</dd></div>
             <div><dt>${t('Objects', 'Objets')}</dt><dd>${num((map.count_circles || 0) + (map.count_sliders || 0) + (map.count_spinners || 0))}</dd></div>
-            <div><dt>CS</dt><dd>${num(map.cs, 1)}</dd></div><div><dt>AR</dt><dd>${num(map.ar, 1)}</dd></div>
-            <div><dt>OD</dt><dd>${num(map.accuracy, 1)}</dd></div><div><dt>HP</dt><dd>${num(map.drain, 1)}</dd></div>
+            ${diffStats(map)}
           </dl>`;
         const request = ++boardRequest;
         board.innerHTML = `<span class="muted">${t('Loading…', 'Chargement…')}</span>`;
@@ -146,6 +161,8 @@ export async function beatmapset({ params: [id], hash }) {
             : empty(set.is_scoreable === false ? t('This beatmap has no leaderboard.', 'Cette beatmap n’a pas de classement.') : t('Nobody has set a score here yet. Be the first!', 'Personne n’a encore de score ici. Sois le premier !'));
         } catch (e) { if (request === boardRequest) board.innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
       };
+      for (const a of view.querySelectorAll('#set-modes a'))
+        a.addEventListener('click', (e) => { e.preventDefault(); show(hardest(a.dataset.mode), true); });
       for (const b of view.querySelectorAll('.diff'))
         b.addEventListener('click', () => show(all.find((x) => String(x.id) === b.dataset.id && x.mode === b.dataset.mode), true));
       if (picked) show(picked, false); else board.innerHTML = empty(t('No leaderboard.', 'Pas de classement.'));

@@ -12,6 +12,9 @@ using osu.Game.Online.API.Requests.Responses;
 using osu.Game.Rulesets;
 using osu.Game.Rulesets.Mods;
 using osu.Game.Rulesets.Osu;
+using osu.Game.Rulesets.Taiko;
+using osu.Game.Rulesets.Catch;
+using osu.Game.Rulesets.Mania;
 using osu.Game.Scoring;
 using osu.Game.Rulesets.Objects;
 
@@ -40,7 +43,7 @@ namespace XcOsu.Server.Services
             new MemoryCacheEntryOptions { Size = 1, AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5) });
         private readonly ILogger<Performance> log;
 
-        public static readonly Ruleset[] RULESETS = { new OsuRuleset() };
+        public static readonly Ruleset[] RULESETS = { new OsuRuleset(), new TaikoRuleset(), new CatchRuleset(), new ManiaRuleset() };
 
         public Performance(Mirrors mirrors, ILogger<Performance> log)
         {
@@ -50,14 +53,18 @@ namespace XcOsu.Server.Services
 
         public static Ruleset? Ruleset(int id) => RULESETS.FirstOrDefault(r => r.RulesetInfo.OnlineID == id);
 
-        private async Task<FlatWorkingBeatmap?> load(int beatmapId, CancellationToken ct)
+        private async Task<FlatWorkingBeatmap?> load(int beatmapId, int rulesetId, CancellationToken ct)
         {
             byte[]? data = await mirrors.GetOsuFile(beatmapId, ct);
             if (data == null) return null;
 
             using var stream = new LineBufferedReader(new MemoryStream(data));
             var beatmap = osu.Game.Beatmaps.Formats.Decoder.GetDecoder<Beatmap>(stream).Decode(stream);
-            beatmap.BeatmapInfo.Ruleset = RULESETS[0].RulesetInfo;
+            // the decoder has no ruleset store here: map the file's Mode onto the real ruleset so other modes convert from it.
+            beatmap.BeatmapInfo.Ruleset = (Ruleset(beatmap.BeatmapInfo.Ruleset.OnlineID) ?? RULESETS[0]).RulesetInfo;
+            // only osu! maps convert: a taiko/catch/mania map has no difficulty in another ruleset.
+            int native = beatmap.BeatmapInfo.Ruleset.OnlineID;
+            if (native != 0 && native != rulesetId) return null;
             return new FlatWorkingBeatmap(beatmap);
         }
 
@@ -77,7 +84,7 @@ namespace XcOsu.Server.Services
                 var ruleset = Ruleset(score.RulesetID);
                 if (ruleset == null) return null;
 
-                var working = await load(beatmapId, ct);
+                var working = await load(beatmapId, ruleset.RulesetInfo.OnlineID, ct);
                 if (working == null) return null;
 
                 Mod[] mods = score.Mods.Select(m => m.ToMod(ruleset)).ToArray();
@@ -115,7 +122,7 @@ namespace XcOsu.Server.Services
             try
             {
                 var ruleset = Ruleset(rulesetId);
-                var working = ruleset == null ? null : await load(beatmapId, ct);
+                var working = ruleset == null ? null : await load(beatmapId, rulesetId, ct);
                 if (working == null) return null;
 
                 var attributes = ruleset!.CreateDifficultyCalculator(working).Calculate(mods.Select(m => m.ToMod(ruleset)), ct);

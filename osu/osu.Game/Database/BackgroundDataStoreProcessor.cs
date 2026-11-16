@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -93,6 +94,7 @@ namespace osu.Game.Database
             {
                 Logger.Log("Beginning background data store processing..");
 
+                repairMisdetectedRulesets();
                 clearOutdatedStarRatings();
                 populateMissingStarRatings();
                 processOnlineBeatmapSetsWithNoUpdate();
@@ -116,6 +118,97 @@ namespace osu.Game.Database
 
                 Logger.Log("Finished background data store processing!");
             });
+        }
+
+        /// <summary>
+        /// xc-osu!: before osu!taiko, osu!catch and osu!mania were bundled in the browser build, the decoder could not resolve
+        /// their <c>Mode</c> and left those difficulties imported as osu!standard. Re-read the mode of every standard
+        /// difficulty once and move it to its real ruleset, resetting the values computed for the wrong one.
+        /// </summary>
+        private void repairMisdetectedRulesets()
+        {
+            const string marker = @"xc-ruleset-repair-v1";
+
+            if (!OperatingSystem.IsBrowser() || storage.Exists(marker))
+                return;
+
+            var files = storage.GetStorageForDirectory(@"files");
+            var fixes = new List<(Guid id, string shortName)>();
+
+            realmAccess.Run(r =>
+            {
+                foreach (var b in r.All<BeatmapInfo>().Where(b => b.Ruleset.OnlineID == 0 && b.BeatmapSet != null))
+                {
+                    if (string.IsNullOrEmpty(b.Hash))
+                        continue;
+
+                    try
+                    {
+                        using var stream = files.GetStream(Path.Combine(b.Hash.Remove(1), b.Hash.Remove(2), b.Hash));
+                        if (stream == null)
+                            continue;
+
+                        int mode = readMode(stream);
+                        var ruleset = mode > 0 ? rulesetStore.GetRuleset(mode) : null;
+                        if (ruleset?.Available == true)
+                            fixes.Add((b.ID, ruleset.ShortName));
+                    }
+                    catch (Exception e)
+                    {
+                        Logger.Log($"Could not re-read the mode of beatmap {b.ID}: {e.Message}");
+                    }
+                }
+            });
+
+            if (fixes.Count > 0)
+            {
+                realmAccess.Write(r =>
+                {
+                    foreach (var (id, shortName) in fixes)
+                    {
+                        var beatmap = r.Find<BeatmapInfo>(id);
+                        var ruleset = r.Find<RulesetInfo>(shortName);
+                        if (beatmap == null || ruleset == null)
+                            continue;
+
+                        beatmap.Ruleset = ruleset;
+                        beatmap.StarRating = -1;
+                        beatmap.TotalObjectCount = -1;
+                        beatmap.EndTimeObjectCount = -1;
+                    }
+                });
+
+                Logger.Log($"Moved {fixes.Count} difficulties imported as osu! to their real ruleset.");
+            }
+
+            using (var stream = storage.CreateFileSafely(marker))
+                stream.WriteByte(1);
+
+            static int readMode(System.IO.Stream stream)
+            {
+                using var reader = new System.IO.StreamReader(stream);
+                bool general = true;
+                string? line;
+
+                while ((line = reader.ReadLine()) != null)
+                {
+                    line = line.Trim();
+                    if (line.StartsWith('['))
+                    {
+                        if (!general) break;
+                        general = line == @"[General]";
+                        continue;
+                    }
+
+                    if (!general) continue;
+
+                    var pair = line.Split(':', 2);
+                    if (pair.Length == 2 && pair[0].Trim() == @"Mode")
+                        return int.TryParse(pair[1].Split(@"//", 2)[0].Trim(), out int mode) ? mode : 0;
+                }
+
+                return 0;
+            }
         }
 
         /// <summary>

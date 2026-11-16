@@ -572,20 +572,6 @@ namespace osu.Game.Screens.Select
             if (Beatmap.IsDefault)
                 return;
 
-            try
-            {
-                if (XcSupportedModes.IsUnsupported(Beatmap.Value))
-                {
-                    Logger.Log(XcSupportedModes.UnsupportedMessage, level: LogLevel.Important);
-                    return;
-                }
-            }
-            catch (System.IO.IOException e)
-            {
-                Logger.Error(e, "Could not open beatmap.");
-                return;
-            }
-
             startAction();
         }
 

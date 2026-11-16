@@ -1,5 +1,74 @@
 [
  {
+  "version": "2026.1116.0",
+  "date": "2026-11-16T12:00:00Z",
+  "entries": [
+   {
+    "category": "Gameplay",
+    "category_fr": "Gameplay",
+    "type": "add",
+    "title": "osu!taiko, osu!catch and osu!mania are playable, with their own leaderboards, rankings and statistics",
+    "title_fr": "osu!taiko, osu!catch et osu!mania sont jouables, avec leurs classements et statistiques"
+   },
+   {
+    "category": "Song select",
+    "category_fr": "Sélection",
+    "type": "fix",
+    "title": "Beatmaps of other modes are no longer hidden, and osu! beatmaps can be played as converts",
+    "title_fr": "Les beatmaps des autres modes ne sont plus masquées, et les beatmaps osu! peuvent être jouées en conversion"
+   },
+   {
+    "category": "Beatmaps",
+    "category_fr": "Beatmaps",
+    "type": "fix",
+    "title": "Beatmaps imported earlier are re-read once to recover their real mode, then their stars are recomputed",
+    "title_fr": "Les beatmaps importées auparavant sont relues une fois pour retrouver leur vrai mode, puis leurs étoiles sont recalculées"
+   },
+   {
+    "category": "Website",
+    "category_fr": "Site web",
+    "type": "misc",
+    "title": "The website names and marks the four modes, shows the settings each mode uses (keys for mania, no CS/AR for taiko) and labels hits the way each mode does",
+    "title_fr": "Le site nomme et signale les quatre modes, affiche les réglages propres à chacun (touches en mania, pas de CS/AR en taiko) et nomme les notes comme chaque mode"
+   }
+  ]
+ },
+ {
+  "version": "2026.1116.0",
+  "stream": "nanbeige",
+  "date": "2026-11-16T12:00:00Z",
+  "entries": [
+   {
+    "category": "Performance",
+    "category_fr": "Performance",
+    "type": "add",
+    "title": "Star rating and pp are computed for osu!taiko, osu!catch and osu!mania scores, converts included",
+    "title_fr": "Les étoiles et les pp sont calculés pour les scores osu!taiko, osu!catch et osu!mania, conversions comprises"
+   },
+   {
+    "category": "Scores",
+    "category_fr": "Scores",
+    "type": "fix",
+    "title": "A score is refused when its beatmap cannot be played in that mode (only osu! beatmaps convert to the other modes)",
+    "title_fr": "Un score est refusé si sa beatmap ne peut pas se jouer dans ce mode (seules les beatmaps osu! se convertissent vers les autres modes)"
+   },
+   {
+    "category": "Replays",
+    "category_fr": "Replays",
+    "type": "add",
+    "title": "The replay verifier replays taiko, catch and mania scores too",
+    "title_fr": "Le vérificateur de replays rejoue aussi les scores taiko, catch et mania"
+   },
+   {
+    "category": "Medals",
+    "category_fr": "Médailles",
+    "type": "add",
+    "title": "New medals for each mode: star passes and full combos from 1★ to 8★, and hit-count milestones",
+    "title_fr": "Nouvelles médailles pour chaque mode : passes et full combos de 1★ à 8★, et paliers de notes touchées"
+   }
+  ]
+ },
+ {
   "version": "2026.1114.2",
   "date": "2026-11-14T18:45:00Z",
   "entries": [

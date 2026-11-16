@@ -95,6 +95,10 @@ namespace XcOsu.Server.Services
 
         public static readonly Medal[] ALL = build();
 
+        public const int MODE_MEDAL_BASE = 100, MODE_MEDAL_STRIDE = 20;
+        // not read by build(): ALL is initialised before this field.
+        private static readonly int[][] mode_hit_steps = { new[] { 30_000, 300_000, 3_000_000, 30_000_000 }, new[] { 20_000, 200_000, 2_000_000, 20_000_000 }, new[] { 40_000, 400_000, 4_000_000, 40_000_000 } };
+
         private static Medal[] build()
         {
             var list = new List<Medal>();
@@ -114,6 +118,22 @@ namespace XcOsu.Server.Services
             int[] combos = { 500, 750, 1000, 2000 };
             for (int i = 0; i < combos.Length; i++)
                 list.Add(new Medal(25 + i, $"osu-combo-{combos[i]}", $"{combos[i]:N0} Combo", $"{combos[i]:N0} big ones! You're moving up in the world!", "Skill", "osu", 24 + i));
+
+            // the other rulesets: star passes / full combos 1-8* and total hit milestones, like osu!'s per-mode medals.
+            string[] modeLabels = { "osu!taiko", "osu!catch", "osu!mania" };
+            int[][] hitSteps = { new[] { 30_000, 300_000, 3_000_000, 30_000_000 }, new[] { 20_000, 200_000, 2_000_000, 20_000_000 }, new[] { 40_000, 400_000, 4_000_000, 40_000_000 } };
+            for (int m = 0; m < 3; m++)
+            {
+                string mode = Users.RULESET_NAMES[m + 1];
+                int baseId = MODE_MEDAL_BASE + m * MODE_MEDAL_STRIDE;
+                for (int i = 0; i < 8; i++)
+                {
+                    list.Add(new Medal(baseId + i, $"{mode}-skill-pass-{i + 1}", $"{modeLabels[m]} {i + 1}\u2605 Pass", $"Pass a {i + 1}* {modeLabels[m]} beatmap.", "Skill", mode, i));
+                    list.Add(new Medal(baseId + 8 + i, $"{mode}-skill-fc-{i + 1}", $"{modeLabels[m]} {i + 1}\u2605 Full Combo", $"Full combo a {i + 1}* {modeLabels[m]} beatmap.", "Skill", mode, 10 + i));
+                }
+                for (int i = 0; i < 4; i++)
+                    list.Add(new Medal(baseId + 16 + i, $"{mode}-hits-{hitSteps[m][i]}", $"{hitSteps[m][i]:N0} {modeLabels[m]} Hits", $"Land {hitSteps[m][i]:N0} hits in {modeLabels[m]}.", "Dedication", mode, 20 + i));
+            }
 
             list.Add(new Medal(29, "all-intro-doubletime", "Time And A Half", "Having a right ol' time. One and a half of them, almost.", "Mod Introduction", null, 40));
             list.Add(new Medal(30, "all-intro-hidden", "Blindsight", "I can see just perfectly.", "Mod Introduction", null, 41));
@@ -176,6 +196,25 @@ namespace XcOsu.Server.Services
                 long plays = c.Scalar<long>("SELECT COUNT(*) FROM scores WHERE user_id = @u AND ruleset_id = 0", ("@u", score.UserID));
                 foreach ((int n, int id) in new[] { (5000, 21), (15000, 22), (25000, 23), (50000, 24) })
                     if (plays >= n) unlocked.Add(id);
+            }
+
+            if (score.RulesetID is >= 1 and <= 3)
+            {
+                int baseId = MODE_MEDAL_BASE + (score.RulesetID - 1) * MODE_MEDAL_STRIDE;
+                if (ranked && starRating is double modeSr && !hasDifficultyReduction)
+                {
+                    int level = (int)Math.Floor(modeSr);
+                    if (level is >= 1 and <= 8)
+                    {
+                        unlocked.Add(baseId + level - 1);
+                        if (beatmapMaxCombo != null && score.MaxCombo >= beatmapMaxCombo) unlocked.Add(baseId + 8 + level - 1);
+                    }
+                }
+
+                using var c = db.Open();
+                long hits = c.Scalar<long>("SELECT COALESCE(SUM(total_hits), 0) FROM scores WHERE user_id = @u AND ruleset_id = @r", ("@u", score.UserID), ("@r", score.RulesetID));
+                for (int i = 0; i < 4; i++)
+                    if (hits >= mode_hit_steps[score.RulesetID - 1][i]) unlocked.Add(baseId + 16 + i);
             }
 
             if (ranked)

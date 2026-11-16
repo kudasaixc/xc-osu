@@ -1,5 +1,5 @@
 // xc-osu! web: player profile. xc softworks (kudasaixc)
-import { L, ASSETS, state, t, esc, num, pct, rankText, duration, dateText, timeTag, countryChip, countryName, MODES, modeName, v2, api,
+import { L, ASSETS, state, t, esc, num, pct, rankText, duration, dateText, timeTag, countryChip, countryName, MODES, modeName, modeIcon, v2, api,
   avatar, teamTag, grade, stars, scoreRow, pagedList, renderUserText, empty, act, signedIn, NeedSignIn } from './core.js';
 import { setCard } from './pages-beatmap.js';
 
@@ -67,7 +67,7 @@ export async function profile({ params: [lookup, modeParam], go, refreshShell, s
           </div>
         </div>
         <nav class="tabs" aria-label="${t('Game mode', 'Mode de jeu')}">
-          ${MODES.map((m) => `<a href="${L(`/users/${user.id}/${m}`)}"${m === mode ? ' aria-current="page"' : ''}>${modeName(m)}</a>`).join('')}
+          ${MODES.map((m) => `<a href="${L(`/users/${user.id}/${m}`)}"${m === mode ? ' aria-current="page"' : ''}>${modeIcon(m)}${modeName(m)}</a>`).join('')}
         </nav>
       </header>
 

@@ -121,6 +121,9 @@ namespace osu.Web
 
                 // Rulesets are discovered from loaded assemblies (there is no DLL directory to scan in the browser).
                 System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(osu.Game.Rulesets.Osu.OsuRuleset).TypeHandle);
+                System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(osu.Game.Rulesets.Taiko.TaikoRuleset).TypeHandle);
+                System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(osu.Game.Rulesets.Catch.CatchRuleset).TypeHandle);
+                System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(osu.Game.Rulesets.Mania.ManiaRuleset).TypeHandle);
 
                 if (Environment.GetEnvironmentVariable("XC_DIAG") == "1")
                     Diag.Run();

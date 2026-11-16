@@ -31,8 +31,17 @@ Test harness: /var/www/osu/tools/shot.mjs (playwright + chromium-1248 swiftshade
 - [x] Program.cs ne dispose plus l'hôte (CanExit=false masquait la vraie exception sous "Exit must be called before the GameHost is disposed").
 - [x] Branding: GAME_NAME, intro, footer réglages, SupporterDisplay, logo menu (osu.Web/Resources/Textures/Menu/logo.png via CreateOverrideResourceStores), chaînes anglaises + regex sur traductions (ResourceManagerLocalisationStore.Branding).
 
+## Rulesets taiko / catch / mania (2026-11-16)
+- Client : osu.Web référence les 4 rulesets (ProjectReference + `_XcAotKeep` + RunClassConstructor dans Program.cs, sinon le trimmer/la découverte par assembly les perd). XcSupportedModes (filtre osu-only) supprimé.
+- Beatmaps importées avant : rangées en osu! (pas de ruleset pour les reconnaître). `BackgroundDataStoreProcessor.repairMisdetectedRulesets()` (navigateur, une fois, marqueur `xc-ruleset-repair-v1`) relit `Mode:` dans chaque .osu et remet StarRating/objets à -1 -> recalcul de fond.
+- Serveur : `Performance.RULESETS` = les 4 ; LegacyBeatmapDecoder sans RulesetStore rend `unsupported-N` -> remappé sur `Performance.Ruleset(OnlineID)`. Converts : seul le mode 0 se convertit ; `mode_int`/`max_combo` du miroir décrivent le mode source (max_combo ignoré pour un convert). Submit refuse mode≠ruleset si mode≠0.
+- Médailles par mode : ids `100 + m*20 + offset` (pass 1-8★ 0-7, FC 8-15, paliers de notes 16-19). Piège : `Medals.ALL = build()` est initialisé avant les champs déclarés plus bas -> build() ne lit aucun champ statique.
+- Vérificateur de replays : ruleset = 1er octet de l'.osr (`VerificationScene.PlayedRuleset`), backlog `ruleset_id BETWEEN 0 AND 3`.
+- Quick play / ranked play restent osu-only (comme upstream).
+- Site : `modeName` = osu!/osu!taiko/osu!catch/osu!mania, `modeIcon` (SVG), stats de diff par mode (`diffStats` : Keys en mania, OD/HP seuls en taiko), libellés de notes par mode (`MODE_HIT_LABELS`).
+
 ## Serveur xc-osu! (/var/www/osu/server/XcOsu.Server)
-- ASP.NET Core net10 référençant osu.Game + osu.Game.Rulesets.Osu (modèles Newtonsoft/MessagePack d'origine, pp via les calculateurs d'osu!).
+- ASP.NET Core net10 référençant osu.Game + les 4 rulesets (Osu/Taiko/Catch/Mania ; modèles Newtonsoft/MessagePack d'origine, pp via les calculateurs d'osu!).
 - SQLite /var/lib/xc-osu/xc-osu.db, cache .osu dans /var/lib/xc-osu/osu-files, replays .osr (enregistrés via spectator) dans /var/lib/xc-osu/replays.
 - Endpoints: /oauth/token, POST /users, /api/v2/* (me, users, beatmaps, beatmapsets/search via miroirs, download proxy, solo scores + pp, leaderboards, rankings, chat, friends/blocks, favourites, rooms/playlists, news...), /notifications (ws chat), /signalr/{spectator,multiplayer,metadata}.
 - Online complet (2026-11-10) : medals (Services/Medals.cs) + notifications live, commentaires/votes, tags de beatmap (Services/Tags.cs), scores épinglés, recent_activity, rank history (snapshot quotidien), daily challenge (Services/DailyChallenge.cs : salle playlists quotidienne, streaks, top 10%/50%), quick play + ranked play (Services/Matchmaking.cs : file, invitations, stages, cartes, Elo dans matchmaking_ratings), salons de chat par room, teams (/api/xc/teams*), avatars/covers/flags servis par le serveur (/api/xc/avatar|cover|team-flag), page de compte /api/xc/settings (Assets/settings.html).

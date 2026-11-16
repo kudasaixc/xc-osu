@@ -304,3 +304,5 @@ h2.diff-name { font-size: 20px; align-items: center; }
 .user-text .bb-video { position: relative; max-width: 640px; aspect-ratio: 16 / 9; margin: 8px auto; } .user-text .bb-video iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 .user-text .bb-audio { max-width: 100%; }
 .user-text del { opacity: .8; }
+.mode-icon { width: 1.15em; height: 1.15em; vertical-align: -0.2em; margin-right: 5px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.diff[hidden] { display: none; } .diff-mode { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

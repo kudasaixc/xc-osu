@@ -16,6 +16,9 @@
   <ItemGroup>
     <ProjectReference Include="..\osu.Game\osu.Game.csproj" />
     <ProjectReference Include="..\osu.Game.Rulesets.Osu\osu.Game.Rulesets.Osu.csproj" />
+    <ProjectReference Include="..\osu.Game.Rulesets.Taiko\osu.Game.Rulesets.Taiko.csproj" />
+    <ProjectReference Include="..\osu.Game.Rulesets.Catch\osu.Game.Rulesets.Catch.csproj" />
+    <ProjectReference Include="..\osu.Game.Rulesets.Mania\osu.Game.Rulesets.Mania.csproj" />
   </ItemGroup>
   <ItemGroup>
     <NativeFileReference Include="Native/xcweb.c" />
@@ -69,7 +72,7 @@
   </ItemGroup>
   <Target Name="XcSelectAotAssemblies" BeforeTargets="_WasmAotCompileApp" Condition="'$(XcAot)' == 'true'">
     <PropertyGroup>
-      <_XcAotKeep>;System.Private.CoreLib;System.Collections;System.Collections.Concurrent;System.Linq;System.Memory;System.Runtime.Intrinsics;System.Numerics.Vectors;osu.Framework;osuTK;osu.Game;osu.Game.Rulesets.Osu;Realm;$(XcAotExtra);</_XcAotKeep>
+      <_XcAotKeep>;System.Private.CoreLib;System.Collections;System.Collections.Concurrent;System.Linq;System.Memory;System.Runtime.Intrinsics;System.Numerics.Vectors;osu.Framework;osuTK;osu.Game;osu.Game.Rulesets.Osu;osu.Game.Rulesets.Taiko;osu.Game.Rulesets.Catch;osu.Game.Rulesets.Mania;Realm;$(XcAotExtra);</_XcAotKeep>
     </PropertyGroup>
     <ItemGroup>
       <_AOT_InternalForceInterpretAssemblies Include="@(_WasmAssembliesInternal)" Condition="!$(_XcAotKeep.Contains(';%(Filename);'))" />

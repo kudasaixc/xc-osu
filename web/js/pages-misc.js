@@ -1,5 +1,5 @@
 // xc-osu! web: home, rankings, scores, teams, rooms, friends, search, news. xc softworks (kudasaixc)
-import { L, state, t, esc, num, pct, rankText, dateText, dateTimeText, timeTag, countryChip, countryName, MODES, modeName, modeOfInt, v2, api, download,
+import { L, state, t, esc, num, pct, rankText, dateText, dateTimeText, timeTag, countryChip, countryName, MODES, modeName, modeIcon, modeOfInt, v2, api, download,
   avatar, userLink, grade, modsHtml, stars, sanitize, empty, act, requireSignIn, ApiError } from './core.js';
 import { setCard, commentThread } from './pages-beatmap.js';
 
@@ -92,7 +92,7 @@ export async function rankings({ params: [modeParam, typeParam], query }) {
   return {
     title: t('Rankings', 'Classements'),
     html: `<h1 class="page-title">${t('Rankings', 'Classements')}${country ? ` · ${esc(countryName(country))} <a class="small" href="${link(mode, type).split('?')[0]}">${t('(all countries)', '(tous les pays)')}</a>` : ''}</h1>
-      <nav class="tabs">${MODES.map((m) => `<a href="${link(m, type)}"${m === mode ? ' aria-current="page"' : ''}>${modeName(m)}</a>`).join('')}</nav>
+      <nav class="tabs">${MODES.map((m) => `<a href="${link(m, type)}"${m === mode ? ' aria-current="page"' : ''}>${modeIcon(m)}${modeName(m)}</a>`).join('')}</nav>
       <nav class="tabs sub">${types.map(([ty, label]) => `<a href="${link(mode, ty)}"${ty === type ? ' aria-current="page"' : ''}>${esc(label)}</a>`).join('')}</nav>
       <section class="panel table-wrap">${rows.length ? table : empty(t('Nobody is ranked here yet. Play a ranked beatmap to appear.', 'Personne n’est classé ici pour l’instant. Joue une beatmap classée pour apparaître.'))}</section>
       ${pages > 1 ? `<nav class="pager">${page > 1 ? `<a class="btn ghost" href="${link(mode, type, page - 1)}">← ${t('Previous', 'Précédent')}</a>` : ''}<span>${t('Page', 'Page')} ${page} / ${pages}</span>${page < pages ? `<a class="btn ghost" href="${link(mode, type, page + 1)}">${t('Next', 'Suivant')} →</a>` : ''}</nav>` : ''}`,
@@ -101,10 +101,18 @@ export async function rankings({ params: [modeParam, typeParam], query }) {
 
 // ---------------------------------------------------------------- score
 const HIT_LABELS = { perfect: 'Perfect', great: 'Great', good: 'Good', ok: 'Ok', meh: 'Meh', miss: 'Miss', large_tick_hit: 'Slider ticks', slider_tail_hit: 'Slider ends', small_tick_hit: 'Small ticks', large_bonus: 'Spinner bonus', small_bonus: 'Spinner spins', ignore_hit: null, ignore_miss: null, large_tick_miss: 'Tick misses', small_tick_miss: 'Small tick misses', combo_break: 'Combo breaks', legacy_combo_increase: null };
+// per-ruleset wording, as shown by the game's results screen
+const MODE_HIT_LABELS = {
+  taiko: { great: 'Great', ok: 'Good', miss: 'Miss', small_bonus: 'Drumroll ticks', large_bonus: 'Swell / strong bonus' },
+  fruits: { great: 'Fruits', large_tick_hit: 'Drops', small_tick_hit: 'Droplets', small_tick_miss: 'Missed droplets', large_tick_miss: 'Missed drops', miss: 'Miss', large_bonus: 'Bananas' },
+  mania: { perfect: 'Max', great: '300', good: '200', ok: '100', meh: '50', miss: 'Miss' },
+};
+const MODE_HIT_ORDER = ['perfect', 'great', 'good', 'ok', 'meh', 'large_tick_hit', 'small_tick_hit', 'slider_tail_hit', 'miss', 'large_tick_miss', 'small_tick_miss', 'large_bonus', 'small_bonus'];
+const hitLabel = (mode, k) => MODE_HIT_LABELS[mode]?.[k] ?? HIT_LABELS[k];
 export async function score({ params: [id] }) {
   const s = await v2('/scores/' + id);
   const map = s.beatmap, set = map?.beatmapset, mode = modeOfInt(s.ruleset_id);
-  const hits = Object.entries(s.statistics || {}).filter(([k]) => HIT_LABELS[k] !== null).map(([k, v]) => `<div><dt>${esc(HIT_LABELS[k] || k)}</dt><dd>${num(v)}${s.maximum_statistics?.[k] != null ? `<small> / ${num(s.maximum_statistics[k])}</small>` : ''}</dd></div>`).join('');
+  const hits = Object.entries(s.statistics || {}).filter(([k]) => hitLabel(mode, k) !== null).sort(([a], [b]) => ((MODE_HIT_ORDER.indexOf(a) + 1 || 99) - (MODE_HIT_ORDER.indexOf(b) + 1 || 99))).map(([k, v]) => `<div><dt>${esc(hitLabel(mode, k) || k)}</dt><dd>${num(v)}${s.maximum_statistics?.[k] != null ? `<small> / ${num(s.maximum_statistics[k])}</small>` : ''}</dd></div>`).join('');
   return {
     title: `${s.user?.username || ''} – ${set?.title || t('Score', 'Score')}`,
     html: `<article class="set">

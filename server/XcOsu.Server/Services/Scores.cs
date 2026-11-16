@@ -123,7 +123,10 @@ namespace XcOsu.Server.Services
             var map = await mirrors.GetBeatmap(beatmapId, null, null, ct);
             int status = BeatmapStatus(map);
             string? onlineHash = map?.Value<string>("checksum");
-            int? mapMaxCombo = map?.Value<int?>("max_combo");
+            // converts: the mirror's max combo is the source mode's; only an osu! map converts to the other rulesets.
+            int? mapMode = map?.Value<int?>("mode_int");
+            if (mapMode != null && mapMode != score.RulesetID && mapMode != 0) throw new SubmitException("This beatmap can't be played in this ruleset.");
+            int? mapMaxCombo = mapMode == score.RulesetID ? map?.Value<int?>("max_combo") : null;
 
             var ruleset = Performance.Ruleset(score.RulesetID)!;
             bool modsRanked = score.Mods.All(m =>
@@ -270,8 +273,9 @@ namespace XcOsu.Server.Services
         {
             var ruleset = Performance.Ruleset(score.RulesetID);
             string? onlineHash = map?.Value<string>("checksum");
-            int? maxCombo = map?.Value<int?>("max_combo");
-            if (ruleset == null || !Users.PP_STATUSES.Contains(BeatmapStatus(map)) || score.TotalScore > max_plausible_score
+            int? mapMode = map?.Value<int?>("mode_int");
+            int? maxCombo = mapMode == null || mapMode == score.RulesetID ? map?.Value<int?>("max_combo") : null;
+            if (ruleset == null || (mapMode != null && mapMode != score.RulesetID && mapMode != 0) || !Users.PP_STATUSES.Contains(BeatmapStatus(map)) || score.TotalScore > max_plausible_score
                 || score.TotalScore < 0 || score.MaxCombo < 0 || (maxCombo != null && score.MaxCombo > maxCombo + 1)
                 // the client always sends its beatmap hash; scores stored before hashes were kept and maps
                 // whose mirror entry has no checksum keep the previous lenient behaviour.

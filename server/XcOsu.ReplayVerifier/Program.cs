@@ -6,6 +6,9 @@ using osu.Game.IO;
 using osu.Game.Rulesets;
 using osu.Game.Rulesets.Mods;
 using osu.Game.Rulesets.Osu;
+using osu.Game.Rulesets.Taiko;
+using osu.Game.Rulesets.Catch;
+using osu.Game.Rulesets.Mania;
 using osu.Game.Scoring;
 using osu.Game.Scoring.Legacy;
 using osu.Game.Screens.Play;
@@ -18,8 +21,11 @@ if (args.Length != 3) throw new ArgumentException("Usage: verifier <beatmap.osu>
 Beatmap map;
 using (var input = new LineBufferedReader(File.OpenRead(args[0])))
     map = Decoder.GetDecoder<Beatmap>(input).Decode(input);
-map.BeatmapInfo.Ruleset = new OsuRuleset().RulesetInfo;
 byte[] osr = File.ReadAllBytes(args[1]);
+// the beatmap keeps its own mode (an osu! map converts to the other rulesets); the replay's first byte is the ruleset it was played in.
+map.BeatmapInfo.Ruleset = VerificationScene.CreateRuleset(map.BeatmapInfo.Ruleset.OnlineID).RulesetInfo;
+if (osr.Length == 0) throw new InvalidDataException("empty replay");
+VerificationScene.PlayedRuleset = osr[0];
 using var host = new CleanRunHeadlessGameHost(realtime: false);
 var runner = new OsuTestScene.OsuTestSceneTestRunner();
 Exception? failure = null;
@@ -42,7 +48,18 @@ return 0;
 
 public partial class VerificationScene : RateAdjustedBeatmapTestScene
 {
-    protected override Ruleset CreateRuleset() => new OsuRuleset();
+    public static int PlayedRuleset;
+
+    public static Ruleset CreateRuleset(int id) => id switch
+    {
+        0 => new OsuRuleset(),
+        1 => new TaikoRuleset(),
+        2 => new CatchRuleset(),
+        3 => new ManiaRuleset(),
+        _ => throw new NotSupportedException($"ruleset {id} is not simulated"),
+    };
+
+    protected override Ruleset CreateRuleset() => CreateRuleset(PlayedRuleset);
 
     public VerificationScene(Beatmap map, byte[] osr, string output)
     {
@@ -51,9 +68,9 @@ public partial class VerificationScene : RateAdjustedBeatmapTestScene
         {
             var working = CreateWorkingBeatmap(map);
             Beatmap.Value = working;
-            Ruleset.Value = new OsuRuleset().RulesetInfo;
+            Ruleset.Value = CreateRuleset(PlayedRuleset).RulesetInfo;
             var score = new ReplayDecoder(working).Parse(new MemoryStream(osr));
-            score.ScoreInfo.Ruleset = new OsuRuleset().RulesetInfo;
+            score.ScoreInfo.Ruleset = CreateRuleset(PlayedRuleset).RulesetInfo;
             SelectedMods.Value = score.ScoreInfo.Mods;
             LoadScreen(player = new VerificationPlayer(score));
         });
@@ -73,7 +90,7 @@ public partial class VerificationScene : RateAdjustedBeatmapTestScene
 
     private sealed class ReplayDecoder(WorkingBeatmap working) : LegacyScoreDecoder
     {
-        protected override Ruleset GetRuleset(int rulesetId) => rulesetId == 0 ? new OsuRuleset() : throw new NotSupportedException("Only osu! replays are simulated.");
+        protected override Ruleset GetRuleset(int rulesetId) => CreateRuleset(rulesetId);
         protected override WorkingBeatmap GetBeatmap(string md5Hash) => working;
     }
 }
