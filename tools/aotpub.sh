@@ -21,8 +21,21 @@ if [ "$jobs" -le 1 ]; then par="-p:DisableParallelAot=true -m:1"; else par="-p:D
 [ "$XC_SYMBOLS" = "1" ] && par="$par -p:WasmNativeDebugSymbols=true"
 echo "aotpub: ${memgb} GB RAM, ${cores} cores, ${jobs} parallel AOT jobs"
 python3 "$ROOT/tools/portstats.py" "$ROOT/osu/osu.Web/wwwroot/launcher/build.json" || true
-dotnet publish -c Release -o "$ROOT/out/aot" -p:XcAot=true -p:CompressionEnabled=false -p:WasmEmitSymbolMap=true -p:UseSharedCompilation=false $par "$@" > "$log" 2>&1
+pub() { dotnet publish -c Release -o "$ROOT/out/aot" -p:XcAot=true -p:CompressionEnabled=false -p:WasmEmitSymbolMap=true -p:UseSharedCompilation=false $par "$@" > "$log" 2>&1; }
+pub "$@"
 rc=$?
+# The SDK only recompiles an assembly's AOT object when that assembly changes, but each object also records the
+# GUIDs of the assemblies it references. When a dependency changes (e.g. ImageSharp trimmed differently), the old
+# object is reused, mono rejects it at startup and the runtime dies (appdomain.c:188). So if any input is newer than
+# the oldest object, drop every object and publish again. xc-osu.dll (the app itself) is referenced by no object.
+aotdir="$ROOT/osu/osu.Web/obj/aot/net10.0/wasm/for-publish"
+oldest=$(ls -tr "$aotdir"/*.dll.o 2>/dev/null | head -1)
+if [ $rc -eq 0 ] && [ -n "$oldest" ] && [ -n "$(find "$aotdir/aot-in" -name '*.dll' ! -name 'xc-osu.dll' -newer "$oldest" | head -1)" ]; then
+  echo "aotpub: AOT objects are older than their inputs, recompiling all of them"
+  rm -f "$aotdir"/*.dll.bc "$aotdir"/*.dll.o
+  pub "$@"
+  rc=$?
+fi
 grep -E " error |error :|xc-osu! AOT|AOT'ing|Build succeeded|Time Elapsed" "$log" | sed 's/\[\/.*//' | sort -u | head -40
 if [ $rc -ne 0 ]; then echo "aotpub FAILED (rc=$rc) in $(( $(date +%s) - start ))s: see $log"; exit 1; fi
 cp "$ROOT"/osu/osu.Web/wwwroot/manifest.webmanifest "$ROOT"/osu/osu.Web/wwwroot/icon* "$ROOT/out/aot/wwwroot/" 2>/dev/null
