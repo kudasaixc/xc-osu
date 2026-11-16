@@ -117,11 +117,11 @@ export function startTelemetry(options, build, log) {
   }
   // Sessions that never said goodbye: frozen page, killed tab, browser or GPU process crash, power loss.
   // A marker still refreshed by another open tab (every 5 s) is left alone.
-  const previous = [];
+  const previous = [], recent = [];
   for (const k of liveKeys()) {
     try {
       const old = JSON.parse(localStorage.getItem(k));
-      if (old && !old.end && Date.now() - old.at < 20000) continue;
+      if (old && !old.end && Date.now() - old.at < 20000) { recent.push([k, old.at]); continue; }
       localStorage.removeItem(k);
       if (old && !old.end && Date.now() - old.at < 7 * 86400000) previous.push(old);
     } catch { try { localStorage.removeItem(k); } catch { } }
@@ -344,11 +344,24 @@ export function startTelemetry(options, build, log) {
   saveLive();
   setInterval(saveLive, 5000);
   event('start');
-  for (const old of previous.slice(-4)) {
+  const reportUnclean = old =>
     event('unclean-exit', { name: old.scr || 'unknown', ov: old.ov || '', prev: old.sid, build: old.build,
       up: Math.round((old.at - old.started) / 1000), ago: Math.round((Date.now() - old.at) / 1000),
       hidden: old.hidden ? 1 : 0, fatal: old.fatal, cp: old.cp, heap: old.heap, tail: old.tail });
-  }
+  for (const old of previous.slice(-4)) reportUnclean(old);
+  // a marker under 20 s old may be another open tab, or a tab the OS just killed and reloaded (iOS reloads in ~2 s):
+  // look again once another tab would have refreshed it, and report it if it did not move
+  if (recent.length) setTimeout(() => {
+    for (const [k, at] of recent) {
+      try {
+        const old = JSON.parse(localStorage.getItem(k));
+        if (!old || old.end || old.at !== at) continue;
+        localStorage.removeItem(k);
+        reportUnclean(old);
+      } catch { }
+    }
+    void send();
+  }, 12000);
   setInterval(send, 2000);
   send();
 }
