@@ -92,7 +92,7 @@ const builder = dotnet
   // takes the browser's language as the game language: a French browser got an English game that asked the server
   // for French news, changelog and wiki. Picking a language in the game's settings still overrides it.
   .withApplicationCulture('en')
-  .withConfig({ pthreadPoolInitialSize: options.workers, pthreadPoolUnusedSize: options.iosCompat ? 0 : Math.min(4, options.workers) })
+  .withConfig({ pthreadPoolInitialSize: options.workers, pthreadPoolUnusedSize: Math.min(4, options.workers) })
   .withResourceLoader((type, name, defaultUri, integrity) => {
     if (BIG_ASSET.test(name)) return bigAsset(defaultUri);
     return cdnBase && /\.wasm(\?|$)/.test(defaultUri) ? engineFetch(defaultUri, integrity) : defaultUri;
@@ -175,7 +175,9 @@ boot.stage('download', 'done', `${dl.total} · ${fmtBytes(dl.bytes)}${dl.network
 say(`engine assets: ${dl.total} files, ${fmtBytes(dl.bytes)} (${fmtBytes(dl.network)} over the network)`);
 
 boot.stage('runtime', 'active');
-builder.withConfig({ pthreadPoolInitialSize: L.workers, pthreadPoolUnusedSize: L.iosCompat ? 0 : Math.min(4, L.workers) });
+// always keep spare workers: with none (the old iOS preset), a thread started during boot waits for the main thread to
+// yield while the main thread waits for that thread, and the game froze before the window attached
+builder.withConfig({ pthreadPoolInitialSize: L.workers, pthreadPoolUnusedSize: Math.min(4, L.workers) });
 // awaited rAF loop by default; XC_DRAW_LEGACY=0 opts into the direct rAF pump (see PORTING.md, frame pacing)
 if (!('XC_DRAW_LEGACY' in L.env)) builder.withEnvironmentVariable('XC_DRAW_LEGACY', '1');
 for (const [k, v] of Object.entries(L.env)) builder.withEnvironmentVariable(k, v);
