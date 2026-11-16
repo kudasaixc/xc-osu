@@ -22,7 +22,7 @@ if [ "$2" = "test" ]; then
 fi
 # /dev/ keeps the interpreter build as a fallback once AOT is live
 [ "${1:-dev}" = "dev" ] && rsync -az --delete "$src"/ "$dst/dev/"
-rsync -az --delete --exclude=/dev/ --exclude=/aot/ --exclude=/backgrounds/ --exclude=/web/ --exclude=/launcher/performance.json "$src"/ "$dst/"
+rsync -az --delete --exclude=/dev/ --exclude=/aot/ --exclude=/aot2/ --exclude=/backgrounds/ --exclude=/web/ --exclude=/launcher/performance.json "$src"/ "$dst/"
 echo "deployed ${1:-dev} build to https://osu.xcsoftworks.com/"
 # drop the CDN's engine files that neither the live site nor the newest rollback copies use any more
 [ -z "$XC_DEPLOY_SSH" ] && { python3 "$ROOT/tools/r2-sync.py" --prune --yes || true; }
