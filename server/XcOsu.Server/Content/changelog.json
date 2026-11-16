@@ -1,5 +1,39 @@
 [
  {
+  "version": "2026.1116.2",
+  "date": "2026-11-16T16:00:00Z",
+  "entries": [
+   {
+    "category": "iOS",
+    "category_fr": "iOS",
+    "type": "fix",
+    "title": "The game no longer reloads on iPhone and iPad right after \"start game host\": the local database reserved far too much memory (twice), which made Safari kill the tab. Peak memory at startup drops by about 250 MB on every device",
+    "title_fr": "Le jeu ne se recharge plus sur iPhone et iPad juste après « start game host » : la base de données locale réservait beaucoup trop de mémoire (deux fois), ce qui faisait fermer l'onglet par Safari. Le pic de mémoire au démarrage baisse d'environ 250 Mo sur tous les appareils"
+   },
+   {
+    "category": "iOS",
+    "category_fr": "iOS",
+    "type": "fix",
+    "title": "Lower memory use on mobile: smaller thread stacks and a capped image decoding pool",
+    "title_fr": "Mémoire réduite sur mobile : piles de threads plus petites et réserve de décodage d'images plafonnée"
+   },
+   {
+    "category": "Loading",
+    "category_fr": "Chargement",
+    "type": "fix",
+    "title": "Fixed large game files failing with \"Load failed\" on Safari during the first download",
+    "title_fr": "Correction des gros fichiers du jeu qui échouaient avec « Load failed » sur Safari pendant le premier téléchargement"
+   },
+   {
+    "category": "Reliability",
+    "category_fr": "Fiabilité",
+    "type": "improvement",
+    "title": "Crash reports now include memory usage, to find out-of-memory crashes faster",
+    "title_fr": "Les rapports de plantage incluent maintenant l'utilisation mémoire, pour repérer plus vite les plantages par manque de mémoire"
+   }
+  ]
+ },
+ {
   "version": "2026.1116.1",
   "date": "2026-11-16T12:30:00Z",
   "entries": [

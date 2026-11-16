@@ -113,6 +113,7 @@ export function startTelemetry(options, build, log) {
   const live = { sid, started, at: started, build, scr: where.scr, ov: where.ov, hidden: +document.hidden };
   function saveLive() {
     live.at = Date.now(); live.scr = where.scr; live.ov = where.ov; live.hidden = +document.hidden;
+    try { const h = globalThis.xcWasmBytes?.(); if (h) live.heap = h; } catch { }
     try { localStorage.setItem(liveKey, encode(live)); } catch { }
   }
   // Sessions that never said goodbye: frozen page, killed tab, browser or GPU process crash, power loss.
@@ -310,16 +311,19 @@ export function startTelemetry(options, build, log) {
   globalThis.xcTelemetryCheckpoint = name => { lastCheckpoint = name; event('boot-checkpoint', { name }); persist(); void send(); };
   // a tab killed by the OS (iOS: "this webpage was reloaded because a problem occurred") never reaches pagehide:
   // until the window attaches, keep the console tail and the wasm heap size in the live marker for the next launch
-  let tailTimer = 0;
+  // written at every line (a few dozen during boot): the kill can come within milliseconds of the last one
+  // iOS also kills tabs a few seconds AFTER the window attached (memory spike while the first screen loads):
+  // keep the tail for 20 s past attach, the heap size stays in the marker for the whole session
+  let tailCleared = false, attachedAt = 0;
   log.on(() => {
-    if (pastAttach.has(lastCheckpoint) || tailTimer) return;
-    tailTimer = setTimeout(() => {
-      tailTimer = 0;
-      if (pastAttach.has(lastCheckpoint)) { delete live.tail; delete live.heap; delete live.cp; saveLive(); return; }
-      try { live.tail = scrubLines((log.lines || []).slice(-25).map(l => (l.level === 'log' ? '' : l.level + ': ') + l.text).join('\n'), 25, 2500); } catch { }
-      live.heap = globalThis.xcWasmBytes?.(); live.cp = lastCheckpoint;
-      saveLive();
-    }, 250);
+    if (tailCleared) return;
+    if (pastAttach.has(lastCheckpoint)) {
+      attachedAt ||= Date.now();
+      if (Date.now() - attachedAt > 20000) { tailCleared = true; delete live.tail; delete live.cp; saveLive(); return; }
+    }
+    try { live.tail = scrubLines((log.lines || []).slice(-25).map(l => (l.level === 'log' ? '' : l.level + ': ') + l.text).join('\n'), 25, 2500); } catch { }
+    live.heap = globalThis.xcWasmBytes?.(); live.cp = lastCheckpoint;
+    saveLive();
   });
   function leaving(e) {
     if (lastCheckpoint && !pastAttach.has(lastCheckpoint) && !stallSent) {
@@ -351,6 +355,14 @@ export function startTelemetry(options, build, log) {
   for (const old of previous.slice(-4)) reportUnclean(old);
   // a marker under 20 s old may be another open tab, or a tab the OS just killed and reloaded (iOS reloads in ~2 s):
   // look again once another tab would have refreshed it, and report it if it did not move
+  // a marker already older than one refresh period cannot belong to a live tab: report it now, the reloaded
+  // page may itself be killed before the timer below fires
+  for (let i = recent.length - 1; i >= 0; i--) {
+    const [k, at] = recent[i];
+    if (Date.now() - at <= 5600) continue;
+    recent.splice(i, 1);
+    try { const old = JSON.parse(localStorage.getItem(k)); localStorage.removeItem(k); if (old) reportUnclean(old); } catch { }
+  }
   if (recent.length) setTimeout(() => {
     for (const [k, at] of recent) {
       try {
@@ -361,7 +373,7 @@ export function startTelemetry(options, build, log) {
       } catch { }
     }
     void send();
-  }, 12000);
+  }, 6500); // live tabs refresh their marker every 5 s; a crashed boot on iOS dies again within ~11 s
   setInterval(send, 2000);
   send();
 }

@@ -61,18 +61,41 @@ size_t round_up(size_t v)
 }
 
 // Capacity is reserved up-front because mapped addresses must stay valid while the file grows.
-// Untouched pages of the wasm heap are never committed by the browser, so this costs address space, not RAM.
+// Keep it modest: iOS Safari counts the whole wasm heap against the tab and kills it past ~900MB,
+// so a large reservation costs real memory there, not just address space.
 size_t initial_capacity(const std::string& path, size_t size)
 {
     if (ends_with(path, ".lock") || ends_with(path, ".note"))
         return round_up(std::max<size_t>(size * 2, 1 << 20));
     if (ends_with(path, ".realm"))
-        return round_up(std::max<size_t>(size * 2 + (64u << 20), 256u << 20));
+        return round_up(std::max<size_t>(size * 2 + (64u << 20), 128u << 20));
     return round_up(std::max<size_t>(size * 2, 16u << 20));
+}
+
+// Buffers of released images. A closed realm is usually reopened right away, and dlmalloc can't
+// satisfy a new 64KB-aligned block of the same size from the freed one (alignment padding), so
+// freeing would grow the heap by the whole capacity again.
+std::multimap<size_t, char*> g_spare;
+
+void drop_spares()
+{
+    for (auto& [cap, p] : g_spare)
+        free(p);
+    g_spare.clear();
 }
 
 bool allocate(Image* img, size_t want)
 {
+    if (!img->base) {
+        // reuse a spare of about the wanted size (never a much bigger one: a lock file must not take the realm's)
+        auto it = g_spare.lower_bound(round_up(want));
+        if (it != g_spare.end() && it->first <= round_up(want) * 2) {
+            img->base = it->second;
+            img->cap = it->first;
+            g_spare.erase(it);
+            return true;
+        }
+    }
     // try the preferred capacity first, then progressively smaller ones (never below what's needed)
     size_t needed = round_up(std::max<size_t>(img->size, 1));
     for (size_t cap = round_up(want); cap >= needed; cap = round_up(cap / 2 + needed / 2)) {
@@ -88,6 +111,10 @@ bool allocate(Image* img, size_t want)
         }
         if (cap == needed)
             break;
+    }
+    if (!g_spare.empty()) {
+        drop_spares();
+        return allocate(img, want);
     }
     return false;
 }
@@ -148,7 +175,7 @@ void maybe_release(Image* img)
     if (img->wfd >= 0)
         ::close(img->wfd);
     g_images.erase({img->dev, img->ino});
-    free(img->base);
+    g_spare.emplace(img->cap, img->base);
     delete img;
 }
 

@@ -80,3 +80,5 @@ done
 printf 'mode=%s\nsnapshot=%s\ncompleted=%s\n' "$MODE" "$SNAPSHOT" "$(date -u --iso-8601=seconds)" > "$BACKUPS/last-xc-osu-deployment.txt"
 trap - ERR
 echo "Published xc-osu! $MODE; previous release: $SNAPSHOT"
+# drop the CDN's engine files that neither the live site nor the newest rollback copies use any more
+python3 "$ROOT/tools/r2-sync.py" --prune --yes || true

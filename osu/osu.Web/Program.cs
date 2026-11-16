@@ -18,6 +18,12 @@ namespace osu.Web
         {
             Console.WriteLine("xc-osu! by xc softworks (kudasaixc): booting osu!lazer on WebAssembly");
 
+            // ImageSharp keeps a pool of unmanaged buffers (texture uploads, screenshots, zip reads) that never
+            // shrinks inside wasm linear memory. Its default size scales with the 2 GB address space, which on
+            // iOS is enough to push Safari past its per-tab memory limit right after the host attaches.
+            SixLabors.ImageSharp.Configuration.Default.MemoryAllocator = SixLabors.ImageSharp.Memory.MemoryAllocator.Create(
+                new SixLabors.ImageSharp.Memory.MemoryAllocatorOptions { MaximumPoolSizeMegabytes = 16 });
+
             // Main runs on the .NET deputy thread; the game host (input thread) gets its own pthread so that
             // blocking waits never touch the browser UI thread.
             var hostThread = new Thread(run) { Name = "xc-osu host", IsBackground = false };
@@ -134,7 +140,10 @@ namespace osu.Web
                 if (Environment.GetEnvironmentVariable("XC_TM") == "1")
                     Telemetry.Start(host);
 
-                host.Run(new XcOsuGame());
+                Console.WriteLine("[launch] creating the game");
+                var game = new XcOsuGame();
+                Console.WriteLine("[launch] game created, starting the host");
+                host.Run(game);
                 Console.WriteLine("xc-osu! host loop returned (state " + host.ExecutionState + ")");
             }
             catch (Exception e)

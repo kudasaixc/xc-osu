@@ -22,6 +22,20 @@ const build = 'pacing1:' + engineBuild + ':' + (new URL(import.meta.url).searchP
 // tools/r2-sync.py fills it in at deploy time, only once every .wasm of the build is on the CDN.
 const cdnBase = '';
 
+// Safari (iOS especially) can bring back a page and its modules from an old cache after a tab restore or a
+// crash reload: if the server now names a newer main.js, reload once to get it
+(() => {
+  const mine = new URL(import.meta.url).searchParams.get('v');
+  if (!mine) return;
+  fetch(location.pathname, { cache: 'no-store' }).then(r => r.ok ? r.text() : '').then(html => {
+    const live = /main\.js\?v=([a-z0-9]+)/.exec(html)?.[1];
+    if (!live || live === mine) return;
+    try { if (sessionStorage.getItem('xc.stale') === live) return; sessionStorage.setItem('xc.stale', live); } catch { return; }
+    console.log(`[launch] build ${mine} is out of date (server has ${live}), reloading`);
+    location.reload();
+  }).catch(() => { });
+})();
+
 let options = loadOptions();
 let t = makeT(options.lang);
 const blocked = !crossOriginIsolated;
@@ -69,22 +83,29 @@ async function engineFetch(uri, integrity) {
 }
 
 // The Cache Storage key stays the site URL wherever the bytes came from, so moving to or from the CDN
-// does not make anyone download the file again.
+// does not make anyone download the file again. It is always the root /_framework/ path: the file name is
+// content-fingerprinted, so a test build served from a sub-folder shares the copy the main site already kept.
+// The body is read once and the same bytes feed both the cache and the runtime: cloning the 110 MB+ response
+// (tee) made iOS Safari fail the download ("Load failed") and the runtime then retried it forever.
 async function bigAsset(uri) {
-  const url = new URL(uri, document.baseURI).href;
+  const url = new URL('/_framework/' + new URL(uri, document.baseURI).pathname.split('/').pop(), document.baseURI).href;
   let cache = null;
   try {
     cache = await caches.open(BIG_CACHE);
     const hit = await cache.match(url);
-    if (hit) return hit;
+    if (hit) { console.log('[launch] resources assembly taken from the offline copy'); return hit; }
   } catch { cache = null; }
-  const res = await engineFetch(url);
-  if (cache && res.ok && res.status === 200) {
-    cache.put(url, res.clone()).then(async () => {
-      for (const k of await cache.keys()) if (k.url !== url) await cache.delete(k);
-    }).catch(e => console.warn('[launch] could not keep ' + url + ' offline: ' + e));
-  }
-  return res;
+  const res = await engineFetch(new URL(uri, document.baseURI).href);
+  if (!cache || !res.ok || res.status !== 200) return res;
+  const t0 = performance.now();
+  const bytes = await res.arrayBuffer();
+  console.log(`[launch] resources assembly downloaded: ${(bytes.byteLength / 1048576).toFixed(0)} MB in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+  const headers = { 'Content-Type': res.headers.get('Content-Type') || 'application/wasm' };
+  cache.put(url, new Response(bytes, { headers })).then(async () => {
+    for (const k of await cache.keys()) if (k.url !== url) await cache.delete(k);
+    console.log('[launch] resources assembly kept offline');
+  }).catch(e => console.warn('[launch] could not keep ' + url + ' offline: ' + e));
+  return new Response(bytes, { status: 200, headers });
 }
 
 const builder = dotnet

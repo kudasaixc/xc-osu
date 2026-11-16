@@ -1,7 +1,7 @@
 // usage: node shot.mjs <url> <out.png> [waitMs] [clickScript]
 import { chromium } from 'playwright';
 const [url, out, wait = '5000', script = '[]'] = process.argv.slice(2);
-const b = await chromium.launch({ executablePath: process.env.HOME + '/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome',  args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required', '--remote-debugging-port=9333'] });
+const b = await chromium.launch({ executablePath: process.env.HOME + '/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome',  args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required', '--remote-debugging-port=9333', ...(process.env.XC_SHOT_ARGS ? process.env.XC_SHOT_ARGS.split('||') : [])] });
 // raw CDP: auto-attach to every worker and print uncaught exceptions with full (wasm) stacks
 {
   const ver = await (await fetch('http://127.0.0.1:9333/json/version')).json();
@@ -15,6 +15,8 @@ const b = await chromium.launch({ executablePath: process.env.HOME + '/.cache/ms
       send('Runtime.enable', {}, sid);
       send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }, sid);
       send('Runtime.runIfWaitingForDebugger', {}, sid);
+    } else if (m.method === 'Runtime.consoleAPICalled' && process.env.XC_SHOT_WORKERS && m.sessionId) {
+      console.log('[worker.' + m.params.type + ']', m.params.args.map(a => a.value ?? a.description ?? '').join(' ').slice(0, +(process.env.XC_SHOT_MAX || 400)));
     } else if (m.method === 'Runtime.exceptionThrown') {
       const d = m.params.exceptionDetails;
       console.log('[worker-exception]', (d.exception?.description || d.text || '').slice(0, 6000));
