@@ -421,11 +421,15 @@
   },
   {
    "name": {
-    "fr": "Modes taiko / catch / mania",
-    "en": "taiko / catch / mania"
+    "fr": "Modes osu!taiko / osu!catch / osu!mania",
+    "en": "osu!taiko / osu!catch / osu!mania modes"
    },
-   "weight": 2,
-   "status": "done"
+   "weight": 3,
+   "status": "done",
+   "note": {
+    "fr": "Jeu, star rating, pp, classements, médailles et vérification des replays",
+    "en": "Gameplay, star rating, pp, rankings, medals and replay verification"
+   }
   },
   {
    "name": {
@@ -447,8 +451,8 @@
    "weight": 2,
    "status": "partial",
    "note": {
-    "fr": "Déployé à la racine ; stabilité et gameplay à valider",
-    "en": "Deployed at the root; stability and gameplay need validation"
+    "fr": "Déployé à la racine ; démarrage validé le 16 novembre, gameplay à valider",
+    "en": "Deployed at the root; boot validated on 16 November, gameplay still needs validation"
    }
   },
   {
@@ -522,14 +526,25 @@
  ],
  "issues": [
   {
-   "severity": "high",
+   "severity": "medium",
    "title": {
-    "fr": "AOT déployé : stabilité à valider",
-    "en": "AOT deployed: stability needs validation"
+    "fr": "AOT : gameplay à valider",
+    "en": "AOT: gameplay needs validation"
    },
    "body": {
-    "fr": "Le moteur AOT mixte est maintenant déployé sur la page principale. La validation complète du démarrage et du gameplay reste à terminer ; des plantages peuvent subsister. L’ancienne mention « uniquement sur /aot/ » est obsolète.",
-    "en": "The mixed AOT engine is now deployed on the main page. Full boot and gameplay validation remains pending; crashes may still occur. The former “only on /aot/” notice is outdated."
+    "fr": "Le moteur AOT mixte tourne sur la page principale et démarre jusqu’au menu sans erreur (vérifié le 16 novembre). Les longues sessions de jeu restent à valider ; des plantages peuvent subsister.",
+    "en": "The mixed AOT engine runs on the main page and boots to the menu without errors (checked on 16 November). Long play sessions still need validation; crashes may still occur."
+   }
+  },
+  {
+   "severity": "low",
+   "title": {
+    "fr": "taiko / catch / mania : tout juste arrivés",
+    "en": "taiko / catch / mania: just arrived"
+   },
+   "body": {
+    "fr": "Les beatmaps importées avant la mise à jour étaient rangées en osu! : au premier lancement, le jeu les reclasse et recalcule leurs étoiles en arrière-plan, ce qui peut prendre un moment. Quick play et ranked play restent réservés à osu!, comme sur lazer. Ces modes ont encore peu d’heures de jeu derrière eux : signale tout souci.",
+    "en": "Beatmaps imported before the update were filed as osu!: on first launch the game re-sorts them and recalculates their stars in the background, which can take a while. Quick play and ranked play stay osu!-only, as on lazer. These modes have few hours of play behind them so far: please report any problem."
    }
   },
   {
