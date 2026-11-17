@@ -32,6 +32,20 @@
     "date": "2026-11-17T12:00:00Z",
     "entries": [
       {
+        "category": "Accounts",
+        "category_fr": "Comptes",
+        "type": "fix",
+        "title": "Creating an account works again: the sign-up request was being redirected to the website instead of reaching the server",
+        "title_fr": "La création de compte remarche : la demande d'inscription était redirigée vers le site au lieu d'atteindre le serveur"
+      },
+      {
+        "category": "Accounts",
+        "category_fr": "Comptes",
+        "type": "add",
+        "title": "Signing up on the website now includes a Cloudflare Turnstile anti-robot check; the game's own sign-up form allows 2 accounts a day per connection and points to the website beyond that",
+        "title_fr": "L'inscription sur le site inclut maintenant une vérification anti-robot Cloudflare Turnstile ; le formulaire du jeu permet 2 comptes par jour et par connexion, puis renvoie vers le site"
+      },
+      {
         "category": "Security",
         "category_fr": "Sécurité",
         "type": "add",

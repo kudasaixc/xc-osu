@@ -144,6 +144,9 @@ namespace XcOsu.Server.Api
                 return Json.Ok(new { });
             });
 
+            // what the sign-up form needs to know (the public Turnstile key, when the anti-robot check is configured).
+            app.MapGet("/api/xc/registration", (IConfiguration config) => Json.Ok(new { turnstile_site_key = Turnstile.SiteKey(config) }));
+
             // Second factor: a time-based code from an authenticator app (the game's own "enter your code" screen sends it here).
             app.MapPost("/api/v2/session/verify", async (HttpContext ctx, Accounts accounts, Db db, AuditLog audit) =>
             {

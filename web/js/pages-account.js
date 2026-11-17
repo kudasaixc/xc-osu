@@ -76,8 +76,27 @@ export async function verifyEmail({ hash }) {
 const birthYearField = () => `<label>${t('Year of birth', 'Année de naissance')}<input name="birth_year" type="number" inputmode="numeric" min="${new Date().getFullYear() - 120}" max="${new Date().getFullYear()}" required>
   <small>${t('Only the year is kept. xc-osu! is for players aged 13 or over; under 16, private messages are limited to friends.', 'Seule l’année est gardée. xc-osu! est réservé aux joueurs de 13 ans ou plus ; avant 16 ans, les messages privés sont limités aux amis.')}</small></label>`;
 
+/** Loads Cloudflare Turnstile once and renders the anti-robot check in `el`; resolves to a function giving the current token. */
+let turnstileScript = null;
+function turnstile(el, sitekey) {
+  turnstileScript ||= new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    script.async = true;
+    script.onload = () => resolve(window.turnstile);
+    script.onerror = () => reject(new Error(t('The anti-robot check could not load. Disable your content blocker for this site and try again.', 'La vérification anti-robot n’a pas pu se charger. Désactive ton bloqueur pour ce site et réessaie.')));
+    document.head.append(script);
+  });
+  let token = '';
+  return turnstileScript.then((ts) => {
+    const id = ts.render(el, { sitekey, theme: 'dark', language: state.lang, callback: (v) => { token = v; }, 'expired-callback': () => { token = ''; }, 'error-callback': () => { token = ''; } });
+    return { token: () => token, reset: () => { token = ''; ts.reset(id); } };
+  });
+}
+
 export async function register({ query, go, refreshShell }) {
   if (signedIn() && state.me) { go('/', { replace: true }); return null; }
+  const config = await api('/api/xc/registration').catch(() => ({}));
   return {
     title: t('Create an account', 'Créer un compte'),
     html: `<section class="panel narrow"><h1>${t('Create an account', 'Créer un compte')}</h1>
@@ -87,19 +106,27 @@ export async function register({ query, go, refreshShell }) {
         <label>E-mail<input name="email" type="email" autocomplete="email" required></label>
         <label>${t('Password', 'Mot de passe')}<input name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="256"><small>${t('8 to 256 characters. Passwords known from data breaches are refused.', '8 à 256 caractères. Les mots de passe connus de fuites de données sont refusés.')}</small></label>
         ${birthYearField()}
+        ${config.turnstile_site_key ? '<div id="turnstile" class="turnstile"></div>' : ''}
         <p class="muted small">${t('By creating an account you accept the', 'En créant un compte, tu acceptes les')} <a href="${L('/wiki/Legal')}">${t('terms', 'conditions')}</a> ${t('and the', 'et la')} <a href="${L('/wiki/Privacy')}">${t('privacy policy', 'politique de confidentialité')}</a>.</p>
         <button class="btn" type="submit">${t('Create my account', 'Créer mon compte')}</button> <span class="msg" role="alert"></span>
       </form>
       <p class="muted small"><a href="${L('/login')}">${t('I already have an account', 'J’ai déjà un compte')}</a></p></section>`,
     mount(view) {
       const form = view.querySelector('#register');
+      const check = config.turnstile_site_key ? turnstile(view.querySelector('#turnstile'), config.turnstile_site_key) : null;
+      check?.catch((e) => { const msg = form.querySelector('.msg'); msg.textContent = e.message; msg.className = 'msg bad'; });
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const year = Number(form.birth_year.value);
         if (new Date().getFullYear() - year < 13) { const msg = form.querySelector('.msg'); msg.textContent = t('xc-osu! accounts are for players aged 13 or over.', 'Les comptes xc-osu! sont réservés aux joueurs de 13 ans ou plus.'); msg.className = 'msg bad'; return; }
         let pending = false;
+        const widget = check ? await check.catch(() => null) : null;
         const ok = await act(form.querySelector('button'), form.querySelector('.msg'), async () => {
-          const r = await fetch('/users', { method: 'POST', body: new URLSearchParams({ 'user[username]': form.username.value.trim(), 'user[user_email]': form.email.value.trim(), 'user[password]': form.password.value, 'user[birth_year]': String(year) }) });
+          if (check && !widget?.token()) throw new ApiError(422, t('Please complete the anti-robot check.', 'Complète la vérification anti-robot.'));
+          const fields = { 'user[username]': form.username.value.trim(), 'user[user_email]': form.email.value.trim(), 'user[password]': form.password.value, 'user[birth_year]': String(year) };
+          if (widget) fields['cf-turnstile-response'] = widget.token();
+          const r = await fetch('/users', { method: 'POST', body: new URLSearchParams(fields) });
+          widget?.reset(); // a token is single-use
           const data = await r.json().catch(() => ({}));
           const errors = data?.form_error?.user;
           if (errors) throw new ApiError(422, Object.values(errors).flat().join(' '));

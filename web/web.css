@@ -306,3 +306,4 @@ h2.diff-name { font-size: 20px; align-items: center; }
 .user-text del { opacity: .8; }
 .mode-icon { width: 1.15em; height: 1.15em; vertical-align: -0.2em; margin-right: 5px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 .diff[hidden] { display: none; } .diff-mode { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.turnstile { min-height: 65px; margin: 4px 0 8px; }

@@ -32,7 +32,9 @@ export function scrubHTML(html) {
   return template.innerHTML;
 }
 if (TT) {
-  try { TT.createPolicy('default', { createHTML: (s) => scrubHTML(s), createScript: () => null, createScriptURL: () => null }); } catch { /* already defined */ }
+  // the only foreign script the site loads: Cloudflare Turnstile on the sign-up form.
+  const scriptURL = (u) => (/^https:\/\/challenges\.cloudflare\.com\/turnstile\//.test(String(u)) ? String(u) : null);
+  try { TT.createPolicy('default', { createHTML: (s) => scrubHTML(s), createScript: () => null, createScriptURL: scriptURL }); } catch { /* already defined */ }
 }
 
 export const WEB = '/web';
