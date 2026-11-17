@@ -3,6 +3,7 @@
 #   sudo deploy/setup-isolation.sh            account + runtime + data permissions (service untouched)
 #   sudo deploy/setup-isolation.sh --runtime  only refresh /opt/xc-osu/dotnet (after a .NET runtime update)
 #   sudo deploy/setup-isolation.sh --switch   everything, then install the unit and restart the service
+#   sudo deploy/setup-isolation.sh --verifier the isolated replay verifier service (xc-osu-verify)
 set -euo pipefail
 
 SVC_USER=xc-osu
@@ -23,6 +24,19 @@ sync_runtime() {
 }
 
 if [ "${1:-}" = --runtime ]; then sync_runtime; exit 0; fi
+
+# --verifier: the replay verifier as its own service and user (no network, no database, no access to the server's data).
+if [ "${1:-}" = --verifier ]; then
+    getent passwd xc-osu-verify >/dev/null || useradd --system --gid "$SVC_USER" --home-dir /var/lib/xc-osu-verify/.home --no-create-home --shell /usr/sbin/nologin xc-osu-verify
+    install -d -o "$SVC_USER" -g "$SVC_USER" -m 2770 /var/lib/xc-osu-verify
+    install -d -o xc-osu-verify -g "$SVC_USER" -m 0700 /var/lib/xc-osu-verify/.home
+    install -o root -g root -m 0755 "$(dirname "$0")/xc-osu-verify-runner.sh" /opt/xc-osu/verify-runner.sh
+    install -o root -g root -m 0644 "$(dirname "$0")/xc-osu-verify.service" /etc/systemd/system/xc-osu-verify.service
+    systemctl daemon-reload
+    systemctl enable --now xc-osu-verify
+    systemctl --no-pager --lines=0 status xc-osu-verify
+    exit 0
+fi
 
 getent passwd "$SVC_USER" >/dev/null || useradd --system --user-group --home-dir "$DATA/.home" --no-create-home --shell /usr/sbin/nologin "$SVC_USER"
 # admin keeps working on the data (backups, telemetry reports) through the group, never the other way round.

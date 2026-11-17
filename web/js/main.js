@@ -1,5 +1,6 @@
 // xc-osu! web: page shell and router. xc softworks (kudasaixc)
-import { L, WEB, state, t, setLang, esc, avatar, loadMe, signOut, ApiError, NeedSignIn } from './core.js';
+import { L, WEB, state, t, setLang, esc, avatar, loadMe, signOut, ApiError, NeedSignIn, NeedCode } from './core.js';
+import * as moderation from './pages-admin.js';
 import * as users from './pages-user.js';
 import * as maps from './pages-beatmap.js';
 import * as misc from './pages-misc.js';
@@ -29,6 +30,8 @@ const ROUTES = [
   [/^\/comments$/, misc.comments],
   [/^\/home\/account\/edit$/, account.settings],
   [/^\/home\/password-reset$/, account.passwordReset],
+  [/^\/home\/verify-email$/, account.verifyEmail],
+  [/^\/admin$/, moderation.admin],
   [/^\/login$/, account.login],
   [/^\/register$/, account.register],
   [/^\/home$/, misc.home],
@@ -64,6 +67,7 @@ function shell() {
               <a href="${L('/users/' + me.id)}">${t('My profile', 'Mon profil')}</a>
               <a href="${L('/home/friends')}">${t('Friends', 'Amis')}</a>
               <a href="${L('/home/account/edit')}">${t('Settings', 'Réglages')}</a>
+              ${me.is_admin ? `<a href="${L('/admin')}">${t('Moderation', 'Modération')}</a>` : ''}
               <button type="button" id="sign-out">${t('Sign out', 'Déconnexion')}</button>
             </div>
           </details>` : `<a class="btn ghost" href="${L('/login')}" id="sign-in-link">${t('Sign in', 'Connexion')}</a>`}
@@ -127,7 +131,7 @@ async function render() {
     else { ctx.params = route[0].exec(path).slice(1); page = await route[1](ctx); }
   } catch (e) {
     if (id !== navigation) return;
-    if (e instanceof NeedSignIn) { shell(); return go('/login?next=' + encodeURIComponent(current()), { replace: true }); }
+    if (e instanceof NeedSignIn || e instanceof NeedCode) { shell(); return go('/login?next=' + encodeURIComponent(current()), { replace: true }); }
     page = e instanceof ApiError && e.status === 404 ? misc.notFound(ctx) : misc.failed(e, render);
   }
   if (id !== navigation || !page) return; // a newer navigation (or a redirect inside the page) took over
@@ -154,7 +158,7 @@ document.addEventListener('click', (e) => { const menu = app.querySelector('.me-
 window.addEventListener('popstate', render);
 // An action that discovers the session is gone (expired token) ends up here rather than as a silent failure.
 window.addEventListener('unhandledrejection', (e) => {
-  if (!(e.reason instanceof NeedSignIn)) return;
+  if (!(e.reason instanceof NeedSignIn || e.reason instanceof NeedCode)) return;
   e.preventDefault(); shell(); go('/login?next=' + encodeURIComponent(current()), { replace: true });
 });
 

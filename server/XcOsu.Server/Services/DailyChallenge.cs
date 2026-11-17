@@ -289,6 +289,42 @@ namespace XcOsu.Server.Services
             this.log = log;
         }
 
+        private DateTime lastHousekeeping = DateTime.MinValue;
+
+        /// <summary>
+        /// Hourly: what the site keeps is bounded in time and size. Screenshots older than 30 days, the beatmap file cache beyond 2 GB,
+        /// the audit log beyond a year, exchanged refresh tokens beyond their lifetime.
+        /// </summary>
+        private void housekeeping()
+        {
+            try
+            {
+                using (var c = db.Open())
+                {
+                    string dir = Path.Combine(db.DataDirectory, "screenshots");
+                    foreach (string hash in c.Query("DELETE FROM screenshots WHERE created_at < @t RETURNING hash", r => r.GetString(0), ("@t", DateTimeOffset.UtcNow.AddDays(-30).ToString("O"))))
+                        try { File.Delete(Path.Combine(dir, hash + ".jpg")); } catch (IOException) { }
+                    long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                    c.Exec("DELETE FROM audit_log WHERE at < @t", ("@t", now - 366L * 86400));
+                    c.Exec("DELETE FROM consumed_refresh_tokens WHERE consumed_at < @t", ("@t", now - 31L * 86400));
+                }
+
+                var cache = new DirectoryInfo(Path.Combine(db.DataDirectory, "osu-files"));
+                if (cache.Exists)
+                {
+                    var files = cache.GetFiles().OrderBy(f => f.LastAccessTimeUtc).ToArray();
+                    long total = files.Sum(f => f.Length);
+                    foreach (var f in files)
+                    {
+                        if (total <= 2L * 1024 * 1024 * 1024) break;
+                        total -= f.Length;
+                        try { f.Delete(); } catch (IOException) { }
+                    }
+                }
+            }
+            catch (Exception e) { log.LogWarning(e, "housekeeping failed"); }
+        }
+
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             string? lastSnapshot = null;
@@ -310,6 +346,12 @@ namespace XcOsu.Server.Services
                             lastSnapshot = day;
                             log.LogInformation("rank history snapshot for {Day}", day);
                         }
+                    }
+
+                    if (DateTime.UtcNow - lastHousekeeping > TimeSpan.FromHours(1))
+                    {
+                        lastHousekeeping = DateTime.UtcNow;
+                        housekeeping();
                     }
 
                     foreach (var room in store.Rooms.Values.Where(r => !r.Realtime).ToList())

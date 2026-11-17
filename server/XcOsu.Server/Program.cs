@@ -32,6 +32,14 @@ builder.Services.AddHttpClient("mirrors", c =>
 });
 builder.Services.AddHttpClient("proxy", c => c.Timeout = TimeSpan.FromSeconds(30))
     .ConfigurePrimaryHttpMessageHandler(() => PublicNetworkHandler.Create());
+// third-party checks (breached passwords, Turnstile): a neutral user agent, nothing about the player.
+builder.Services.AddHttpClient("pwned", c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(5);
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("xc-osu-server/1.0");
+});
+builder.Services.AddSingleton<PwnedPasswords>();
+builder.Services.AddSingleton<AuditLog>();
 
 builder.Services.AddSingleton<Db>();
 builder.Services.AddHostedService<ProxyCacheMaintenance>();
@@ -68,7 +76,7 @@ builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
     options.AddPolicy("password-reset", ctx => RateLimitPartition.GetFixedWindowLimiter(
-        ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        ClientAddress.Key(ctx),
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 5, Window = TimeSpan.FromMinutes(15), QueueLimit = 0 }));
 });
 
@@ -140,6 +148,24 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.Use(AbuseGuard.Middleware);
 
+// A session of a two-factor account can only fetch the player and give its code until it is verified (the game shows its
+// code screen when /me says so; the website does the same).
+app.Use(async (ctx, next) =>
+{
+    if (ctx.User.UserId() != null && !ctx.User.SessionVerified())
+    {
+        string path = ctx.Request.Path.Value ?? "";
+        bool allowed = path is "/api/v2/me" or "/oauth/token" or "/api/v2/oauth/tokens/current" || path.StartsWith("/api/v2/me/") || path.StartsWith("/api/v2/session/verify");
+        if (!allowed)
+        {
+            ctx.Response.StatusCode = 403;
+            await ctx.Response.WriteAsJsonAsync(new { error = "Enter the code from your authenticator app first.", authentication = "verify", method = "totp" });
+            return;
+        }
+    }
+    await next(ctx);
+});
+
 app.MapGet("/api/xc/health", () => Results.Ok(new { name = "xc-osu! server", by = "xc softworks (kudasaixc)", ok = true }));
 
 // Anonymous telemetry uses a short-lived browser session and bounded ingestion.
@@ -171,7 +197,8 @@ app.Map("/notifications", async (HttpContext ctx, Chat chat, SessionConnections 
 {
     if (!ctx.WebSockets.IsWebSocketRequest) return Results.BadRequest();
     if (ctx.User.UserId() is not int u) return Results.Unauthorized();
-    using var connection = ConnectionLimits.Acquire(u, ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+    if (!ctx.User.SessionVerified()) return Results.StatusCode(403);
+    using var connection = ConnectionLimits.Acquire(u, ClientAddress.Key(ctx));
     if (connection == null) return Results.StatusCode(429);
     using var revoked = CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted);
     using var bound = sessions.Register(u, ctx.User.SessionId(), () => { try { revoked.Cancel(); } catch (ObjectDisposedException) { } });

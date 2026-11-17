@@ -19,6 +19,8 @@ export function safeUrl(raw) {
   if (/^www\.[^\s"'<>`]+$/i.test(u)) return 'https://' + u;
   return null;
 }
+/** Images and sounds of profile text come through the server (see proxiedImage in core.js): visitors' addresses stay private. */
+const viaServer = (src) => { if (!src) return null; if (src.startsWith('/')) return src; return /^https:/i.test(src) ? '/api/xc/image?u=' + encodeURIComponent(src) : null; };
 const safeColor = (c) => { const v = String(c || '').trim(); return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v) || /^[a-z]{3,20}$/i.test(v) ? v : null; };
 const link = (href, inner) => `<a href="${esc(href)}"${/^https?:/i.test(href) ? ' target="_blank" rel="noopener nofollow"' : ''}>${inner}</a>`;
 const youtubeId = (s) => (/^(?:https?:\/\/)?(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?(?:.*&)?v=|embed\/|shorts\/)|youtu\.be\/)?([\w-]{11})(?:[?&#].*)?$/.exec(s.trim()) || [])[1];
@@ -115,13 +117,14 @@ function render(node, ctx = { inLink: false }) {
       return `<${tag} class="bb-list">${kids(node)}</${tag}>`;
     }
     case '*': return `<li>${kids(node).replace(/^(<br>)+|(<br>)+$/g, '')}</li>`;
-    case 'img': { const src = safeUrl(raw); return src ? `<img class="bb-img" src="${esc(src)}" loading="lazy" referrerpolicy="no-referrer" alt="">` : esc(`[img]${node.raw}[/img]`); }
+    case 'img': { const src = viaServer(safeUrl(raw)); return src ? `<img class="bb-img" src="${esc(src)}" loading="lazy" referrerpolicy="no-referrer" alt="">` : esc(`[img]${node.raw}[/img]`); }
     case 'code': return `<pre class="bb-code">${esc(node.raw.replace(/^\n|\n$/g, ''))}</pre>`;
     case 'c': return `<code>${esc(node.raw)}</code>`;
     case 'email': { const addr = (node.arg || raw).trim(); return /^[^\s@<>"]+@[^\s@<>"]+$/.test(addr) ? `<a href="mailto:${esc(addr)}">${esc(raw || addr)}</a>` : esc(raw); }
     case 'profile': { const who = (node.arg || raw).trim(); return who ? `<a href="/web/users/${encodeURIComponent(who)}">${esc(raw || who)}</a>` : ''; }
-    case 'youtube': { const id = youtubeId(raw); return id ? `<div class="bb-video"><iframe src="https://www.youtube-nocookie.com/embed/${id}" title="YouTube" allowfullscreen loading="lazy"></iframe></div>` : esc(raw); }
-    case 'audio': { const src = safeUrl(raw); return src ? `<audio class="bb-audio" controls preload="none" src="${esc(src)}"></audio>` : esc(raw); }
+    case 'youtube': { const id = youtubeId(raw); return id ? `<div class="bb-video"><iframe src="https://www.youtube-nocookie.com/embed/${id}" title="YouTube" allowfullscreen loading="lazy" sandbox="allow-scripts allow-same-origin allow-presentation" referrerpolicy="no-referrer"></iframe></div>` : esc(raw); }
+    // a sound from anywhere would be fetched by every visitor's browser: shown as a link they choose to open.
+    case 'audio': { const src = safeUrl(raw); return src ? link(src, '♪ ' + esc(src)) : esc(raw); }
     case 'imagemap': return imagemap(node.raw);
     default: return kids(node);
   }
@@ -133,7 +136,7 @@ function render(node, ctx = { inLink: false }) {
 // [/imagemap]
 function imagemap(src) {
   const lines = src.trim().split('\n').map((l) => l.trim()).filter(Boolean);
-  const img = safeUrl(lines.shift());
+  const img = viaServer(safeUrl(lines.shift()));
   if (!img) return '';
   const areas = lines.map((l) => /^([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(\S+)(?:\s+(.*))?$/.exec(l)).filter(Boolean).map(([, x, y, w, h, url, title]) => {
     const style = `left:${+x}%;top:${+y}%;width:${+w}%;height:${+h}%`, href = url === '#' ? null : safeUrl(url);

@@ -121,7 +121,21 @@ namespace XcOsu.Server.Services
             "CREATE INDEX IF NOT EXISTS tm_sessions_seen ON tm_sessions (last_seen)",
             "CREATE INDEX IF NOT EXISTS tm_windows_at ON tm_windows (at)",
             "CREATE INDEX IF NOT EXISTS tm_events_at ON tm_events (at)",
+            // installs are no longer followed from one session to the next: forget the identifiers kept before.
+            "UPDATE tm_sessions SET iid = NULL WHERE iid IS NOT NULL",
         };
+
+        private static readonly System.Text.RegularExpressions.Regex secrets = new(
+            @"(?i)(bearer\s+|access_token=|refresh_token=|token=|password=)[^\s""&]+|[0-9a-f]{32,}|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
+            System.Text.RegularExpressions.RegexOptions.Compiled, TimeSpan.FromMilliseconds(200));
+
+        /// <summary>Error texts can quote a URL with a token, a hash or an address: those parts are blanked before anything is stored.</summary>
+        private static string? redact(string? text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+            try { return secrets.Replace(text, m => m.Groups[1].Success ? m.Groups[1].Value + "[redacted]" : "[redacted]"); }
+            catch (System.Text.RegularExpressions.RegexMatchTimeoutException) { return "[redacted]"; }
+        }
 
         private static bool validId(string? s)
         {
@@ -163,8 +177,8 @@ namespace XcOsu.Server.Services
             string? sid = root.Value<string>("sid");
             if (!validId(sid)) return null;
 
-            string? iid = root.Value<string>("iid");
-            if (!validId(iid)) iid = null;
+            // an install id would follow one browser across sessions: it is not kept (sessions stay unlinked).
+            string? iid = null;
 
             long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
@@ -202,7 +216,7 @@ namespace XcOsu.Server.Services
                         ("@os", str(hw?["os"], 80)),
                         ("@refresh", num(hw?["refresh"])),
                         ("@boot", num((meta["boot"] as JObject)?["ms"])),
-                        ("@info", cut(meta.ToString(Formatting.None), 64 * 1024)));
+                        ("@info", cut(redact(meta.ToString(Formatting.None)), 64 * 1024)));
                 }
 
                 long maxSeq = lastSeq;
@@ -269,11 +283,11 @@ namespace XcOsu.Server.Services
 
                             case "e":
                             {
-                                string data = item.ToString(Formatting.None);
+                                string data = redact(item.ToString(Formatting.None))!;
                                 if (data.Length > max_item_chars) data = data[..max_item_chars];
 
                                 c.Exec("INSERT INTO tm_events (sid, at, kind, name, ms, scr, ov, data) VALUES (@s, @at, @kind, @name, @ms, @scr, @ov, @data)",
-                                    ("@s", sid), ("@at", at), ("@kind", str(item["n"], 40) ?? "event"), ("@name", str(item["name"], 300)),
+                                    ("@s", sid), ("@at", at), ("@kind", str(item["n"], 40) ?? "event"), ("@name", redact(str(item["name"], 300))),
                                     ("@ms", num(item["ms"])), ("@scr", str(item["scr"])), ("@ov", str(item["ov"])), ("@data", data));
                                 stored++;
                                 break;

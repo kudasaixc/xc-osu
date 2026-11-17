@@ -22,6 +22,8 @@ Environment=Urls=http://127.0.0.1:5080
 Environment=ASPNETCORE_ENVIRONMENT=Production
 Environment=DOTNET_gcServer=0
 Environment=DOTNET_GCHeapHardLimit=0x30000000
+# replays are played back by the separate, isolated xc-osu-verify service (jobs in /var/lib/xc-osu-verify)
+Environment=ReplayVerification__Runner=queue
 Restart=always
 RestartSec=3
 
@@ -30,7 +32,7 @@ NoNewPrivileges=true
 CapabilityBoundingSet=
 # whole file system read-only except the data directory
 ProtectSystem=strict
-ReadWritePaths=/var/lib/xc-osu
+ReadWritePaths=/var/lib/xc-osu /var/lib/xc-osu-verify
 ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true
@@ -50,6 +52,12 @@ RestrictRealtime=true
 LockPersonality=true
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# bounds for the whole service (the .NET heap itself is capped by DOTNET_GCHeapHardLimit above)
+MemoryMax=3G
+TasksMax=4096
+LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target

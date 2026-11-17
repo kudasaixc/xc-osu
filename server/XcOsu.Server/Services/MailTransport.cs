@@ -17,9 +17,29 @@ public static class MailTransport
 {
     public static string From(IConfiguration config) => config["Mail:From"] ?? "noreply@xcsoftworks.com";
 
+    private static (long at, bool up)? localCheck;
+
+    /// <summary>
+    /// Whether mail can actually leave: a configured relay, an existing sendmail binary, or a local MTA that accepts connections
+    /// (checked, and remembered for a minute). It used to answer "yes" with nothing listening, so the site promised emails that never left.
+    /// </summary>
     public static bool IsConfigured(IConfiguration config)
-        => MailAddress.TryCreate(From(config), out _)
-           && (!string.IsNullOrWhiteSpace(config["Mail:Host"]) || config["Mail:SendmailPath"] is not { Length: > 0 } path || File.Exists(path));
+    {
+        if (!MailAddress.TryCreate(From(config), out _)) return false;
+        if (!string.IsNullOrWhiteSpace(config["Mail:Host"])) return true;
+        if (config["Mail:SendmailPath"] is { Length: > 0 } path) return File.Exists(path);
+        long now = Environment.TickCount64;
+        if (localCheck is { } last && now - last.at < 60_000) return last.up;
+        bool up;
+        try
+        {
+            using var client = new System.Net.Sockets.TcpClient();
+            up = client.ConnectAsync("127.0.0.1", config.GetValue("Mail:LocalPort", 25)).Wait(TimeSpan.FromSeconds(1)) && client.Connected;
+        }
+        catch { up = false; }
+        localCheck = (now, up);
+        return up;
+    }
 
     public static async Task Send(IConfiguration config, string to, string subject, string body, CancellationToken ct)
     {

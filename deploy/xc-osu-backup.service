@@ -1,10 +1,13 @@
 [Unit]
-Description=Daily local copy of the xc-osu database and player files (kept 7 days)
+Description=Daily local copy of the xc-osu database and player files (kept 7 days, encrypted)
 
+# Encrypted with age for the recipient below. The private key is /root/xc-osu-backup-age.key: keep a copy OFF this machine
+# (password manager, USB key) and delete it from here; a backup can then be read only with that copy:
+#   age -d -i xc-osu-backup-age.key xc_osu-DATE.dump.age > xc_osu.dump && pg_restore ...
 [Service]
 Type=oneshot
 User=postgres
 UMask=0077
-ExecStart=/bin/sh -c 'pg_dump -Fc xc_osu > /var/backups/xc-osu/xc_osu-$(date +%%F).dump.tmp && mv /var/backups/xc-osu/xc_osu-$(date +%%F).dump.tmp /var/backups/xc-osu/xc_osu-$(date +%%F).dump'
-# avatars, covers, replays and screenshots are a few MB: archived as root, then everything older than a week goes.
-ExecStart=+/bin/sh -c 'tar czf /var/backups/xc-osu/files-$(date +%%F).tar.gz --ignore-failed-read -C /var/lib/xc-osu avatars covers replays screenshots; find /var/backups/xc-osu -type f -mtime +6 -delete'
+ExecStart=/bin/sh -c 'set -e; f=/var/backups/xc-osu/xc_osu-$$(date +%%F).dump.age; pg_dump -Fc xc_osu | age -r age1c7yr93u0qgr6cdfcagrvtvkk728qn8hl30jm8znmvc45r9mgdyqsgx84hd > $$f.tmp && mv $$f.tmp $$f'
+# avatars, covers, team flags, replays and screenshots are a few MB: archived as root, then everything older than a week goes.
+ExecStart=+/bin/sh -c 'set -e; f=/var/backups/xc-osu/files-$$(date +%%F).tar.gz.age; tar cz --ignore-failed-read -C /var/lib/xc-osu avatars covers team-flags replays screenshots | age -r age1c7yr93u0qgr6cdfcagrvtvkk728qn8hl30jm8znmvc45r9mgdyqsgx84hd > $$f.tmp && mv $$f.tmp $$f; find /var/backups/xc-osu -type f -mtime +6 -delete'

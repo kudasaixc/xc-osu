@@ -1,11 +1,12 @@
 // xc-osu! web: sign in, registration, account settings. xc softworks (kudasaixc)
-import { L, state, t, esc, num, countryName, MODES, modeName, api, signIn, signOut, loadMe, signedIn, requireSignIn, renderUserText, act, userLink, avatarUrl, ApiError, download } from './core.js';
+import { L, state, t, esc, num, countryName, MODES, modeName, api, signIn, signOut, loadMe, signedIn, requireSignIn, renderUserText, act, userLink, avatarUrl, ApiError, download, verifyCode, dateTimeText } from './core.js';
 
 /** Only follow "next" back to a page of this site. */
 const nextPath = (query) => { const n = query.get('next') || ''; return n.startsWith('/') && !n.startsWith('//') && !n.startsWith('/login') ? n : '/'; };
 
 export async function login({ query, go, refreshShell }) {
   if (signedIn() && state.me) { go(nextPath(query), { replace: true }); return null; }
+  if (signedIn() && state.needsCode) return codeForm({ query, go, refreshShell });
   return {
     title: t('Sign in', 'Connexion'),
     html: `<section class="panel narrow"><h1>${t('Sign in', 'Connexion')}</h1>
@@ -20,11 +21,60 @@ export async function login({ query, go, refreshShell }) {
       const form = view.querySelector('#login');
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
-        if (await act(form.querySelector('button'), form.querySelector('.msg'), () => signIn(form.username.value.trim(), form.password.value))) { refreshShell(); go(nextPath(query), { replace: true }); }
+        if (await act(form.querySelector('button'), form.querySelector('.msg'), () => signIn(form.username.value.trim(), form.password.value))) {
+          refreshShell();
+          if (state.needsCode) go('/login' + (query.get('next') ? '?next=' + encodeURIComponent(query.get('next')) : ''), { replace: true });
+          else go(nextPath(query), { replace: true });
+        }
       });
     },
   };
 }
+
+/** Second step of signing in to an account with two-factor authentication. */
+function codeForm({ query, go, refreshShell }) {
+  return {
+    title: t('Two-factor authentication', 'Double authentification'),
+    html: `<section class="panel narrow"><h1>${t('Enter your code', 'Entre ton code')}</h1>
+      <p class="muted">${t('Open your authenticator app and enter the 6-digit code shown for xc-osu!.', 'Ouvre ton application d’authentification et entre le code à 6 chiffres affiché pour xc-osu!.')}</p>
+      <form id="code" class="form">
+        <label>${t('Code', 'Code')}<input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}" maxlength="7" required autofocus></label>
+        <button class="btn" type="submit">${t('Verify', 'Vérifier')}</button> <span class="msg" role="alert"></span>
+      </form>
+      <p class="muted small"><button type="button" class="link" id="cancel">${t('Use another account', 'Utiliser un autre compte')}</button></p></section>`,
+    mount(view) {
+      const form = view.querySelector('#code');
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (await act(form.querySelector('button'), form.querySelector('.msg'), () => verifyCode(form.code.value.replace(/\s/g, '')))) { refreshShell(); go(nextPath(query), { replace: true }); }
+      });
+      view.querySelector('#cancel').addEventListener('click', async () => { await signOut(); refreshShell(); go('/login', { replace: true }); });
+    },
+  };
+}
+
+/** The link of the confirmation email lands here (#token=…): the token is posted, never sent in an address. */
+export async function verifyEmail({ hash }) {
+  const token = new URLSearchParams((hash || '').replace(/^#/, '')).get('token');
+  return {
+    title: t('Confirm your email address', 'Confirme ton adresse e-mail'),
+    html: `<section class="panel narrow"><h1>${t('Confirm your email address', 'Confirme ton adresse e-mail')}</h1>
+      ${token ? `<p>${t('Press the button to confirm this address for your xc-osu! account.', 'Appuie sur le bouton pour confirmer cette adresse pour ton compte xc-osu!.')}</p>
+      <div><button class="btn" id="confirm">${t('Confirm', 'Confirmer')}</button> <span class="msg" role="status"></span></div>`
+      : `<p>${t('This link is incomplete. Request a new one from your account settings.', 'Ce lien est incomplet. Redemande-en un depuis tes réglages.')}</p>`}
+      <p><a href="${L('/home/account/edit')}">${t('Account settings', 'Réglages du compte')}</a></p></section>`,
+    mount(view) {
+      if (token) history.replaceState(null, '', location.pathname + location.search);
+      const button = view.querySelector('#confirm');
+      button?.addEventListener('click', async () => {
+        if (await act(button, button.nextElementSibling, () => api('/api/xc/account/email/verify', { method: 'POST', json: { token } }), t('Address confirmed. Thank you!', 'Adresse confirmée. Merci !'))) button.disabled = true;
+      });
+    },
+  };
+}
+
+const birthYearField = () => `<label>${t('Year of birth', 'Année de naissance')}<input name="birth_year" type="number" inputmode="numeric" min="${new Date().getFullYear() - 120}" max="${new Date().getFullYear()}" required>
+  <small>${t('Only the year is kept. xc-osu! is for players aged 13 or over; under 16, private messages are limited to friends.', 'Seule l’année est gardée. xc-osu! est réservé aux joueurs de 13 ans ou plus ; avant 16 ans, les messages privés sont limités aux amis.')}</small></label>`;
 
 export async function register({ query, go, refreshShell }) {
   if (signedIn() && state.me) { go('/', { replace: true }); return null; }
@@ -35,7 +85,9 @@ export async function register({ query, go, refreshShell }) {
       <form id="register" class="form">
         <label>${t('Username', 'Nom d’utilisateur')}<input name="username" autocomplete="username" required minlength="3" maxlength="15"><small>${t('3 to 15 characters: letters, digits, spaces, - _ [ ]', '3 à 15 caractères : lettres, chiffres, espaces, - _ [ ]')}</small></label>
         <label>E-mail<input name="email" type="email" autocomplete="email" required></label>
-        <label>${t('Password', 'Mot de passe')}<input name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="256"><small>${t('8 to 256 characters', '8 à 256 caractères')}</small></label>
+        <label>${t('Password', 'Mot de passe')}<input name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="256"><small>${t('8 to 256 characters. Passwords known from data breaches are refused.', '8 à 256 caractères. Les mots de passe connus de fuites de données sont refusés.')}</small></label>
+        ${birthYearField()}
+        <p class="muted small">${t('By creating an account you accept the', 'En créant un compte, tu acceptes les')} <a href="${L('/wiki/Legal')}">${t('terms', 'conditions')}</a> ${t('and the', 'et la')} <a href="${L('/wiki/Privacy')}">${t('privacy policy', 'politique de confidentialité')}</a>.</p>
         <button class="btn" type="submit">${t('Create my account', 'Créer mon compte')}</button> <span class="msg" role="alert"></span>
       </form>
       <p class="muted small"><a href="${L('/login')}">${t('I already have an account', 'J’ai déjà un compte')}</a></p></section>`,
@@ -43,14 +95,24 @@ export async function register({ query, go, refreshShell }) {
       const form = view.querySelector('#register');
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
+        const year = Number(form.birth_year.value);
+        if (new Date().getFullYear() - year < 13) { const msg = form.querySelector('.msg'); msg.textContent = t('xc-osu! accounts are for players aged 13 or over.', 'Les comptes xc-osu! sont réservés aux joueurs de 13 ans ou plus.'); msg.className = 'msg bad'; return; }
+        let pending = false;
         const ok = await act(form.querySelector('button'), form.querySelector('.msg'), async () => {
-          const r = await fetch('/users', { method: 'POST', body: new URLSearchParams({ 'user[username]': form.username.value.trim(), 'user[user_email]': form.email.value.trim(), 'user[password]': form.password.value }) });
+          const r = await fetch('/users', { method: 'POST', body: new URLSearchParams({ 'user[username]': form.username.value.trim(), 'user[user_email]': form.email.value.trim(), 'user[password]': form.password.value, 'user[birth_year]': String(year) }) });
           const data = await r.json().catch(() => ({}));
           const errors = data?.form_error?.user;
           if (errors) throw new ApiError(422, Object.values(errors).flat().join(' '));
           if (!r.ok) throw new ApiError(r.status, data.error || data.message || t('Registration failed. Try again in a moment.', 'Inscription impossible. Réessaie dans un instant.'));
-          await signIn(form.username.value.trim(), form.password.value);
+          // the answer is the same when the address already has an account (its owner gets an email instead), so signing in may fail here.
+          try { await signIn(form.username.value.trim(), form.password.value); }
+          catch { pending = true; }
         });
+        if (ok && pending) {
+          const msg = form.querySelector('.msg');
+          msg.textContent = t('Check your inbox to continue.', 'Consulte ta boîte mail pour continuer.'); msg.className = 'msg good';
+          return;
+        }
         if (ok) { refreshShell(); go(nextPath(query) === '/' ? '/home/account/edit' : nextPath(query), { replace: true }); }
       });
     },
@@ -108,6 +170,10 @@ export async function settings({ go, refreshShell, hash }) {
           ? t('You can already play. Chat, comments, reports, your avatar, cover and me! page, teams and hosting multiplayer rooms unlock once your address is confirmed. Open the link we sent you; it is valid for 30 minutes.', 'Tu peux déjà jouer. Le chat, les commentaires, les signalements, ton avatar, ta bannière et ta page me!, les équipes et la création de salons multijoueur se débloquent une fois ton adresse confirmée. Ouvre le lien qu’on t’a envoyé ; il est valable 30 minutes.')
           : t('A confirmed address is what lets you recover your account if you lose your password.', 'Une adresse confirmée te permet de récupérer ton compte si tu perds ton mot de passe.')}</p>
         <div><button class="btn ghost" id="verify-email">${t('Send the confirmation email again', 'Renvoyer l’e-mail de confirmation')}</button> <span class="msg" id="verify-email-msg" role="alert"></span></div></section>`}
+      ${acct.birth_year == null ? `<form class="panel form" id="birth"><h2>${t('Your age', 'Ton âge')}</h2>
+        <p class="muted">${t('Chat, comments, teams and multiplayer rooms need your year of birth (asked once, it cannot be changed afterwards).', 'Le chat, les commentaires, les équipes et les salons multijoueur demandent ton année de naissance (demandée une seule fois, elle ne peut plus être changée ensuite).')}</p>
+        ${birthYearField()}
+        <div><button class="btn" type="submit">${t('Save', 'Enregistrer')}</button> <span class="msg" role="status"></span></div></form>` : ''}
       <section class="panel" id="images"><h2>${t('Avatar and cover', 'Avatar et bannière')}</h2>
         <div class="images">
           <div><img id="avatar-img" class="avatar" src="${esc(avatarUrl(acct))}" width="120" height="120" alt="${t('Current avatar', 'Avatar actuel')}">
@@ -148,9 +214,31 @@ export async function settings({ go, refreshShell, hash }) {
         <div><button class="btn" type="submit">${t('Change password', 'Changer le mot de passe')}</button> <span class="msg" role="status"></span></div>
       </form>
 
-      <section class="panel"><h2>${t('Session', 'Session')}</h2>
-        <p class="muted">${t('Signing out here does not sign you out of the game.', 'Se déconnecter ici ne te déconnecte pas du jeu.')}</p>
-        <button type="button" class="btn ghost" id="logout">${t('Sign out of this site', 'Se déconnecter de ce site')}</button></section>
+      <section class="panel" id="two-factor"><h2>${t('Two-factor authentication', 'Double authentification')}</h2>
+        <p class="muted">${acct.two_factor
+          ? t('On. Signing in (in the game or here) asks for the code of your authenticator app.', 'Activée. La connexion (dans le jeu ou ici) demande le code de ton application d’authentification.')
+          : t('Protect your account with a code from an authenticator app (Aegis, Google Authenticator, 1Password…) in addition to your password.', 'Protège ton compte avec un code d’application d’authentification (Aegis, Google Authenticator, 1Password…) en plus du mot de passe.')}</p>
+        <form class="form form-grid" id="tfa">
+          <label>${t('Password', 'Mot de passe')}<input name="password" type="password" autocomplete="current-password" required></label>
+          ${acct.two_factor ? `<label>${t('Current code', 'Code actuel')}<input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required></label>` : ''}
+          <div><button class="btn${acct.two_factor ? ' ghost danger' : ''}" type="submit">${acct.two_factor ? t('Turn off', 'Désactiver') : t('Set up', 'Configurer')}</button> <span class="msg" role="status"></span></div>
+        </form>
+        <div id="tfa-setup" hidden>
+          <p>${t('Add this key to your authenticator app (or open the link on your phone), then enter the code it shows.', 'Ajoute cette clé dans ton application d’authentification (ou ouvre le lien sur ton téléphone), puis entre le code affiché.')}</p>
+          <p><code id="tfa-secret"></code> · <a id="tfa-link" href="#">${t('open in the app', 'ouvrir dans l’application')}</a></p>
+          <form class="form form-grid" id="tfa-enable"><label>${t('Code', 'Code')}<input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required></label>
+            <div><button class="btn" type="submit">${t('Turn on', 'Activer')}</button> <span class="msg" role="status"></span></div></form>
+        </div>
+      </section>
+
+      <section class="panel" id="sessions"><h2>${t('Signed-in devices', 'Appareils connectés')}</h2>
+        <p class="muted">${t('Each place where your account is signed in (the game, this site, another browser). End any you do not recognise, then change your password.', 'Chaque endroit où ton compte est connecté (le jeu, ce site, un autre navigateur). Ferme ceux que tu ne reconnais pas, puis change ton mot de passe.')}</p>
+        <ul class="list" id="session-list"><li class="muted">${t('Loading…', 'Chargement…')}</li></ul>
+        <div><button type="button" class="btn ghost" id="revoke-others">${t('Sign out everywhere else', 'Déconnecter partout ailleurs')}</button> <button type="button" class="btn ghost" id="logout">${t('Sign out of this site', 'Se déconnecter de ce site')}</button> <span class="msg" id="session-msg" role="status"></span></div></section>
+
+      <section class="panel" id="telemetry"><h2>${t('Diagnostics', 'Diagnostics')}</h2>
+        <p class="muted">${t('The game can send performance measurements (frame times, loading times, errors, graphics card model) to help fix stutters. They are not linked to your account and are deleted after 45 days. Same switch as in the launcher options.', 'Le jeu peut envoyer des mesures de performance (temps d’image, temps de chargement, erreurs, modèle de carte graphique) pour corriger les saccades. Elles ne sont pas liées à ton compte et sont supprimées après 45 jours. Même réglage que dans les options du launcher.')}</p>
+        <label class="check"><input type="checkbox" id="telemetry-on"> ${t('Send performance reports from this browser', 'Envoyer les rapports de performance depuis ce navigateur')}</label></section>
 
       <section class="panel" id="data"><h2>${t('Your data', 'Tes données')}</h2>
         <p class="muted">${t('Download everything xc-osu! keeps about your account (profile, scores, comments, messages…) as a JSON file.', 'Télécharge tout ce que xc-osu! garde sur ton compte (profil, scores, commentaires, messages…) dans un fichier JSON.')} <a href="${L('/wiki/Privacy')}">${t('Privacy', 'Confidentialité')}</a></p>
@@ -166,6 +254,57 @@ export async function settings({ go, refreshShell, hash }) {
         </form></section>`,
 
     mount(view) {
+      // ---- year of birth
+      const birth = view.querySelector('#birth');
+      birth?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (await act(birth.querySelector('button'), birth.querySelector('.msg'), () => api('/api/xc/account', { method: 'PUT', json: { birth_year: Number(birth.birth_year.value) } }), t('Saved.', 'Enregistré.'))) birth.querySelector('button').disabled = true;
+      });
+
+      // ---- two-factor authentication
+      const tfa = view.querySelector('#tfa'), setup = view.querySelector('#tfa-setup');
+      tfa.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (acct.two_factor) {
+          if (await act(tfa.querySelector('button'), tfa.querySelector('.msg'), () => api('/api/xc/account/2fa/disable', { method: 'POST', json: { password: tfa.password.value, code: tfa.code.value } }), t('Two-factor authentication is off.', 'Double authentification désactivée.'))) tfa.querySelector('button').disabled = true;
+          return;
+        }
+        let data;
+        if (await act(tfa.querySelector('button'), tfa.querySelector('.msg'), async () => { data = await api('/api/xc/account/2fa/setup', { method: 'POST', json: { password: tfa.password.value } }); })) {
+          view.querySelector('#tfa-secret').textContent = data.secret.replace(/(.{4})/g, '$1 ').trim();
+          view.querySelector('#tfa-link').href = data.uri;
+          setup.hidden = false; tfa.hidden = true;
+        }
+      });
+      const enable = view.querySelector('#tfa-enable');
+      enable.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (await act(enable.querySelector('button'), enable.querySelector('.msg'), () => api('/api/xc/account/2fa/enable', { method: 'POST', json: { code: enable.code.value } }), t('Two-factor authentication is on. Your other devices were signed out.', 'Double authentification activée. Tes autres appareils ont été déconnectés.'))) enable.querySelector('button').disabled = true;
+      });
+
+      // ---- sessions
+      const sessionList = view.querySelector('#session-list'), sessionMsg = view.querySelector('#session-msg');
+      const loadSessions = async () => {
+        const list = await api('/api/xc/account/sessions');
+        sessionList.innerHTML = list.map((s) => `<li class="score" data-session="${esc(s.id)}"><div class="score-main"><b>${s.current ? t('This browser', 'Ce navigateur') : t('Signed-in device', 'Appareil connecté')}</b>
+          <span class="score-meta">${s.created_at ? t('since', 'depuis le') + ' ' + esc(dateTimeText(s.created_at)) : ''}${s.verified ? '' : ' · ' + t('waiting for its code', 'en attente du code')}</span></div>
+          ${s.current ? '' : `<button type="button" class="btn ghost" data-end>${t('Sign out', 'Déconnecter')}</button>`}</li>`).join('') || `<li class="muted">${t('No other session.', 'Aucune autre session.')}</li>`;
+      };
+      sessionList.addEventListener('click', async (e) => {
+        const li = e.target.closest('[data-end]')?.closest('li');
+        if (li && await act(e.target, sessionMsg, () => api('/api/xc/account/sessions/' + encodeURIComponent(li.dataset.session), { method: 'DELETE' }))) loadSessions();
+      });
+      const others = view.querySelector('#revoke-others');
+      others.addEventListener('click', async () => { if (await act(others, sessionMsg, () => api('/api/xc/account/sessions/revoke-others', { method: 'POST' }), t('Your other devices were signed out.', 'Tes autres appareils ont été déconnectés.'))) loadSessions(); });
+      loadSessions().catch((e) => { sessionList.innerHTML = `<li class="bad">${esc(e.message)}</li>`; });
+
+      // ---- telemetry (read by the game page of this same site: js/xc-telemetry.js)
+      // the same switch as the launcher's "diagnostics" option (stored by the launcher in xc.launcher.v1).
+      const tm = view.querySelector('#telemetry-on');
+      const launcher = () => { try { return JSON.parse(localStorage.getItem('xc.launcher.v1') || '{}') || {}; } catch { return {}; } };
+      tm.checked = launcher().telemetry !== false;
+      tm.addEventListener('change', () => { try { const o = launcher(); o.telemetry = tm.checked; localStorage.setItem('xc.launcher.v1', JSON.stringify(o)); } catch { } });
+
       // ---- images
       const imgMsg = view.querySelector('#img-msg');
       const bust = (url) => url.split('?')[0] + '?t=' + Date.now();

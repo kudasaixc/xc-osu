@@ -22,9 +22,16 @@ namespace XcOsu.Server.Api
             allowed_hosts.Contains(host) || extra_redirect_hosts.Contains(host)
             || redirect_suffixes.Any(suffix => host.EndsWith(suffix, StringComparison.OrdinalIgnoreCase));
 
+        /// <summary>The large versioned client resources (cached on disk) may be big; anything else the game fetches (covers, previews, avatars) is small.</summary>
         private const long max_bytes = 256L * 1024 * 1024;
+        private const long max_bytes_other = 32L * 1024 * 1024;
 
+        /// <summary>What one address may pull through the proxy in an hour: plenty for playing, nothing like a free CDN.</summary>
+        private const long bytes_per_address_hour = 3L * 1024 * 1024 * 1024;
+
+        /// <summary>Held only while the cache directory itself changes (eviction, a file moving in); downloads run outside it.</summary>
         internal static readonly SemaphoreSlim cache_gate = new(1, 1);
+        private static readonly ConcurrentDictionary<string, SemaphoreSlim> file_gates = new();
 
         public static void Map(WebApplication app)
         {
@@ -38,13 +45,16 @@ namespace XcOsu.Server.Api
                     return Results.StatusCode(403);
 
                 var http = factory.CreateClient("proxy");
+                string address = Services.ClientAddress.Key(ctx);
+                if (Services.AbuseGuard.Count("proxy-bytes:" + address) > bytes_per_address_hour) return Results.StatusCode(429);
 
                 // large, versioned client resources (online.db etc.) are cached on disk.
                 if (uri.Host == "assets.ppy.sh" && uri.AbsolutePath.StartsWith("/client-resources/", StringComparison.Ordinal))
                 {
                     string name = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(uri.AbsoluteUri)));
                     string file = Path.Combine(cacheDir, name);
-                    var gate = cache_gate;
+                    // one download per file at a time; other files (and the rest of the proxy) are never held up by it.
+                    var gate = file_gates.GetOrAdd(name, _ => new SemaphoreSlim(1, 1));
                     await gate.WaitAsync(ctx.RequestAborted);
 
                     FileStream cachedStream;
@@ -54,22 +64,28 @@ namespace XcOsu.Server.Api
                         {
                             using var resp = await fetch(http, uri, ctx.RequestAborted);
                             if (!resp.IsSuccessStatusCode) return Results.StatusCode((int)resp.StatusCode);
-                            var files = new DirectoryInfo(cacheDir).GetFiles().OrderBy(f => f.LastAccessTimeUtc).ToArray();
-                            long size = files.Sum(f => f.Length);
-                            foreach (var old in files)
-                            {
-                                if (size <= 2L * 1024 * 1024 * 1024 - max_bytes) break;
-                                long length = old.Length;
-                                old.Delete();
-                                size -= length;
-                            }
                             string tmp = file + "." + Guid.NewGuid().ToString("N") + ".tmp";
                             try
                             {
                                 await using (var fs = File.Create(tmp))
                                 await using (var source = await resp.Content.ReadAsStreamAsync(ctx.RequestAborted))
-                                    await copyCapped(source, fs, ctx.RequestAborted);
-                                File.Move(tmp, file, true);
+                                    await copyCapped(source, fs, max_bytes, null, ctx.RequestAborted);
+
+                                await cache_gate.WaitAsync(ctx.RequestAborted);
+                                try
+                                {
+                                    var files = new DirectoryInfo(cacheDir).GetFiles().Where(f => f.Extension != ".tmp").OrderBy(f => f.LastAccessTimeUtc).ToArray();
+                                    long size = files.Sum(f => f.Length);
+                                    foreach (var old in files)
+                                    {
+                                        if (size <= 2L * 1024 * 1024 * 1024 - max_bytes) break;
+                                        long length = old.Length;
+                                        old.Delete();
+                                        size -= length;
+                                    }
+                                    File.Move(tmp, file, true);
+                                }
+                                finally { cache_gate.Release(); }
                             }
                             finally { if (File.Exists(tmp)) File.Delete(tmp); }
                         }
@@ -81,6 +97,7 @@ namespace XcOsu.Server.Api
                         gate.Release();
                     }
 
+                    Services.AbuseGuard.Spend("proxy-bytes:" + address, cachedStream.Length, long.MaxValue, TimeSpan.FromHours(1));
                     ctx.Response.Headers.CacheControl = "public, max-age=3600";
                     return Results.Stream(cachedStream, "application/octet-stream", enableRangeProcessing: true);
                 }
@@ -92,7 +109,7 @@ namespace XcOsu.Server.Api
                     return Results.StatusCode((int)upstream.StatusCode);
                 }
 
-                if (upstream.Content.Headers.ContentLength > max_bytes)
+                if (upstream.Content.Headers.ContentLength > max_bytes_other)
                 {
                     upstream.Dispose();
                     return Results.StatusCode(413);
@@ -111,7 +128,7 @@ namespace XcOsu.Server.Api
                 return Results.Stream(async output =>
                 {
                     using var source = await upstream.Content.ReadAsStreamAsync(ctx.RequestAborted);
-                    await copyCapped(source, output, ctx.RequestAborted);
+                    await copyCapped(source, output, max_bytes_other, "proxy-bytes:" + address, ctx.RequestAborted);
                 }, type);
             });
         }
@@ -136,7 +153,7 @@ namespace XcOsu.Server.Api
             throw new BadHttpRequestException("Too many redirects", 502);
         }
 
-        private static async Task copyCapped(Stream from, Stream to, CancellationToken ct)
+        private static async Task copyCapped(Stream from, Stream to, long cap, string? budget, CancellationToken ct)
         {
             byte[] buffer = new byte[81920];
             long total = 0;
@@ -145,7 +162,8 @@ namespace XcOsu.Server.Api
             while ((read = await from.ReadAsync(buffer, ct)) > 0)
             {
                 total += read;
-                if (total > max_bytes) throw new InvalidOperationException("proxied file too large");
+                if (total > cap) throw new InvalidOperationException("proxied file too large");
+                if (budget != null) Services.AbuseGuard.Spend(budget, read, long.MaxValue, TimeSpan.FromHours(1));
                 await to.WriteAsync(buffer.AsMemory(0, read), ct);
             }
         }

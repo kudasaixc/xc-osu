@@ -16,7 +16,21 @@ public sealed class PasswordRecovery(Db db, IConfiguration config, ILogger<Passw
 
     private static string digest(string token) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
 
-    public async Task Request(string email)
+    /// <summary>
+    /// Starts a reset. The work (and the mail delivery) runs in the background and the caller answers at once, the same way
+    /// whether the address has an account or not: the response time must not tell which addresses are registered.
+    /// </summary>
+    public Task Request(string email)
+    {
+        _ = Task.Run(async () =>
+        {
+            try { await requestCore(email); }
+            catch (Exception e) { log.LogError("Password reset request failed ({ErrorType}).", e.GetType().Name); }
+        });
+        return Task.CompletedTask;
+    }
+
+    private async Task requestCore(string email)
     {
         using var c = db.Open();
         var user = c.Query("SELECT id, email FROM users WHERE email = @e AND restricted = 0",
@@ -60,16 +74,19 @@ public sealed class PasswordRecovery(Db db, IConfiguration config, ILogger<Passw
         if (token.Length != 64 || !token.All(Uri.IsHexDigit)) return false;
         string hash = digest(token);
         if (password.Length is < Accounts.PASSWORD_MIN or > Accounts.PASSWORD_MAX) return false;
-        string passwordHash = Accounts.HashPassword(password);
         using var c = db.Open();
         using var tx = c.BeginTransaction();
         long? id = c.Scalar<long?>("DELETE FROM password_resets WHERE token_hash = @h AND expires_at > @n RETURNING user_id",
             ("@h", hash), ("@n", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
         if (id == null) return false;
+        var owner = accounts.Get((int)id.Value, c);
+        if (Accounts.PasswordProblem(password, owner?.Username, owner?.Email) != null) return false;
+        string passwordHash = Accounts.HashPassword(password);
         // the link only ever travels to the account's address, so using it also proves control of that mailbox.
         c.Exec("UPDATE users SET password_hash = @h, email_verified = 1 WHERE id = @u", ("@h", passwordHash), ("@u", id));
         c.Exec("DELETE FROM tokens WHERE user_id = @u", ("@u", id));
         c.Exec("DELETE FROM password_resets WHERE user_id = @u", ("@u", id));
+        AuditLog.Write(c, "account.password_reset", (int)id.Value, "user", id);
         tx.Commit();
         accounts.NotifyRevoked((int)id.Value);
         return true;

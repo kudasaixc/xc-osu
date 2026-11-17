@@ -109,6 +109,8 @@ namespace XcOsu.Server.Services
             return o;
         }
 
+        public static bool PostExists(IConfiguration config, long id) => posts(config, "en").Any(p => p.Id == id);
+
         // ------------------------------------------------------------------ wiki
 
         private static readonly Regex wiki_path = new Regex(@"^[A-Za-z0-9_!'-]+(/[A-Za-z0-9_!'-]+)*$", RegexOptions.Compiled);
@@ -230,6 +232,8 @@ namespace XcOsu.Server.Services
             }
             return list;
         }
+
+        public static bool BuildExists(long id) => builds("en").Any(b => b.Value<long>("id") == id);
 
         private static JObject brief(JObject build) => new JObject
         {

@@ -1,0 +1,53 @@
+# xc-osu! replay verifier: plays back queued replays, isolated from the server. xc softworks (kudasaixc)
+# Install: sudo deploy/setup-isolation.sh --verifier
+[Unit]
+Description=xc-osu! replay verifier (isolated)
+After=local-fs.target
+
+[Service]
+User=xc-osu-verify
+Group=xc-osu
+UMask=0007
+ExecStart=/opt/xc-osu/verify-runner.sh
+Environment=HOME=/var/lib/xc-osu-verify/.home
+Environment=DOTNET_CLI_TELEMETRY_OPTOUT=1
+Environment=DOTNET_GCHeapHardLimit=0x40000000
+Restart=always
+RestartSec=3
+Nice=10
+
+# no network at all, nothing but its job directory and the verifier binaries
+PrivateNetwork=true
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX
+NoNewPrivileges=true
+CapabilityBoundingSet=
+ProtectSystem=strict
+ReadWritePaths=/var/lib/xc-osu-verify
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+TemporaryFileSystem=/var/www:ro
+BindReadOnlyPaths=/var/www/osu/server/verifier /var/www/osu/server/publish
+InaccessiblePaths=-/var/lib/xc-osu -/var/run/postgresql -/run/postgresql -/var/backups
+ProtectProc=invisible
+ProcSubset=pid
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+MemoryMax=3G
+TasksMax=512
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

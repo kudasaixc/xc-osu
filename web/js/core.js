@@ -1,6 +1,40 @@
 // xc-osu! web. Shared plumbing: language, session, API calls, formatting, safe HTML. xc softworks (kudasaixc)
 import { renderBBCode, looksLikeBBCode } from './bbcode.js';
 
+// ---------------------------------------------------------------- Trusted Types
+// The site builds its pages as HTML strings. Escaping (esc, sanitize, the BBCode renderer) is what keeps player text inert;
+// as a second line, the server sends `require-trusted-types-for 'script'` for /web, and every string that reaches innerHTML
+// or insertAdjacentHTML goes through this default policy first: script elements, event-handler attributes and javascript:
+// URLs are removed whatever the page code did. Browsers without Trusted Types simply rely on the escaping.
+const TT = globalThis.trustedTypes;
+const inert = TT?.createPolicy('xc-inert', { createHTML: (s) => s }); // only for parsing into a <template> (never rendered as is)
+const ELEMENTS_DROPPED = new Set(['SCRIPT', 'OBJECT', 'EMBED', 'BASE', 'META', 'LINK', 'FRAME', 'FRAMESET', 'NOSCRIPT', 'APPLET', 'PORTAL']);
+const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'xlink:href', 'poster', 'background', 'data', 'srcset', 'ping', 'cite']);
+const unsafeUrl = (v) => /^(javascript|vbscript|data):/i.test(String(v).replace(/[\u0000-\u0020\u007f-\u009f]/g, '')) && !/^data:image\/(png|jpe?g|gif|webp);/i.test(String(v).trim());
+export function scrubHTML(html) {
+  const template = document.createElement('template');
+  template.innerHTML = inert ? inert.createHTML(String(html)) : String(html);
+  const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_ELEMENT);
+  const doomed = [];
+  for (let el = walker.nextNode(); el; el = walker.nextNode()) {
+    if (ELEMENTS_DROPPED.has(el.tagName)) { doomed.push(el); continue; }
+    if (el.tagName === 'IFRAME') {
+      if (!/^https:\/\/www\.youtube-nocookie\.com\/embed\/[\w-]{11}$/.test(el.getAttribute('src') || '')) { doomed.push(el); continue; }
+      el.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-presentation');
+      el.setAttribute('referrerpolicy', 'no-referrer');
+    }
+    for (const attr of [...el.attributes]) {
+      const name = attr.name.toLowerCase();
+      if (name.startsWith('on') || name === 'srcdoc' || (URL_ATTRS.has(name) && unsafeUrl(attr.value))) el.removeAttribute(attr.name);
+    }
+  }
+  doomed.forEach((el) => el.remove());
+  return template.innerHTML;
+}
+if (TT) {
+  try { TT.createPolicy('default', { createHTML: (s) => scrubHTML(s), createScript: () => null, createScriptURL: () => null }); } catch { /* already defined */ }
+}
+
 export const WEB = '/web';
 export const L = (path = '/') => WEB + (path.startsWith('/') ? path : '/' + path);
 export const ASSETS = new URL('..', import.meta.url).href; // the stamped asset folder this module was served from
@@ -67,22 +101,27 @@ export class ApiError extends Error {
 }
 /** Thrown when a page needs a signed-in player; the router sends them to the sign-in page and back. */
 export class NeedSignIn extends Error { }
+/** Thrown while the session still waits for its two-factor code; the router shows the code form. */
+export class NeedCode extends Error { }
 
+// The session lives in HttpOnly cookies set by the server (browser_session): no token is ever readable by page scripts.
+// Only the fact "signed in" is remembered here. Tokens that older versions kept in localStorage are dropped.
 const AUTH_KEY = 'xc.web.auth';
 let auth = store.get(AUTH_KEY);
-export const signedIn = () => !!(auth?.access || auth?.session);
-function setAuth(next) { auth = next; store.set(AUTH_KEY, next); }
+if (auth && !auth.session) { auth = null; store.set(AUTH_KEY, null); }
+export const signedIn = () => !!auth?.session;
+function setAuth(next) { auth = next ? { session: true } : null; store.set(AUTH_KEY, auth); }
 
 async function tokenRequest(fields) {
   const r = await fetch('/oauth/token', { method: 'POST', body: new URLSearchParams({ client_id: '5', client_secret: 'xc', scope: '*', browser_session: '1', ...fields }) });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok || (!data.access_token && !data.browser_session)) throw new ApiError(r.status, data.message || data.error_description || t('Incorrect sign in', 'Identifiants incorrects'), data);
-  setAuth(data.browser_session ? { session: true } : { access: data.access_token, refresh: data.refresh_token });
+  if (!r.ok || !data.browser_session) throw new ApiError(r.status, data.message || data.error_description || t('Incorrect sign in', 'Identifiants incorrects'), data);
+  setAuth({ session: true });
 }
 let refreshing = null;
 function refresh() {
-  if (!auth?.refresh && !auth?.session) return Promise.reject(new NeedSignIn());
-  refreshing ||= tokenRequest({ grant_type: 'refresh_token', refresh_token: auth.refresh || '' })
+  if (!auth?.session) return Promise.reject(new NeedSignIn());
+  refreshing ||= tokenRequest({ grant_type: 'refresh_token', refresh_token: '' })
     .catch(() => { setAuth(null); state.me = null; state.friends = null; throw new NeedSignIn(); })
     .finally(() => { refreshing = null; });
   return refreshing;
@@ -94,7 +133,6 @@ function refresh() {
  */
 export async function api(path, { method = 'GET', json, form, file, retry = true } = {}) {
   const init = { method, headers: {} };
-  if (auth?.access) init.headers.Authorization = 'Bearer ' + auth.access;
   if (json !== undefined) { init.body = JSON.stringify(json); init.headers['Content-Type'] = 'application/json'; }
   else if (form !== undefined) init.body = new URLSearchParams(form);
   else if (file !== undefined) { init.body = new FormData(); init.body.append('file', file); }
@@ -106,6 +144,7 @@ export async function api(path, { method = 'GET', json, form, file, retry = true
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { }
   if (r.status === 401) throw new NeedSignIn();
+  if (r.status === 403 && data?.authentication === 'verify') { state.needsCode = true; throw new NeedCode(); }
   if (!r.ok) throw new ApiError(r.status, data?.error || data?.message || `${t('Error', 'Erreur')} ${r.status}`, data);
   return lowerKeys(data);
 }
@@ -126,25 +165,33 @@ export const v2 = (path, options) => api('/api/v2' + path, options);
 export const requireSignIn = () => { if (!signedIn()) throw new NeedSignIn(); };
 
 export async function loadMe() {
-  if (!signedIn()) { state.me = null; state.friends = null; return null; }
+  if (!signedIn()) { state.me = null; state.friends = null; state.needsCode = false; return null; }
   try {
-    if (auth?.access && auth?.refresh) await refresh(); // Move legacy browser tokens into HttpOnly cookies.
-    state.me = await v2('/me');
-    state.friends = new Set((await v2('/friends')).map((f) => f.target_id));
+    const me = await v2('/me');
+    // an account with two-factor authentication: this session must give its code before anything else works.
+    state.needsCode = me.session_verified === false;
+    state.me = state.needsCode ? null : me;
+    state.friends = state.needsCode ? null : new Set((await v2('/friends')).map((f) => f.target_id));
   } catch (e) { if (!(e instanceof NeedSignIn)) throw e; state.me = null; state.friends = null; }
   return state.me;
+}
+/** Gives the two-factor code of this session. */
+export async function verifyCode(code) {
+  await api('/api/v2/session/verify', { method: 'POST', form: { verification_key: code } });
+  state.needsCode = false;
+  return loadMe();
 }
 export async function signIn(username, password) {
   await tokenRequest({ grant_type: 'password', username, password });
   return loadMe();
 }
 export async function signOut() {
-  try { if (signedIn()) await fetch('/api/v2/oauth/tokens/current', { method: 'DELETE', headers: auth?.access ? { Authorization: 'Bearer ' + auth.access } : {} }); } catch { }
-  setAuth(null); state.me = null; state.friends = null;
+  try { if (signedIn()) await fetch('/api/v2/oauth/tokens/current', { method: 'DELETE' }); } catch { }
+  setAuth(null); state.me = null; state.friends = null; state.needsCode = false;
 }
 /** Fetch a protected file (replay, beatmap archive) with the session token and hand it to the browser as a download. */
 export async function download(path, filename) {
-  const r = await fetch(path, { headers: auth?.access ? { Authorization: 'Bearer ' + auth.access } : {} });
+  const r = await fetch(path);
   if (r.status === 401) throw new NeedSignIn();
   if (!r.ok) throw new ApiError(r.status, t('This file is not available.', 'Ce fichier n’est pas disponible.'));
   const named = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(r.headers.get('Content-Disposition') || '');
@@ -158,9 +205,20 @@ export async function download(path, filename) {
 const ALLOWED = new Set(['A', 'B', 'BLOCKQUOTE', 'BR', 'CENTER', 'CODE', 'DEL', 'DIV', 'EM', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HR', 'I', 'IMG', 'LI', 'OL', 'P', 'PRE', 'S', 'SPAN', 'STRONG', 'TABLE', 'TBODY', 'TD', 'TH', 'THEAD', 'TR', 'U', 'UL']);
 const DROPPED = new Set(['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'FORM', 'INPUT', 'BUTTON', 'TEXTAREA', 'SELECT', 'LINK', 'META', 'SVG', 'MATH', 'VIDEO', 'AUDIO', 'TEMPLATE']);
 const safeUrl = (value) => { try { const u = new URL(value, location.origin); return u.protocol === 'https:' || u.protocol === 'http:' ? u.href : null; } catch { return null; } };
+/**
+ * An image written by somebody else (profile text, beatmap description): loaded through the server, so the visitor's address
+ * never reaches the site that hosts it. Images of this site stay direct.
+ */
+export function proxiedImage(src) {
+  try {
+    const u = new URL(src, location.origin);
+    if (u.origin === location.origin) return u.pathname + u.search;
+    return u.protocol === 'https:' ? '/api/xc/image?u=' + encodeURIComponent(u.href) : null;
+  } catch { return null; }
+}
 /** Keeps basic formatting from third-party HTML (beatmap descriptions come from a mirror) and drops everything else. */
 export function sanitize(html) {
-  const doc = new DOMParser().parseFromString(`<body>${html || ''}</body>`, 'text/html');
+  const doc = new DOMParser().parseFromString(inert ? inert.createHTML(`<body>${html || ''}</body>`) : `<body>${html || ''}</body>`, 'text/html');
   const walk = (node) => {
     for (const child of [...node.childNodes]) {
       if (child.nodeType === Node.TEXT_NODE) continue;
@@ -168,7 +226,7 @@ export function sanitize(html) {
       walk(child);
       if (!ALLOWED.has(child.tagName)) { child.replaceWith(...child.childNodes); continue; }
       const href = child.tagName === 'A' ? safeUrl(child.getAttribute('href')) : null;
-      const src = child.tagName === 'IMG' ? safeUrl(child.getAttribute('src')) : null;
+      const src = child.tagName === 'IMG' ? proxiedImage(safeUrl(child.getAttribute('src')) || '') : null;
       for (const attr of [...child.attributes]) child.removeAttribute(attr.name);
       if (child.tagName === 'A') { if (href) { child.setAttribute('href', href); child.setAttribute('rel', 'noopener nofollow'); child.setAttribute('target', '_blank'); } }
       if (child.tagName === 'IMG') { if (src) { child.setAttribute('src', src); child.setAttribute('loading', 'lazy'); child.setAttribute('referrerpolicy', 'no-referrer'); } else child.remove(); }
@@ -181,9 +239,10 @@ export function sanitize(html) {
 /** Player-written text (me! page): escaped first, then a small set of Markdown and BBCode marks is turned into tags. */
 export function renderUserText(raw) {
   if (looksLikeBBCode(raw || '')) return renderBBCode(raw);
+  const img = (_, src) => { const p = proxiedImage(src.replace(/&amp;/g, '&')); return p ? `<img src="${esc(p)}" loading="lazy" referrerpolicy="no-referrer" alt="">` : ''; };
   const inline = (s) => esc(s)
-    .replace(/\[img\](https?:\/\/[^\s\[\]"']+)\[\/img\]/gi, '<img src="$1" loading="lazy" referrerpolicy="no-referrer" alt="">')
-    .replace(/!\[[^\]]*\]\((https?:\/\/[^\s)"']+)\)/g, '<img src="$1" loading="lazy" referrerpolicy="no-referrer" alt="">')
+    .replace(/\[img\](https?:\/\/[^\s\[\]"']+)\[\/img\]/gi, img)
+    .replace(/!\[[^\]]*\]\((https?:\/\/[^\s)"']+)\)/g, img)
     .replace(/\[url=(https?:\/\/[^\s\[\]"']+)\](.+?)\[\/url\]/gi, '<a href="$1" target="_blank" rel="noopener nofollow">$2</a>')
     .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)"']+)\)/g, '<a href="$2" target="_blank" rel="noopener nofollow">$1</a>')
     .replace(/\[(b|i|u|s)\](.+?)\[\/\1\]/gi, '<$1>$2</$1>')

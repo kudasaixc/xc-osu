@@ -1,0 +1,18 @@
+# xc-osu!: dependency updates and security alerts for what the project itself pulls in.
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directory: /server/XcOsu.Server
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+  - package-ecosystem: nuget
+    directory: /server/XcOsu.ReplayVerifier
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+  - package-ecosystem: npm
+    directory: /tools
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: monthly }

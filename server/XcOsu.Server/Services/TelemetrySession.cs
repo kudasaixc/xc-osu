@@ -12,11 +12,11 @@ public static class TelemetrySession
     public static IResult Issue(HttpContext context)
     {
         if (context.Request.Headers["Sec-Fetch-Site"] == "cross-site") return Results.StatusCode(403);
-        if (!AbuseGuard.Allow("telemetry-session:" + context.Connection.RemoteIpAddress, 30, TimeSpan.FromHours(1)))
+        if (!AbuseGuard.Allow("telemetry-session:" + ClientAddress.Key(context), 30, TimeSpan.FromHours(1)))
             return Results.StatusCode(429);
         string payload = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds() + "." + Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
         string token = payload + "." + Convert.ToHexString(HMACSHA256.HashData(key, Encoding.UTF8.GetBytes(payload)));
-        context.Response.Cookies.Append(cookie, token, new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Strict, Path = "/", MaxAge = TimeSpan.FromHours(1), IsEssential = true });
+        context.Response.Cookies.Append(cookie, token, new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Strict, Path = "/", MaxAge = TimeSpan.FromHours(1), IsEssential = false });
         context.Response.Headers.CacheControl = "no-store";
         return Results.NoContent();
     }

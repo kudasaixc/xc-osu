@@ -17,11 +17,12 @@ public static class PasswordReset
             await recovery.Request(email);
             return Json.Ok(new { message = "If this email belongs to an account, a reset link will be sent. Check your spam folder too." });
         }).RequireRateLimiting("password-reset").WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(4096));
-        app.MapPost("/api/xc/password-reset/complete", async (HttpContext ctx, PasswordRecovery recovery) =>
+        app.MapPost("/api/xc/password-reset/complete", async (HttpContext ctx, PasswordRecovery recovery, PwnedPasswords pwned) =>
         {
             var p = await Json.Params(ctx.Request);
             string password = p("password") ?? "";
-            if (password.Length is < Accounts.PASSWORD_MIN or > Accounts.PASSWORD_MAX) return Json.Error(Accounts.PASSWORD_RULE, 422);
+            if (Accounts.PasswordProblem(password, null, null) is string weak) return Json.Error(weak, 422);
+            if (await pwned.IsBreached(password)) return Json.Error(PwnedPasswords.MESSAGE, 422);
             return recovery.Complete(p("token") ?? "", password)
                 ? Json.Ok(new { message = "Password updated. Sign in again with your new password." })
                 : Json.Error("This reset link is invalid or expired. Request a new one.", 422);

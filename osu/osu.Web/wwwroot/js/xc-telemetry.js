@@ -25,11 +25,9 @@ export function startTelemetry(options, build, log) {
     return;
   }
   const sid = crypto.randomUUID(), key = PREFIX + sid;
-  let iid;
-  try {
-    iid = localStorage.getItem(IID_KEY);
-    if (!/^[0-9a-f-]{16,40}$/.test(iid || '')) { iid = crypto.randomUUID(); localStorage.setItem(IID_KEY, iid); }
-  } catch { iid = undefined; }
+  // sessions are no longer linked to one another: no installation id is created, and an old one is forgotten.
+  const iid = undefined;
+  try { localStorage.removeItem(IID_KEY); } catch { }
   let q = 0, busy = false;
   const context = [];
   let contextDropped = 0;
@@ -325,6 +323,16 @@ export function startTelemetry(options, build, log) {
     live.heap = globalThis.xcWasmBytes?.(); live.cp = lastCheckpoint;
     saveLive();
   });
+  // the first minute after the window attaches is where iOS kills tabs for memory: sample the wasm heap every 2 s
+  // and send it right away, so the last sample before a kill reaches the server
+  let memSamples = 0;
+  const memTimer = setInterval(() => {
+    if (!pastAttach.has(lastCheckpoint)) return;
+    if (++memSamples > 30) { clearInterval(memTimer); return; }
+    event('mem', { heap: globalThis.xcWasmBytes?.(), js: performance.memory?.usedJSHeapSize, scr: where.scr,
+      up: Math.round((Date.now() - started) / 1000) });
+    void send();
+  }, 2000);
   function leaving(e) {
     if (lastCheckpoint && !pastAttach.has(lastCheckpoint) && !stallSent) {
       stallSent = true;

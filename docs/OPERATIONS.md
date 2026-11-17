@@ -58,3 +58,13 @@ validated, then remove them from backups deliberately.
 
 ## Read-only operator overview
 Run `/var/www/osu/tools/ops-status.sh` for disk, running build fingerprint, backup metadata, performance-history freshness, and canonical source state. It makes no network calls or changes.
+
+## Security operations (2026-11-17)
+- **Client addresses**: Apache resolves the visitor from `CF-Connecting-IP` (mod_remoteip, Cloudflare ranges only); every per-address limit of the server uses it, IPv6 reduced to its /64 (`Services/ClientAddress.cs`). Keep `RemoteIPTrustedProxy` in sync with https://www.cloudflare.com/ips/ and with ufw.
+- **Content-Security-Policy**: `/web` gets its full policy (with Trusted Types) from the vhost. The game page carries its own policy in a `<meta data-xc-csp>` with the hash of the build's inline import map: `tools/stamp.py` writes it at every deploy. A page deployed without stamping keeps the previous hash and will not start.
+- **Test builds** `/dev`, `/aot`, `/aot2`, `/iostest`, `/memtest` are behind HTTP basic authentication (`/etc/apache2/xc-forks.htpasswd`; credentials in `~/.config/xc-osu/forks-auth.txt`, mode 600).
+- **Moderation**: `/web/admin` and `/api/xc/admin/*` need `is_admin` **and** two-factor authentication on the account (turn it on in the account settings first). Every action goes to `audit_log` (kept one year).
+- **Replay verification** runs in `xc-osu-verify.service` (user `xc-osu-verify`, no network, no database, jobs in `/var/lib/xc-osu-verify`); the server only writes jobs and reads results (`ReplayVerification__Runner=queue`). Install or refresh it with `sudo deploy/setup-isolation.sh --verifier`. Ranked scores keep their pp in `pp_pending` until their replay is verified; scores the checks set aside appear in the moderation review queue.
+- **Mail**: Postfix listens on 127.0.0.1 only and signs with OpenDKIM (selector `xcosu`, key in `/etc/opendkim/keys/xcsoftworks.com/`). DNS for xcsoftworks.com must carry the `xcosu._domainkey` TXT, an SPF including this server's IPv4, and a DMARC record.
+- **Backups** are encrypted with age (`deploy/xc-osu-backup.service`). The private key is `/root/xc-osu-backup-age.key`: keep a copy off the machine, otherwise the backups cannot be read after losing the server. Restore: `age -d -i KEY xc_osu-DATE.dump.age | pg_restore -d xc_osu ...`.
+- **System**: SSH keys only, no X11/agent forwarding, local TCP forwarding only (`/etc/ssh/sshd_config.d/90-xc-hardening.conf`); ufw rate-limits port 22; fail2ban `sshd` + `recidive`. Security updates install by themselves and reboot at 04:45 when needed (`/etc/apt/apt.conf.d/52xc-osu-unattended`).

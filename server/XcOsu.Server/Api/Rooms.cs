@@ -16,7 +16,14 @@ namespace XcOsu.Server.Api
 
         public static void Map(RouteGroupBuilder api)
         {
-            api.MapGet("/rooms", async (HttpContext ctx, RoomStore store, UsersService users, Accounts accounts, Db db) =>
+            api.MapGet("/rooms", (HttpContext ctx, RoomStore store, UsersService users, Accounts accounts, Db db) =>
+            {
+                // the lounge listing refreshes every live room: shared for a few seconds (per player only for "mine" filters).
+                string mine = ctx.Request.Query["mode"].ToString() is "owned" or "participated" ? uid(ctx)?.ToString() ?? "-" : "";
+                return ResponseCache.GetOrBuild("rooms:" + mine + ctx.Request.QueryString.Value, TimeSpan.FromSeconds(3), () => listRooms(ctx, store, users, accounts, db));
+            });
+
+            static async Task<IResult> listRooms(HttpContext ctx, RoomStore store, UsersService users, Accounts accounts, Db db)
             {
                 string category = ctx.Request.Query["category"].ToString();
                 string mode = ctx.Request.Query["mode"].ToString();
@@ -68,12 +75,16 @@ namespace XcOsu.Server.Api
                 }
 
                 return Json.Ok(list);
-            });
+            }
 
             api.MapPost("/rooms", async (HttpContext ctx, RoomStore store, UsersService users, Accounts accounts, Mirrors mirrors, Chat chat) =>
             {
                 if (uid(ctx) is not int u) return Json.Error("unauthorized", 401);
                 if (accounts.NeedsEmailConfirmation(u)) return Json.Error(Accounts.CONFIRM_EMAIL_MESSAGE, 403);
+                // playlists live for days: a few open at a time per host, and a few new ones an hour.
+                if (store.Rooms.Values.Count(r => !r.Realtime && r.Json["host"]?.Value<int?>("id") == u) >= 3)
+                    return Json.Error("You already host 3 open playlists. Close one first.", 422);
+                if (!AbuseGuard.Allow("playlist-create:" + u, 5, TimeSpan.FromHours(1))) return Json.Error("You created several playlists recently. Please wait a little.", 429);
                 var body = await Json.Body<JObject>(ctx.Request);
                 if (body == null) return Json.Error("invalid room");
 
@@ -135,13 +146,22 @@ namespace XcOsu.Server.Api
                 return Json.Ok(json);
             });
 
-            api.MapGet("/rooms/{id:long}", async (long id, RoomStore store, UsersService users, Accounts accounts, Db db) =>
+            api.MapGet("/rooms/{id:long}", async (long id, HttpContext ctx, RoomStore store, UsersService users, Accounts accounts, Db db) =>
             {
+                int? me = uid(ctx);
+                // the same rooms the listing hides (password-protected matches, matchmaking) are only shown to the people in them.
+                static bool hidden(JObject j) => j.Value<bool?>("has_password") == true || j.Value<string>("category") == "matchmaking"
+                                                 || j.Value<string>("type") is "matchmaking" or "ranked_play";
                 if (!store.Rooms.TryGetValue(id, out var room))
                 {
                     using var c = db.Open();
                     string? stored = c.Scalar<string>("SELECT json FROM rooms WHERE id = @i", ("@i", id));
-                    return stored == null || stored == "{}" ? Json.Error("Room not found", 404) : Json.Ok(JObject.Parse(stored));
+                    if (stored == null || stored == "{}") return Json.Error("Room not found", 404);
+                    var past = JObject.Parse(stored);
+                    past.Remove("password");
+                    if (hidden(past) && (me == null || c.Scalar<long>("SELECT COUNT(*) FROM score_tokens WHERE room_id = @r AND user_id = @u", ("@r", id), ("@u", me)) == 0))
+                        return Json.Error("Room not found", 404);
+                    return Json.Ok(past);
                 }
 
                 if (room.Realtime) await store.SyncJson(room, users, accounts);
@@ -149,6 +169,8 @@ namespace XcOsu.Server.Api
                 {
                     var j = (JObject)room.Json.DeepClone();
                     j.Remove("password");
+                    if (hidden(j) && (me == null || !(room.Live?.Users.Any(x => x.UserID == me) ?? room.Participants.Contains(me.Value))))
+                        return Json.Error("Room not found", 404);
                     return Json.Ok(j);
                 }
             });
@@ -303,7 +325,7 @@ namespace XcOsu.Server.Api
                 var rows = c.Query($"""
                     SELECT user_id, SUM(best), AVG(acc), COUNT(*) FROM (
                         SELECT user_id, playlist_item_id, MAX(total_score) AS best, MAX(accuracy) AS acc FROM scores
-                        WHERE playlist_item_id IN ({string.Join(',', items)}) AND passed = 1 GROUP BY user_id, playlist_item_id) t
+                        WHERE playlist_item_id IN ({string.Join(',', items)}) AND passed = 1 AND verification NOT IN (2, 4) GROUP BY user_id, playlist_item_id) t
                     GROUP BY user_id ORDER BY SUM(best) DESC, user_id
                     """, r => (user: r.GetInt32(0), total: r.GetInt64(1), acc: r.GetDouble(2), count: r.GetInt32(3)));
 
@@ -368,7 +390,8 @@ namespace XcOsu.Server.Api
         private static List<SoloScoreInfo> playlistBest(Db db, long item, Accounts accounts, UsersService users)
         {
             using var c = db.Open();
-            var rows = c.Query("SELECT id, user_id FROM scores WHERE playlist_item_id = @p AND passed = 1 ORDER BY total_score DESC, id ASC",
+            // a playlist score whose replay contradicted it (or never came) does not count.
+            var rows = c.Query("SELECT id, user_id FROM scores WHERE playlist_item_id = @p AND passed = 1 AND verification NOT IN (2, 4) ORDER BY total_score DESC, id ASC",
                 r => (id: r.GetInt64(0), user: r.GetInt32(1)), ("@p", item));
             var seen = new HashSet<int>();
             return Scores.Load(c, rows.Where(r => seen.Add(r.user)).Select(r => r.id), accounts, users, withBeatmap: false);

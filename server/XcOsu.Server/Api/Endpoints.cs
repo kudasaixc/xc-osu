@@ -32,6 +32,9 @@ namespace XcOsu.Server.Api
             Media.Map(app);
             AccountData.Map(app);
             Teams.Map(app);
+            AccountSecurity.Map(app);
+            Admin.Map(app);
+            ImageProxy.Map(app);
         }
 
         private static int? uid(HttpContext ctx) => ctx.User.UserId();
@@ -60,7 +63,7 @@ namespace XcOsu.Server.Api
                 if (browser && !BrowserSession.SameOrigin(req)) return Results.StatusCode(403);
                 int? userId = null;
                 (string access, string refresh)? pair = null;
-                string ip = req.HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                string ip = ClientAddress.Key(req.HttpContext);
                 IResult limited()
                 {
                     req.HttpContext.Response.Headers.RetryAfter = "60";
@@ -72,11 +75,18 @@ namespace XcOsu.Server.Api
                     case "password":
                         // password guessing is what needs a tight per-address budget; the per-account budget lives in Accounts.Verify.
                         if (!AbuseGuard.Allow("ip:login-password:" + ip, AbuseGuard.PASSWORD_SIGNINS_PER_IP, TimeSpan.FromMinutes(1))) return limited();
-                        var row = accounts.Verify(p("username") ?? "", p("password") ?? "");
+                        AccountRow? row;
+                        try { row = accounts.Verify(p("username") ?? "", p("password") ?? "", ip); }
+                        catch (Accounts.PasswordServiceBusyException e)
+                        {
+                            // could not check at all: never reported (nor counted) as a wrong password.
+                            req.HttpContext.Response.Headers.RetryAfter = "5";
+                            return Json.Ok(new { error = "temporarily_unavailable", error_description = e.Message, message = e.Message }, 503);
+                        }
                         userId = row?.Id;
                         if (userId == null)
                         {
-                            loggerFactory.CreateLogger("Security.Authentication").LogWarning("Password sign-in rejected from {Address}", req.HttpContext.Connection.RemoteIpAddress);
+                            loggerFactory.CreateLogger("Security.Authentication").LogWarning("Password sign-in rejected from {Address}", ip);
                             return Json.Ok(new { error = "invalid_grant", error_description = "Incorrect sign in", hint = "Incorrect sign in", message = "Incorrect sign in" }, 400);
                         }
                         break;
@@ -94,10 +104,8 @@ namespace XcOsu.Server.Api
                             return Json.Ok(new { error = "invalid_grant", error_description = "The refresh token is invalid.", message = "The refresh token is invalid." }, 401);
                         break;
 
-                    case "client_credentials":
-                        return Json.Ok(new { token_type = "Bearer", expires_in = Accounts.TOKEN_LIFETIME_SECONDS, access_token = "guest" });
-
                     default:
+                        // client_credentials included: there are no guest tokens on xc-osu!.
                         return Json.Ok(new { error = "unsupported_grant_type" }, 400);
                 }
 
@@ -111,28 +119,57 @@ namespace XcOsu.Server.Api
                 return Json.Ok(new { token_type = "Bearer", expires_in = Accounts.TOKEN_LIFETIME_SECONDS, access_token = access, refresh_token = refresh });
             });
 
-            app.MapPost("/users", async (HttpContext ctx, Accounts accounts, AccountMail mail) =>
+            app.MapPost("/users", async (HttpContext ctx, Accounts accounts, AccountMail mail, PwnedPasswords pwned, AuditLog audit, IConfiguration config, IHttpClientFactory http) =>
             {
                 var p = await Json.Params(ctx.Request);
+                string ip = ClientAddress.Key(ctx);
+                // a handful of accounts per address and day, and a ceiling for the whole site: mass sign-ups (spam, rank farming) stall here.
+                if (!AbuseGuard.Allow("register-day:" + ip, 5, TimeSpan.FromDays(1)) || !AbuseGuard.Allow("register-site", 2000, TimeSpan.FromHours(1)))
+                    return Json.Ok(new { form_error = new { user = new Dictionary<string, string[]> { ["username"] = new[] { "Too many accounts were created from your connection. Please try again tomorrow." } } } }, 429);
+                // once the anti-robot widget is configured, sign-ups without it (the game's own form) get a much smaller budget.
+                if (Turnstile.SiteKey(config) != null && string.IsNullOrEmpty(p("cf-turnstile-response")) && !AbuseGuard.Allow("register-unchecked-day:" + ip, 2, TimeSpan.FromDays(1)))
+                    return Json.Ok(new { form_error = new { user = new Dictionary<string, string[]> { ["username"] = new[] { "Please create your account on the website: " + (config["PublicUrl"] ?? "https://osu.xcsoftworks.com") + "/web/register" } } } }, 429);
+                if (!await Turnstile.Passes(config, http, p("cf-turnstile-response"), ip))
+                    return Json.Ok(new { form_error = new { user = new Dictionary<string, string[]> { ["username"] = new[] { "Please complete the anti-robot check." } } } }, 422);
+
                 string country = ctx.Request.Headers["CF-IPCountry"].ToString() is { Length: 2 } cc && cc != "XX" ? cc.ToUpperInvariant() : "XX";
-                var errors = accounts.Register(p("user[username]") ?? "", p("user[user_email]") ?? "", p("user[password]") ?? "", country);
+                int? birthYear = int.TryParse(p("user[birth_year]"), out int y) ? y : null;
+                string email = (p("user[user_email]") ?? "").Trim();
+                var (errors, existingEmail) = await accounts.Register(p("user[username]") ?? "", email, p("user[password]") ?? "", country, birthYear, pwned);
                 if (errors != null)
                     return Json.Ok(new { form_error = new { user = errors } }, 422);
-                mail.Request(p("user[user_email]") ?? "", "verify");
+                // an address that already has an account gets the same answer as a new one; its owner is told by email instead.
+                mail.Request(email, existingEmail ? "exists" : "verify");
+                if (!existingEmail) audit.Write("account.create", null, "user", accounts.GetByName((p("user[username]") ?? "").Trim())?.Id, ctx);
                 return Json.Ok(new { });
             });
 
-            // xc-osu! has no second factor. Sessions are reported as verified (session_verified: true), so a client never needs
-            // these; if one calls them anyway it gets an explicit "unavailable" instead of a success that verified nothing.
-            IResult noSecondFactor() => Json.Ok(new
+            // Second factor: a time-based code from an authenticator app (the game's own "enter your code" screen sends it here).
+            app.MapPost("/api/v2/session/verify", async (HttpContext ctx, Accounts accounts, Db db, AuditLog audit) =>
             {
-                error = "Two-factor verification is not available on xc-osu!.",
-                message = "Two-factor verification is not available on xc-osu!.",
-                available = false,
-            }, 501);
-            app.MapPost("/api/v2/session/verify", noSecondFactor);
-            app.MapPost("/api/v2/session/verify/reissue", noSecondFactor);
-            app.MapPost("/api/v2/session/verify/mail-fallback", noSecondFactor);
+                if (ctx.User.UserId() is not int u || ctx.User.SessionId() is not string session) return unauthorized();
+                if (ctx.User.SessionVerified()) return Results.NoContent();
+                var p = await Json.Params(ctx.Request);
+                if (!AbuseGuard.Allow("totp-session:" + session, 5, TimeSpan.FromMinutes(5)) || !AbuseGuard.Allow("totp-user:" + u, 20, TimeSpan.FromHours(1)))
+                    return Json.Ok(new { error = "Too many attempts. Wait a few minutes.", method = "totp" }, 429);
+                using (var c = db.Open())
+                {
+                    var row = c.Query("SELECT totp_secret, totp_last_step FROM users WHERE id = @u AND totp_enabled = 1", r => (secret: r.GetString(0), last: r.GetInt64(1)), ("@u", u)).FirstOrDefault();
+                    long? step = row.secret == null ? null : Totp.Verify(row.secret, p("verification_key"), row.last);
+                    // the step is claimed atomically: the same code cannot verify two sessions.
+                    if (step == null || c.Exec("UPDATE users SET totp_last_step = @s WHERE id = @u AND totp_last_step < @s", ("@s", step), ("@u", u)) != 1)
+                    {
+                        AuditLog.Write(c, "session.second_factor_failed", u, "user", u, ctx);
+                        return Json.Ok(new { error = "Incorrect code.", method = "totp" }, 422);
+                    }
+                }
+                accounts.MarkSessionVerified(u, session);
+                audit.Write("session.second_factor_passed", u, "user", u, ctx);
+                return Results.NoContent();
+            });
+            IResult codeFromApp() => Json.Ok(new { error = "Use the code shown by your authenticator app.", message = "Use the code shown by your authenticator app.", method = "totp" }, 422);
+            app.MapPost("/api/v2/session/verify/reissue", codeFromApp);
+            app.MapPost("/api/v2/session/verify/mail-fallback", codeFromApp);
             app.MapDelete("/api/v2/oauth/tokens/current", (HttpRequest req, Accounts accounts) =>
             {
                 string auth = req.Headers.Authorization.ToString();
@@ -170,8 +207,9 @@ namespace XcOsu.Server.Api
                 if (row == null || row.Restricted) return unauthorized();
                 int ruleset = string.IsNullOrEmpty(mode) ? UsersService.RulesetId(row.Playmode) : UsersService.RulesetId(mode);
                 var obj = fullJson(users.Full(row, ruleset));
-                obj["session_verified"] = true;
-                obj["session_verification_method"] = null;
+                bool verified = ctx.User.SessionVerified();
+                obj["session_verified"] = verified;
+                obj["session_verification_method"] = verified ? null : "totp";
                 obj["score_processing_notice_url"] = "";
                 obj["is_restricted"] = false;
                 obj["is_silenced"] = row.SilencedUntil > DateTimeOffset.UtcNow;
@@ -197,14 +235,27 @@ namespace XcOsu.Server.Api
             });
 
             api.MapGet("/users/{lookup}/{mode?}", (string lookup, string? mode, HttpRequest req, UsersService users, Accounts accounts) =>
+                lookup == "lookup" ? Task.FromResult(lookupMany(req, users, accounts))
+                    // your own profile is always fresh (you just edited it); anyone else's is some twenty queries, shared for 30 s.
+                    : isOwn(lookup, req, accounts) ? Task.FromResult(userPage(lookup, mode, req, users, accounts))
+                    : ResponseCache.GetOrBuild($"user:{lookup.ToLowerInvariant()}:{mode}:{req.Query["key"]}", TimeSpan.FromSeconds(30), () => userPage(lookup, mode, req, users, accounts)));
+
+            static bool isOwn(string lookup, HttpRequest req, Accounts accounts)
             {
-                if (lookup == "lookup") return lookupMany(req, users, accounts);
+                if (uid(req.HttpContext) is not int me) return false;
+                if (lookup == me.ToString()) return true;
+                string name = lookup.StartsWith('@') ? lookup[1..] : lookup;
+                return accounts.Get(me) is AccountRow row && string.Equals(row.Username, name, StringComparison.OrdinalIgnoreCase);
+            }
+
+            static IResult userPage(string lookup, string? mode, HttpRequest req, UsersService users, Accounts accounts)
+            {
                 string key = req.Query["key"].ToString();
                 if (lookup.StartsWith('@')) { key = "username"; lookup = lookup[1..]; }
                 AccountRow? row = key != "username" && int.TryParse(lookup, out int id) ? accounts.Get(id) : accounts.GetByName(lookup);
                 if (row == null || row.Restricted) return Json.Error("User not found", 404);
                 return Json.Ok(fullJson(users.Full(row, string.IsNullOrEmpty(mode) ? UsersService.RulesetId(row.Playmode) : UsersService.RulesetId(mode))));
-            });
+            }
 
             api.MapGet("/users", (HttpRequest req, UsersService users, Accounts accounts) => lookupMany(req, users, accounts));
 
@@ -337,6 +388,8 @@ namespace XcOsu.Server.Api
                 using var c = db.Open();
                 if (c.Scalar<long>("SELECT COUNT(*) FROM scores WHERE id = @i AND user_id = @u AND passed = 1", ("@i", scoreId), ("@u", u)) == 0)
                     return Json.Error("Score not found", 404);
+                if (on && c.Scalar<long>("SELECT COUNT(*) FROM pinned_scores WHERE user_id = @u", ("@u", u)) >= 100)
+                    return Json.Error("You can pin up to 100 scores.", 422);
                 if (on)
                     c.Exec("INSERT INTO pinned_scores (user_id, score_id, sort) VALUES (@u, @s, (SELECT COALESCE(MAX(sort), 0) + 1 FROM pinned_scores WHERE user_id = @u)) ON CONFLICT DO NOTHING",
                         ("@u", u), ("@s", scoreId));
@@ -513,6 +566,9 @@ namespace XcOsu.Server.Api
 
             api.MapGet("/beatmapsets/{id:int}/download", async (int id, HttpContext ctx, Mirrors mirrors, CancellationToken ct) =>
             {
+                // archives go through our bandwidth and the mirrors' quotas: players only, a few hundred an hour.
+                if (uid(ctx) is not int u) return unauthorized();
+                if (!AbuseGuard.Allow("download:" + u, 200, TimeSpan.FromHours(1))) return Json.Error("You downloaded a lot of beatmaps in a short time. Please wait a little.", 429);
                 bool noVideo = ctx.Request.Query["noVideo"] == "1";
                 using var res = await mirrors.Download(id, noVideo, ct);
                 if (res == null) return Json.Error("No mirror has this beatmapset right now.", 404);
@@ -532,7 +588,10 @@ namespace XcOsu.Server.Api
                 var p = await Json.Params(ctx.Request);
                 using var c = db.Open();
                 if (p("action") == "favourite")
+                {
+                    if (c.Scalar<long>("SELECT COUNT(*) FROM favourites WHERE user_id = @u", ("@u", u)) >= 1000) return Json.Error("You have reached the limit of 1,000 favourites.", 422);
                     c.Exec("INSERT INTO favourites (user_id, beatmapset_id) VALUES (@u, @s) ON CONFLICT DO NOTHING", ("@u", u), ("@s", id));
+                }
                 else
                     c.Exec("DELETE FROM favourites WHERE user_id = @u AND beatmapset_id = @s", ("@u", u), ("@s", id));
                 return Json.Ok(new { favourite_count = c.Scalar<long>("SELECT COUNT(*) FROM favourites WHERE beatmapset_id = @s", ("@s", id)) });
@@ -575,6 +634,9 @@ namespace XcOsu.Server.Api
 
             api.MapPost("/beatmaps/{id:int}/attributes", async (int id, HttpRequest req, Performance perf, CancellationToken ct) =>
             {
+                // a difficulty calculation is real CPU work: only for signed-in players, and within a budget.
+                if (uid(req.HttpContext) is not int u) return unauthorized();
+                if (!AbuseGuard.Allow("attributes:" + u, 60, TimeSpan.FromMinutes(1))) return Json.Error("Too many requests.", 429);
                 var p = await Json.Params(req);
                 int ruleset = int.TryParse(p("ruleset_id"), out int r) ? r : UsersService.RulesetId(p("ruleset"));
                 var mods = new List<APIMod>();
@@ -759,9 +821,13 @@ namespace XcOsu.Server.Api
             api.MapGet("/rankings/kudosu", () => Json.Ok(new { ranking = Array.Empty<object>() }));
 
             api.MapGet("/rankings/{mode}/{type}", (string mode, string type, HttpRequest req, UsersService users, Accounts accounts, Db db) =>
+                // rankings aggregate every score: built at most once every 30 s per page.
+                ResponseCache.GetOrBuild("rankings:" + mode + "/" + type + req.QueryString.Value, TimeSpan.FromSeconds(30), () => rankingPage(mode, type, req, users, accounts, db)));
+
+            static IResult rankingPage(string mode, string type, HttpRequest req, UsersService users, Accounts accounts, Db db)
             {
                 int ruleset = UsersService.RulesetId(mode);
-                int page = Math.Max(1, int.TryParse(req.Query["cursor[page]"], out int p) ? p : int.TryParse(req.Query["page"], out p) ? p : 1);
+                int page = Math.Clamp(int.TryParse(req.Query["cursor[page]"], out int p) ? p : int.TryParse(req.Query["page"], out p) ? p : 1, 1, 200);
                 string? country = req.Query["country"].ToString() is { Length: 2 } cc && cc != "XX" && cc != "Unknown" ? cc.ToUpperInvariant() : null;
 
                 switch (type)
@@ -853,7 +919,7 @@ namespace XcOsu.Server.Api
                     default:
                         return Json.Error("Unknown ranking type", 404);
                 }
-            });
+            }
 
             api.MapGet("/spotlights", () => Json.Ok(new { spotlights = Array.Empty<object>() }));
         }
@@ -865,13 +931,15 @@ namespace XcOsu.Server.Api
             api.MapGet("/chat/channels", (HttpContext ctx, Chat chat) => uid(ctx) is int u ? Json.Ok(Chat.ToJson(chat.PublicChannels(u))) : unauthorized());
 
             // CreateChannelRequest: opening a PM conversation with someone.
-            api.MapPost("/chat/channels", async (HttpContext ctx, Chat chat) =>
+            api.MapPost("/chat/channels", async (HttpContext ctx, Chat chat, Accounts accounts) =>
             {
                 if (uid(ctx) is not int u) return unauthorized();
                 var p = await Json.Params(ctx.Request);
                 if (!string.Equals(p("type"), "PM", StringComparison.OrdinalIgnoreCase) || !int.TryParse(p("target_id"), out int target))
                     return Json.Error("Only private message channels can be created.", 422);
                 if (chat.PmRestriction(u, target) is string error) return Json.Error(error, 403);
+                if (accounts.NeedsEmailConfirmation(u)) return Json.Error(Accounts.CONFIRM_EMAIL_MESSAGE, 403);
+                if (chat.NewConversationRestriction(u, target) is string limit) return Json.Error(limit, 429);
                 int channel = chat.OpenPm(u, target);
                 var ch = chat.Join(channel, u)!;
                 return Json.Ok(Chat.ToJson(ch));
@@ -918,16 +986,19 @@ namespace XcOsu.Server.Api
             api.MapPut("/chat/channels/{id:int}/mark-as-read/{message:long}", (int id, long message, HttpContext ctx, Chat chat) =>
             {
                 if (uid(ctx) is not int u) return unauthorized();
+                if (!chat.CanRead(id, u)) return Json.Error("forbidden", 403);
                 chat.MarkRead(id, u, message);
                 return Results.NoContent();
             });
 
-            api.MapPost("/chat/new", async (HttpContext ctx, Chat chat) =>
+            api.MapPost("/chat/new", async (HttpContext ctx, Chat chat, Accounts accounts) =>
             {
                 if (uid(ctx) is not int u) return unauthorized();
                 var p = await Json.Params(ctx.Request);
                 if (!int.TryParse(p("target_id"), out int target)) return Json.Error("invalid target", 422);
                 if (chat.PmRestriction(u, target) is string error) return Json.Error(error, 403);
+                if (accounts.NeedsEmailConfirmation(u)) return Json.Error(Accounts.CONFIRM_EMAIL_MESSAGE, 403);
+                if (chat.NewConversationRestriction(u, target) is string limit) return Json.Error(limit, 429);
                 int channel = chat.OpenPm(u, target);
                 if (chat.PostRestriction(channel, u) is string error2) return Json.Error(error2, 403);
                 var msg = chat.Post(channel, u, p("message") ?? "", p("is_action") == "true", p("uuid"));
@@ -997,6 +1068,9 @@ namespace XcOsu.Server.Api
                     if (uid(ctx) is not int u) return unauthorized();
                     var p = await Json.Params(ctx.Request);
                     if (!int.TryParse(p("target"), out int t) || accounts.Get(t) is not AccountRow row || t == u) return Json.Error("user not found", 404);
+                    using (var count = db.Open())
+                        if (count.Scalar<long>($"SELECT COUNT(*) FROM {table} WHERE user_id = @u", ("@u", u)) >= 500)
+                            return Json.Error("You have reached the limit of 500.", 422);
                     bool added;
                     bool mutual;
                     using (var c = db.Open())
@@ -1104,7 +1178,7 @@ namespace XcOsu.Server.Api
                 string? type = q["commentable_type"].ToString() is { Length: > 0 } t ? t : null;
                 long? commentable = long.TryParse(q["commentable_id"], out long ci) ? ci : null;
                 long? parent = long.TryParse(q["parent_id"], out long pi) && pi > 0 ? pi : null;
-                int page = Math.Max(1, int.TryParse(q["page"], out int pg) ? pg : 1);
+                int page = Math.Clamp(int.TryParse(q["page"], out int pg) ? pg : 1, 1, 100);
                 string order = q["sort"].ToString() switch { "old" => "created_at ASC", "top" => "(SELECT COUNT(*) FROM comment_votes v WHERE v.comment_id = comments.id) DESC, created_at DESC", _ => "created_at DESC" };
                 using var c = db.Open();
                 var top = c.Query($"""
@@ -1132,6 +1206,14 @@ namespace XcOsu.Server.Api
                 if (type is not ("news_post" or "beatmapset" or "build") || commentable <= 0
                     || (parent != null && c.Scalar<long>("SELECT COUNT(*) FROM comments WHERE id = @p AND commentable_type = @t AND commentable_id = @i AND deleted_at IS NULL", ("@p", parent), ("@t", type), ("@i", commentable)) != 1))
                     return Json.Error("Invalid comment target", 422);
+                // the thing commented on must exist: news posts and builds are ours, beatmapsets are known from the mirrors' cache.
+                bool exists = type switch
+                {
+                    "news_post" => News.PostExists(ctx.RequestServices.GetRequiredService<IConfiguration>(), commentable),
+                    "build" => News.BuildExists(commentable),
+                    _ => c.Scalar<long>("SELECT COUNT(*) FROM beatmapsets WHERE id = @i", ("@i", commentable)) > 0,
+                };
+                if (!exists) return Json.Error("Invalid comment target", 422);
                 long id = c.Insert("INSERT INTO comments (commentable_type, commentable_id, parent_id, user_id, message, created_at, updated_at) VALUES (@t, @i, @p, @u, @m, @n, @n)",
                     ("@t", type), ("@i", commentable), ("@p", parent), ("@u", u), ("@m", message.Length > 4000 ? message[..4000] : message), ("@n", now));
 
@@ -1139,7 +1221,12 @@ namespace XcOsu.Server.Api
                 var created = bundle(c, new List<long> { id }, type, commentable, u, accounts, users);
                 c.Dispose(); // the notification takes a connection of its own
 
-                if (parentAuthor is int author && author != u)
+                bool blockedByAuthor = parentAuthor is int a && new Func<bool>(() =>
+                {
+                    using var check = db.Open();
+                    return check.Scalar<long>("SELECT COUNT(*) FROM blocks WHERE user_id = @a AND target_id = @u", ("@a", a), ("@u", u)) > 0;
+                })();
+                if (parentAuthor is int author && author != u && !blockedByAuthor)
                     _ = notifications.Push(author, "comment_new", type, commentable, "comment", u,
                         new JObject { ["comment_id"] = id, ["title"] = $"{type} #{commentable}", ["content"] = message, ["username"] = me.Username, ["reply_to"] = parent });
 
@@ -1149,10 +1236,15 @@ namespace XcOsu.Server.Api
             api.MapPut("/comments/{id:long}", async (long id, HttpContext ctx, Db db, Accounts accounts, UsersService users) =>
             {
                 if (uid(ctx) is not int u) return unauthorized();
+                // editing is posting: the same conditions as a new comment (not silenced, not restricted, account set up).
+                if (accounts.Get(u) is not { Restricted: false } me || me.SilencedUntil > DateTimeOffset.UtcNow) return Json.Error("You can't comment right now.", 403);
+                if (accounts.NeedsEmailConfirmation(u)) return Json.Error(Accounts.CONFIRM_EMAIL_MESSAGE, 403);
                 var p = await Json.Params(ctx.Request);
+                string edited = (p("comment[message]") ?? "").Trim();
+                if (edited.Length == 0) return Json.Error("invalid comment", 422);
                 using var c = db.Open();
-                c.Exec("UPDATE comments SET message = @m, edited_at = @n, edited_by_id = @u, updated_at = @n WHERE id = @i AND (user_id = @u OR @a = 1)",
-                    ("@m", (p("comment[message]") ?? "") is var edited && edited.Length > 4000 ? edited[..4000] : edited), ("@n", DateTimeOffset.UtcNow.ToString("O")), ("@u", u), ("@i", id), ("@a", accounts.Get(u, c)?.IsAdmin == true ? 1 : 0));
+                c.Exec("UPDATE comments SET message = @m, edited_at = @n, edited_by_id = @u, updated_at = @n WHERE id = @i AND deleted_at IS NULL AND (user_id = @u OR @a = 1)",
+                    ("@m", edited.Length > 4000 ? edited[..4000] : edited), ("@n", DateTimeOffset.UtcNow.ToString("O")), ("@u", u), ("@i", id), ("@a", me.IsAdmin ? 1 : 0));
                 return Json.Ok(bundle(c, new List<long> { id }, null, null, u, accounts, users));
             });
 
@@ -1169,7 +1261,9 @@ namespace XcOsu.Server.Api
             {
                 if (uid(ctx) is not int u) return unauthorized();
                 using var c = db.Open();
-                if (c.Scalar<long>("SELECT user_id FROM comments WHERE id = @i", ("@i", id)) == u) return Json.Error("Can't vote on your own comment.", 422);
+                long? author = c.Scalar<long?>("SELECT user_id FROM comments WHERE id = @i AND deleted_at IS NULL", ("@i", id));
+                if (author == null) return Json.Error("Comment not found", 404);
+                if (author == u) return Json.Error("Can't vote on your own comment.", 422);
                 c.Exec("INSERT INTO comment_votes (comment_id, user_id) VALUES (@i, @u) ON CONFLICT DO NOTHING", ("@i", id), ("@u", u));
                 return Json.Ok(bundle(c, new List<long> { id }, null, null, u, accounts, users));
             });
@@ -1224,13 +1318,14 @@ namespace XcOsu.Server.Api
                 int page = Math.Max(1, int.TryParse(req.Query["page"], out int p) ? p : 1);
                 var found = new List<APIUser>();
                 long total = 0;
-                if (query.Length > 0 && mode is "" or "all" or "user")
+                if (query.Length >= 2 && query.Length <= 32 && mode is "" or "all" or "user")
                 {
+                    page = Math.Min(page, 50);
                     using var c = db.Open();
-                    string like = "%" + query.Replace("%", "").Replace("_", "\\_") + "%";
-                    total = c.Scalar<long>("SELECT COUNT(*) FROM users WHERE username LIKE @q ESCAPE '\\' AND restricted = 0", ("@q", like));
+                    string like = "%" + query.ToLowerInvariant().Replace("\\", "").Replace("%", "").Replace("_", "\\_") + "%";
+                    total = c.Scalar<long>("SELECT COUNT(*) FROM users WHERE lower(username::text) LIKE @q ESCAPE '\\' AND restricted = 0", ("@q", like));
                     var ids = c.Query("""
-                        SELECT id FROM users WHERE username LIKE @q ESCAPE '\' AND restricted = 0
+                        SELECT id FROM users WHERE lower(username::text) LIKE @q ESCAPE '\' AND restricted = 0
                         ORDER BY CASE WHEN username = @exact THEN 0 ELSE 1 END, length(username), username LIMIT 20 OFFSET @o
                         """, r => r.GetInt32(0), ("@q", like), ("@exact", query), ("@o", (page - 1) * 20));
                     found = accounts.GetMany(ids, c).Select(r => users.Compact(r, c)).ToList();
@@ -1264,9 +1359,11 @@ namespace XcOsu.Server.Api
             {
                 if (uid(ctx) is not int u) return unauthorized();
                 if (!ctx.Request.HasFormContentType) return Json.Error("no screenshot", 422);
+                // disk is shared by everyone: a few an hour per player, the 100 most recent kept (older ones also expire after 30 days).
+                if (!AbuseGuard.Allow("screenshot:" + u, 10, TimeSpan.FromHours(1))) return Json.Error("You can share up to 10 screenshots an hour.", 429);
                 var form = await ctx.Request.ReadFormAsync();
                 var file = form.Files["screenshot"];
-                if (file == null || file.Length == 0 || file.Length > 16 << 20) return Json.Error("invalid screenshot", 422);
+                if (file == null || file.Length == 0 || file.Length > 8 << 20) return Json.Error("invalid screenshot", 422);
                 string hash = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(12)).ToLowerInvariant();
                 string dir = Path.Combine(db.DataDirectory, "screenshots");
                 Directory.CreateDirectory(dir);
@@ -1276,6 +1373,8 @@ namespace XcOsu.Server.Api
                 await SafeImages.WriteAtomic(Path.Combine(dir, hash + ".jpg"), jpeg, ctx.RequestAborted);
                 using var c = db.Open();
                 c.Exec("INSERT INTO screenshots (user_id, hash, created_at) VALUES (@u, @h, @n)", ("@u", u), ("@h", hash), ("@n", DateTimeOffset.UtcNow.ToString("O")));
+                foreach (string old in c.Query("DELETE FROM screenshots WHERE user_id = @u AND id NOT IN (SELECT id FROM screenshots WHERE user_id = @u ORDER BY id DESC LIMIT 100) RETURNING hash", r => r.GetString(0), ("@u", u)))
+                    try { File.Delete(Path.Combine(dir, old + ".jpg")); } catch (IOException) { }
                 return Json.Ok(new { url = $"{users.PublicBase}/api/xc/ss/{hash}" });
             });
         }

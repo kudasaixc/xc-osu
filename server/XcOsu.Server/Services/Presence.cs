@@ -34,6 +34,14 @@ namespace XcOsu.Server.Services
             return true;
         }
 
+        /// <summary>Whether <paramref name="viewer"/> may see <paramref name="userId"/> as online: always, unless they chose to appear offline (friends excepted).</summary>
+        public bool VisibleTo(int userId, int viewer, XcOsu.Server.Data.Db db)
+        {
+            if (!Online.TryGetValue(userId, out var e) || e.Status != UserStatus.Offline) return true;
+            using var c = db.Open();
+            return XcOsu.Server.Data.DbExtensions.Scalar<long>(c, "SELECT COUNT(*) FROM friends WHERE user_id = @u AND target_id = @v", ("@u", userId), ("@v", viewer)) > 0;
+        }
+
         public UserPresence? Get(int userId) =>
             Online.TryGetValue(userId, out var e) && e.Connections > 0
                 ? new UserPresence { Status = e.Status, Activity = e.Activity }

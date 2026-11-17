@@ -92,6 +92,7 @@ namespace XcOsu.Server.Services
                 throw new SubmitException("Invalid score statistics");
             string? tokenHash;
             long? roomId;
+            DateTimeOffset tokenCreated;
             using (var c = db.Open())
             {
                 var t = c.Query("SELECT user_id, beatmap_id, ruleset_id, score_id, beatmap_hash, playlist_item_id, room_id, created_at FROM score_tokens WHERE id = @t",
@@ -112,6 +113,7 @@ namespace XcOsu.Server.Services
                 score.RulesetID = t.rs;
                 tokenHash = t.h;
                 roomId = t.room;
+                tokenCreated = DateTimeOffset.FromUnixTimeSeconds(t.at);
             }
 
             score.UserID = userId;
@@ -129,11 +131,13 @@ namespace XcOsu.Server.Services
             int? mapMaxCombo = mapMode == score.RulesetID ? map?.Value<int?>("max_combo") : null;
 
             var ruleset = Performance.Ruleset(score.RulesetID)!;
-            bool modsRanked = score.Mods.All(m =>
-            {
-                try { return m.ToMod(ruleset).Ranked; }
-                catch { return false; }
-            });
+
+            // accuracy and grade are derived from the hit counts here, never taken from the client (it could claim an SS on an A).
+            var processor = ruleset.CreateScoreProcessor();
+            var modObjects = score.Mods.Select(m => { try { return m.ToMod(ruleset); } catch { return null; } }).OfType<osu.Game.Rulesets.Mods.Mod>().ToList();
+            if (score.MaximumStatistics.Count > 0)
+                score.Accuracy = osu.Game.Database.StandardisedScoreMigrationTools.ComputeAccuracy(score.Statistics, score.MaximumStatistics, processor);
+            score.Rank = score.Passed ? osu.Game.Database.StandardisedScoreMigrationTools.ComputeRank(score.Accuracy, score.Statistics, modObjects, processor) : ScoreRank.F;
 
             bool plausible = score.TotalScore <= max_plausible_score && (mapMaxCombo == null || score.MaxCombo <= mapMaxCombo + 1);
             bool hashMatches = !string.IsNullOrEmpty(tokenHash) && !string.IsNullOrEmpty(onlineHash) && string.Equals(tokenHash, onlineHash, StringComparison.OrdinalIgnoreCase);
@@ -144,9 +148,25 @@ namespace XcOsu.Server.Services
             if (score.Passed && map != null)
                 calc = await performance.Calculate(beatmapId, score, ct);
 
+            // a pass cannot arrive faster than the beatmap plays at its speed (measured on the server clock from the token).
+            string? flag = null;
+            double elapsed = (DateTimeOffset.UtcNow - tokenCreated).TotalSeconds;
+            if (score.Passed && calc is { Length: > 30 } && elapsed < calc.Length * 0.9 - 5)
+            {
+                flag = $"submitted {elapsed:F0}s after the play began, the beatmap lasts {calc.Length:F0}s";
+                ranked = false;
+                log.LogWarning("score from user {User} on {Beatmap} arrived too fast: {Flag}", userId, beatmapId, flag);
+            }
+
             // pp is awarded on ranked/approved/qualified maps only; loved keeps a leaderboard without pp, like osu!.
             double? pp = ranked && status is 1 or 2 or 3 && score.Passed ? calc?.Pp : null;
             if (playlistItemId != null && score.Passed) pp = calc?.Pp; // shown on playlist results, never counted towards profile pp (ranked = 0)
+
+            // a ranked pass only counts once its replay has been played back and matches (see ReplayVerification): until then its
+            // pp wait in pp_pending and it stays off the leaderboards.
+            bool awaitVerification = ranked && score.Passed && playlistItemId == null && ReplayVerification.ReplayGraceSeconds != null;
+            double? ppPending = awaitVerification ? pp : null;
+            if (awaitVerification) { pp = null; ranked = false; }
 
             score.PP = pp;
             score.Ranked = ranked;
@@ -164,11 +184,12 @@ namespace XcOsu.Server.Services
                     throw new SubmitException("Account unavailable", 403);
                 id = c.Insert("""
                     INSERT INTO scores (user_id, beatmap_id, ruleset_id, playlist_item_id, total_score, accuracy, max_combo, rank, passed, pp, ranked, mods, data, ended_at, started_at,
-                                        has_replay, total_hits, play_seconds, legacy_total_score, replay_due)
-                    VALUES (@u, @b, @r, @p, @ts, @a, @mc, @rk, @ps, @pp, @rd, @m, @d, @e, @st, 0, @th, @sec, @lts, @due)
+                                        has_replay, total_hits, play_seconds, legacy_total_score, replay_due, pending_ranked, pp_pending, flag_reason)
+                    VALUES (@u, @b, @r, @p, @ts, @a, @mc, @rk, @ps, @pp, @rd, @m, @d, @e, @st, 0, @th, @sec, @lts, @due, @pend, @ppp, @flag)
                     """,
-                    // a ranked pass has to back its numbers with a replay (see ReplayVerification).
-                    ("@due", ranked && score.Passed && ReplayVerification.ReplayGraceSeconds is int grace ? DateTimeOffset.UtcNow.ToUnixTimeSeconds() + grace : null),
+                    // a ranked pass has to back its numbers with a replay (see ReplayVerification); playlist passes are verified too.
+                    ("@due", (awaitVerification || (playlistItemId != null && score.Passed)) && ReplayVerification.ReplayGraceSeconds is int grace ? DateTimeOffset.UtcNow.ToUnixTimeSeconds() + grace : null),
+                    ("@pend", awaitVerification ? 1 : 0), ("@ppp", ppPending), ("@flag", flag),
                     ("@u", userId), ("@b", beatmapId), ("@r", score.RulesetID), ("@p", playlistItemId), ("@ts", score.TotalScore), ("@a", score.Accuracy),
                     ("@mc", score.MaxCombo), ("@rk", Users.RankString(score.Rank)), ("@ps", score.Passed ? 1 : 0), ("@pp", pp), ("@rd", ranked ? 1 : 0),
                     ("@m", JsonConvert.SerializeObject(score.Mods)), ("@d", "{}"), ("@e", score.EndedAt.ToString("O")), ("@st", score.StartedAt?.ToString("O")),
@@ -240,6 +261,52 @@ namespace XcOsu.Server.Services
             }
         }
 
+        /// <summary>The replay of a pending score reproduced it: its pp count from now on, and it enters the leaderboards.</summary>
+        public async Task ConfirmVerified(long scoreId)
+        {
+            int? beatmap;
+            using (var c = db.Open())
+                beatmap = (int?)c.Scalar<long?>("UPDATE scores SET ranked = 1, pp = pp_pending, pending_ranked = 0 WHERE id = @i AND pending_ranked = 1 AND flag_reason IS NULL RETURNING beatmap_id", ("@i", scoreId));
+            if (beatmap == null) return;
+            var map = await mirrors.GetBeatmap(beatmap.Value, null, null, CancellationToken.None);
+            using (var c = db.Open())
+                if (Load(c, new[] { scoreId }, accounts, users, withBeatmap: false).FirstOrDefault() is SoloScoreInfo s) recordRankEvents(c, s, map);
+            users.InvalidateLeaderboard();
+        }
+
+        /// <summary>A pending score failed its check: it never gets its pp.</summary>
+        public void RejectPending(long scoreId)
+        {
+            using (var c = db.Open()) c.Exec("UPDATE scores SET ranked = 0, pp = NULL, pending_ranked = 0 WHERE id = @i", ("@i", scoreId));
+            users.InvalidateLeaderboard();
+        }
+
+        /// <summary>The anti-cheat checks noticed something: a person looks at it (admin queue). <paramref name="unrank"/> removes it from the leaderboards meanwhile.</summary>
+        public void Flag(long scoreId, string reason, bool unrank)
+        {
+            using (var c = db.Open())
+                c.Exec(unrank
+                        ? "UPDATE scores SET flag_reason = @r, ranked = 0, pp = NULL, pending_ranked = 0 WHERE id = @i"
+                        : "UPDATE scores SET flag_reason = @r WHERE id = @i", ("@r", reason.Length > 300 ? reason[..300] : reason), ("@i", scoreId));
+            if (unrank) users.InvalidateLeaderboard();
+            log.LogWarning("score {Score} flagged for review: {Reason}", scoreId, reason);
+        }
+
+        /// <summary>A moderator's decision on a flagged or unverifiable score.</summary>
+        public bool Review(long scoreId, bool approve)
+        {
+            long changed;
+            using (var c = db.Open())
+                changed = approve
+                    ? c.Exec("""
+                        UPDATE scores SET ranked = CASE WHEN pp_pending IS NOT NULL OR pp IS NOT NULL THEN 1 ELSE ranked END, pp = COALESCE(pp, pp_pending),
+                                          pending_ranked = 0, verification = 1, flag_reason = 'approved: ' || COALESCE(flag_reason, '') WHERE id = @i
+                        """, ("@i", scoreId))
+                    : c.Exec("UPDATE scores SET ranked = 0, pp = NULL, pending_ranked = 0, flag_reason = 'unranked by staff: ' || COALESCE(flag_reason, '') WHERE id = @i", ("@i", scoreId));
+            users.InvalidateLeaderboard();
+            return changed == 1;
+        }
+
         public void AddEvent(Npgsql.NpgsqlConnection c, int userId, string type, JObject payload, string? at = null)
         {
             var row = accounts.Get(userId, c);
@@ -292,7 +359,11 @@ namespace XcOsu.Server.Services
             List<(long id, string data, int ranked)> rows;
             using (var c = db.Open())
                 // a score refused by replay verification stays refused whatever happens to the beatmap.
-                rows = c.Query($"SELECT id, data, ranked FROM scores WHERE beatmap_id = @b AND playlist_item_id IS NULL AND verification NOT IN ({ReplayVerification.MISMATCH}, {ReplayVerification.MISSING_REPLAY})",
+                // nor does a score still waiting for its replay check, or one the anti-cheat set aside (unless staff approved it).
+                rows = c.Query($"""
+                    SELECT id, data, ranked FROM scores WHERE beatmap_id = @b AND playlist_item_id IS NULL AND verification NOT IN ({ReplayVerification.MISMATCH}, {ReplayVerification.MISSING_REPLAY}, {ReplayVerification.UNVERIFIABLE})
+                      AND pending_ranked = 0 AND (flag_reason IS NULL OR flag_reason LIKE 'approved:%')
+                    """,
                     r => (r.GetInt64(0), r.GetString(1), r.GetInt32(2)), ("@b", beatmapId));
 
             foreach (var (id, data, wasRanked) in rows)

@@ -91,7 +91,7 @@ try {
     step('wrong credentials are reported next to the form');
 
     await visit('/register');
-    await page.fill('[name=username]', alice); await page.fill('[name=email]', 'not-an-email@x'); await page.fill('[name=password]', 'short');
+    await page.fill('[name=username]', alice); await page.fill('[name=email]', 'not-an-email@x'); await page.fill('[name=password]', 'short'); await page.fill('[name=birth_year]', '1995');
     await page.evaluate(() => document.querySelector('#register').noValidate = true); // exercise the server-side messages too
     await page.click('#register button');
     await page.waitForFunction(() => document.querySelector('#register .msg.bad')?.textContent);
@@ -168,7 +168,7 @@ try {
     await page.click('.me-menu summary'); await page.click('#sign-out');
     await page.waitForSelector('#sign-in-link');
     await visit('/register');
-    await page.fill('[name=username]', bob); await page.fill('[name=email]', `${bob}@example.test`); await page.fill('[name=password]', password);
+    await page.fill('[name=username]', bob); await page.fill('[name=email]', `${bob}@example.test`); await page.fill('[name=password]', password); await page.fill('[name=birth_year]', '1995');
     await page.click('#register button');
     await page.waitForURL(/\/web\/home\/account\/edit/);
     await page.waitForSelector('#profile');

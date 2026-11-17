@@ -7,8 +7,8 @@ public sealed class SecurityFilter(Accounts accounts, SessionConnections session
 {
     public async Task OnConnectedAsync(HubLifetimeContext context, Func<HubLifetimeContext, Task> next)
     {
-        var lease = ConnectionLimits.Acquire(context.Context.User?.UserId() ?? 0,
-            context.Context.GetHttpContext()?.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+        if (context.Context.User?.SessionVerified() != true) { context.Context.Abort(); throw new HubException("Enter the code from your authenticator app first."); }
+        var lease = ConnectionLimits.Acquire(context.Context.User?.UserId() ?? 0, ClientAddress.Key(context.Context.GetHttpContext()));
         if (lease == null) { context.Context.Abort(); throw new HubException("Too many connections."); }
         // bind the connection to the session that opened it: it is closed as soon as that session ends, idle or not.
         var bound = sessions.Register(context.Context.User?.UserId() ?? 0, context.Context.User?.SessionId(), context.Context.Abort);
@@ -38,8 +38,10 @@ public sealed class SecurityFilter(Accounts accounts, SessionConnections session
             invocation.Context.Abort();
             throw new HubException("Session expired. Please reconnect.");
         }
-        int limit = invocation.HubMethodName.StartsWith("SendFrameData") ? 6000 : 1200;
-        if (!AbuseGuard.Allow("hub:" + invocation.Context.UserIdentifier + ":" + invocation.HubMethodName, limit, TimeSpan.FromMinutes(1)))
+        // a budget per method, and one for everything the account sends (frames apart: a play streams them continuously).
+        bool frames = invocation.HubMethodName.StartsWith("SendFrameData");
+        if (!AbuseGuard.Allow("hub:" + user + ":" + invocation.HubMethodName, frames ? 3000 : 600, TimeSpan.FromMinutes(1))
+            || (!frames && !AbuseGuard.Allow("hub-total:" + user, 1500, TimeSpan.FromMinutes(1))))
             throw new HubException("Too many requests.");
         return await next(invocation);
     }

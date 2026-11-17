@@ -99,6 +99,8 @@ namespace XcOsu.Server.Hubs
         public async Task<MultiplayerRoom> CreateRoom(MultiplayerRoom room)
         {
             if (accounts.NeedsEmailConfirmation(me)) throw new HubException(Accounts.CONFIRM_EMAIL_MESSAGE);
+            // every room is a database row and a chat channel: creating them in a loop is spam, not play.
+            if (!AbuseGuard.Allow("room-create:" + me, 20, TimeSpan.FromHours(1))) throw new HubException("You created many rooms recently. Please wait a little.");
             validateSettings(room.Settings);
             if (room.Playlist.Count is < 1 or > 100) throw new HubException("A room needs 1 to 100 playlist items.");
             if (room.Settings.MatchType.IsMatchmakingType()) throw new HubException("Quick play and ranked play rooms are created by the matchmaker.");
@@ -155,7 +157,9 @@ namespace XcOsu.Server.Hubs
 
         public async Task<MultiplayerRoom> JoinRoomWithPassword(long roomId, string password)
         {
-            if (!AbuseGuard.Allow($"room-password:{me}:{roomId}", 10, TimeSpan.FromMinutes(1)))
+            // per player and per room (all players together): several accounts cannot share out the guessing.
+            if (!string.IsNullOrEmpty(password) && (!AbuseGuard.Allow($"room-password:{me}:{roomId}", 10, TimeSpan.FromMinutes(1))
+                                                    || !AbuseGuard.Allow($"room-password-all:{roomId}", 60, TimeSpan.FromMinutes(1))))
                 throw new HubException("Too many join attempts.");
             if (!store.Rooms.TryGetValue(roomId, out var room) || room.Live == null)
                 throw new HubException("This room no longer exists.");
@@ -183,7 +187,8 @@ namespace XcOsu.Server.Hubs
             lock (room.Lock)
             {
                 live = room.Live!;
-                if (!isCreator && !string.IsNullOrEmpty(live.Settings.Password) && live.Settings.Password != password)
+                if (!isCreator && !string.IsNullOrEmpty(live.Settings.Password)
+                    && !System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(System.Text.Encoding.UTF8.GetBytes(live.Settings.Password), System.Text.Encoding.UTF8.GetBytes(password ?? "")))
                     throw new InvalidPasswordException();
                 if (live.Settings.MaxParticipants is byte max && live.Users.Count >= max)
                     throw new HubException("This room is full.");
@@ -832,7 +837,12 @@ namespace XcOsu.Server.Hubs
 
         public async Task InvitePlayer(int userId)
         {
-            var (room, live, user) = current();
+            // only the host hands out the room (and its password); blocks are respected both ways; invitations are rationed.
+            var (room, live, user) = currentAsHost();
+            if (!AbuseGuard.Allow("invite:" + user.UserID, 10, TimeSpan.FromMinutes(1)) || !AbuseGuard.Allow($"invite-pair:{user.UserID}:{userId}", 3, TimeSpan.FromMinutes(10)))
+                throw new HubException("You sent many invitations. Please wait a little.");
+            if (services.GetRequiredService<Chat>().Blocked(user.UserID, userId))
+                throw new HubException("You can't invite this player.");
             if (!user_connections.TryGetValue(userId, out string? conn))
                 throw new HubException("That user isn't online in multiplayer right now.");
             await Clients.Client(conn).Invited(user.UserID, room.Id, live.Settings.Password);

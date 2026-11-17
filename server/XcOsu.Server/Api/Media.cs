@@ -78,6 +78,7 @@ namespace XcOsu.Server.Api
                     ["id"] = row.Id, ["username"] = row.Username, ["email"] = row.Email, ["country"] = row.Country, ["playmode"] = row.Playmode,
                     ["avatar_url"] = users.AvatarUrl(row), ["cover_url"] = users.CoverUrl(row), ["profile"] = JObject.Parse(row.ProfileJson),
                     ["team_id"] = users.Team(row.Id)?.Id,
+                    ["birth_year"] = row.BirthYear, ["two_factor"] = accounts.TwoFactorEnabled(row.Id),
                     ["email_verified"] = accounts.EmailVerified(row.Id), ["email_confirmation_required"] = accounts.NeedsEmailConfirmation(row.Id),
                 });
             });
@@ -99,14 +100,34 @@ namespace XcOsu.Server.Api
                     profile["playstyle"] = new JArray(styles.Select(s => s.ToString()).Where(s => s is "mouse" or "keyboard" or "tablet" or "touch").Distinct());
                 if (body["profile_hue"] is JValue hue)
                     profile["profile_hue"] = hue.Type == JTokenType.Null ? null : Math.Clamp(hue.Value<int>(), 0, 360);
-                if (body["pm_friends_only"] is JValue pm) profile["pm_friends_only"] = pm.Value<bool>();
+                // under 16, private messages stay limited to friends.
+                if (body["pm_friends_only"] is JValue pm) profile["pm_friends_only"] = pm.Value<bool>() || (row.BirthYear is int y16 && Accounts.AgeThisYear(y16) < 16);
                 if (body["page"] is JValue page)
                 {
                     string text = page.Type == JTokenType.Null ? "" : page.ToString().Replace("\r\n", "\n");
                     if (text.Length > 60_000) return Json.Error("Your me! page is too long (60,000 characters max).", 422);
                     profile["page"] = text.Trim().Length == 0 ? null : text;
                 }
-                if (body["profile_order"] is JArray order) profile["profile_order"] = order;
+                if (body["profile_order"] is JArray order && order.Count <= 10 && order.All(o => o.Type == JTokenType.String && o.ToString().Length <= 20))
+                    profile["profile_order"] = new JArray(order.Select(o => o.ToString()).Distinct());
+
+                // year of birth: given once (the website asks for it before anything social); a change goes through support.
+                if (body["birth_year"] is JValue birth && row.BirthYear == null)
+                {
+                    if (!int.TryParse(birth.ToString(), out int year) || year < DateTime.UtcNow.Year - 120 || year > DateTime.UtcNow.Year)
+                        return Json.Error("Please enter a valid year of birth.", 422);
+                    using var by = db.Open();
+                    if (Accounts.AgeThisYear(year) < Accounts.MINIMUM_AGE)
+                    {
+                        // COPPA and the GDPR's age of consent: no account for younger players. It is closed, and deleted on request.
+                        by.Exec("UPDATE users SET birth_year = @y, restricted = 1 WHERE id = @u", ("@y", year), ("@u", u));
+                        AuditLog.Write(by, "account.under_minimum_age", u, "user", u, ctx);
+                        accounts.RevokeAll(u);
+                        return Json.Error($"xc-osu! accounts are for players aged {Accounts.MINIMUM_AGE} or over. This account has been closed.", 403);
+                    }
+                    by.Exec("UPDATE users SET birth_year = @y WHERE id = @u", ("@y", year), ("@u", u));
+                    if (Accounts.AgeThisYear(year) < 16) profile["pm_friends_only"] = true;
+                }
 
                 using var c = db.Open();
                 c.Exec("UPDATE users SET profile_json = @p WHERE id = @u", ("@p", profile.ToString(Formatting.None)), ("@u", u));
@@ -116,19 +137,21 @@ namespace XcOsu.Server.Api
                 return Results.NoContent();
             });
 
-            app.MapPost("/api/xc/account/password", async (HttpContext ctx, Db db, Accounts accounts) =>
+            app.MapPost("/api/xc/account/password", async (HttpContext ctx, Db db, Accounts accounts, PwnedPasswords pwned) =>
             {
                 if (ctx.User.UserId() is not int u || accounts.Get(u) is not AccountRow row) return Json.Error("unauthorized", 401);
                 var p = await Json.Params(ctx.Request);
                 if (!Accounts.VerifyPassword(p("current_password") ?? "", row.PasswordHash)) return Json.Error("Current password is incorrect.", 403);
                 string next = p("new_password") ?? "";
-                if (next.Length is < Accounts.PASSWORD_MIN or > Accounts.PASSWORD_MAX) return Json.Error(Accounts.PASSWORD_RULE, 422);
+                if (Accounts.PasswordProblem(next, row.Username, row.Email) is string weak) return Json.Error(weak, 422);
+                if (await pwned.IsBreached(next)) return Json.Error(PwnedPasswords.MESSAGE, 422);
                 using var c = db.Open();
                 using var tx = c.BeginTransaction();
                 c.Exec("UPDATE users SET password_hash = @h WHERE id = @u", ("@h", Accounts.HashPassword(next)), ("@u", u));
                 c.Exec("DELETE FROM password_resets WHERE user_id = @u", ("@u", u));
                 c.Exec("DELETE FROM tokens WHERE user_id = @u", ("@u", u));
                 c.Exec("DELETE FROM account_challenges WHERE user_id = @u AND purpose = 'reset'", ("@u", u));
+                AuditLog.Write(c, "account.password_changed", u, "user", u, ctx);
                 tx.Commit();
                 accounts.NotifyRevoked(u);
                 return Results.NoContent();

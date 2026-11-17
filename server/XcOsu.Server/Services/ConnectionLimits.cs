@@ -1,5 +1,6 @@
 namespace XcOsu.Server.Services;
 
+/// <summary>Long-lived connections (hubs, notification socket) per account and per address. There is no global ceiling: a busy launch must not refuse everyone.</summary>
 public static class ConnectionLimits
 {
     private static readonly object sync = new();
@@ -10,7 +11,7 @@ public static class ConnectionLimits
         lock (sync)
         {
             // A normal game uses metadata, multiplayer, spectator and notification connections.
-            if (counts.GetValueOrDefault(account) >= 32 || counts.GetValueOrDefault(ip) >= 128 || counts.Count >= 20000)
+            if (counts.GetValueOrDefault(account) >= 32 || counts.GetValueOrDefault(ip) >= 256)
                 return null;
             counts[account] = counts.GetValueOrDefault(account) + 1;
             counts[ip] = counts.GetValueOrDefault(ip) + 1;

@@ -25,7 +25,15 @@ namespace XcOsu.Server.Hubs
             public int UserId;
             public SpectatorState State = new SpectatorState();
             public readonly List<LegacyReplayFrame> Frames = new List<LegacyReplayFrame>();
+            /// <summary>Server clock when the play began and ended: a replay cannot contain more game time than really passed.</summary>
+            public readonly DateTimeOffset StartedAt = DateTimeOffset.UtcNow;
+            public DateTimeOffset? EndedAt;
         }
+
+        // frames kept for server-side replays, across every play in progress: bounded so a few accounts cannot exhaust the heap.
+        private const int max_frames_per_play = 120_000;
+        private const long max_frames_total = 2_000_000;
+        private static long framesHeld;
 
         private static readonly ConcurrentDictionary<int, string> owners = new();
         private static readonly ConcurrentDictionary<string, Session> sessions = new ConcurrentDictionary<string, Session>();
@@ -39,9 +47,14 @@ namespace XcOsu.Server.Hubs
         private readonly Users users;
         private readonly IHubContext<SpectatorHub, ISpectatorClient> hubContext;
         private readonly ILogger<SpectatorHub> log;
+        private readonly IServiceProvider services;
+        private readonly Presence presence;
 
-        public SpectatorHub(Accounts accounts, Db db, Scores scores, Users users, IHubContext<SpectatorHub, ISpectatorClient> hubContext, ILogger<SpectatorHub> log)
+        public SpectatorHub(Accounts accounts, Db db, Scores scores, Users users, IHubContext<SpectatorHub, ISpectatorClient> hubContext, ILogger<SpectatorHub> log,
+                            IServiceProvider services, Presence presence)
         {
+            this.services = services;
+            this.presence = presence;
             this.accounts = accounts;
             this.db = db;
             this.scores = scores;
@@ -59,6 +72,7 @@ namespace XcOsu.Server.Hubs
             int u = me;
             if (sessions.TryRemove(Context.ConnectionId, out var s))
             {
+                release(s);
                 ((ICollection<KeyValuePair<int, string>>)owners).Remove(new(u, Context.ConnectionId));
                 s.State.State = SpectatedUserState.Quit;
                 await Clients.Group(watchers(u)).UserFinishedPlaying(u, s.State);
@@ -88,7 +102,8 @@ namespace XcOsu.Server.Hubs
             // a newer connection (reconnect, second tab) takes the play session over, as it always did.
             string? previousOwner = null;
             owners.AddOrUpdate(u, Context.ConnectionId, (_, old) => { previousOwner = old; return Context.ConnectionId; });
-            if (previousOwner != null && previousOwner != Context.ConnectionId) sessions.TryRemove(previousOwner, out _);
+            if (previousOwner != null && previousOwner != Context.ConnectionId && sessions.TryRemove(previousOwner, out var replaced))
+                release(replaced);
             sessions[Context.ConnectionId] = new Session { UserId = u, Token = scoreToken, State = state };
             await Clients.Group(watchers(u)).UserBeganPlaying(u, state);
         }
@@ -104,9 +119,11 @@ namespace XcOsu.Server.Hubs
                 if (scoreToken != null && scoreToken != s.Token) throw new HubException("Invalid score token.");
                 lock (s.Frames)
                 {
-                    // past the cap the server-side copy stops growing, but watchers keep receiving frames.
-                    if (data.Frames.Count <= 200_000 - s.Frames.Count)
+                    // past the caps the server-side copy stops growing (the play then has no replay), but watchers keep receiving frames.
+                    if (data.Frames.Count <= max_frames_per_play - s.Frames.Count && Interlocked.Add(ref framesHeld, data.Frames.Count) <= max_frames_total)
                         s.Frames.AddRange(data.Frames);
+                    else if (data.Frames.Count <= max_frames_per_play - s.Frames.Count)
+                        Interlocked.Add(ref framesHeld, -data.Frames.Count);
                 }
             }
 
@@ -124,10 +141,20 @@ namespace XcOsu.Server.Hubs
             ((ICollection<KeyValuePair<int, string>>)owners).Remove(new(u, Context.ConnectionId));
 
             s.State.State = finalState;
+            s.EndedAt = DateTimeOffset.UtcNow;
             await Clients.Group(watchers(u)).UserFinishedPlaying(u, s.State);
 
             if (s.Token is long token && finalState == SpectatedUserState.Passed && s.Frames.Count > 0)
-                _ = Task.Run(() => recordReplay(u, token, s));
+                _ = Task.Run(async () => { try { await recordReplay(u, token, s); } finally { release(s); } });
+            else
+                release(s);
+        }
+
+        private static void release(Session s)
+        {
+            int count;
+            lock (s.Frames) { count = s.Frames.Count; s.Frames.Clear(); }
+            Interlocked.Add(ref framesHeld, -count);
         }
 
         private async Task recordReplay(int userId, long token, Session session)
@@ -165,6 +192,14 @@ namespace XcOsu.Server.Hubs
                 List<ReplayFrame> frames;
                 lock (session.Frames) frames = session.Frames.Cast<ReplayFrame>().ToList();
 
+                // game time in the replay against time that really passed on the server: a replay that runs faster than the clock
+                // (timewarp, a game speed hack) is refused here, before any simulation.
+                double rate = osu.Game.Utils.ModUtils.CalculateRateWithMods(solo.Mods.Select(m => m.ToMod(ruleset)).ToArray());
+                double replaySeconds = frames.Count > 1 ? (frames[^1].Time - frames.Where(f => f.Time > 0).Select(f => f.Time).DefaultIfEmpty(0).Min()) / 1000 / rate : 0;
+                double wallSeconds = ((session.EndedAt ?? DateTimeOffset.UtcNow) - session.StartedAt).TotalSeconds;
+                if (replaySeconds > 20 && replaySeconds > wallSeconds * 1.08 + 3)
+                    scores.Flag(scoreId.Value, $"replay holds {replaySeconds:F0}s of play but only {wallSeconds:F0}s passed on the server", unrank: true);
+
                 var score = new Score { ScoreInfo = scoreInfo, Replay = new Replay { Frames = frames } };
                 using var ms = new MemoryStream();
                 new LegacyScoreEncoder(score, null).Encode(ms, leaveOpen: true);
@@ -182,6 +217,9 @@ namespace XcOsu.Server.Hubs
         public async Task StartWatchingUser(int userId)
         {
             int u = me;
+            // a player who blocked you, or who appears offline to you, is not watchable (and is not told you tried).
+            if (services.GetRequiredService<Chat>().Blocked(u, userId) || !presence.VisibleTo(userId, u, db))
+                return;
             if (!AbuseGuard.Allow("spectator-watch:" + Context.ConnectionId, 30, TimeSpan.FromMinutes(1)))
                 throw new HubException("Too many watch requests.");
             var targets = watching.GetOrAdd(Context.ConnectionId, _ => new ConcurrentDictionary<int, byte>());

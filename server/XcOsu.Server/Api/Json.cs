@@ -42,7 +42,10 @@ namespace XcOsu.Server.Api
         {
             using var reader = new StreamReader(req.Body);
             string s = await ReadBounded(reader);
-            return string.IsNullOrWhiteSpace(s) ? default : JsonConvert.DeserializeObject<T>(s, SETTINGS);
+            if (string.IsNullOrWhiteSpace(s)) return default;
+            // a malformed body is the client's mistake (400), not a server error.
+            try { return JsonConvert.DeserializeObject<T>(s, SETTINGS); }
+            catch (JsonException) { throw new BadHttpRequestException("Malformed JSON body", 400); }
         }
 
         private static async Task<string> ReadBounded(StreamReader reader)
@@ -53,7 +56,13 @@ namespace XcOsu.Server.Api
             return new string(buffer, 0, count);
         }
 
-        /// <summary>Reads a parameter from the query, a form body or a JSON body (osu! sends all three).</summary>
+        /// <summary>Parameters that carry a secret: they are only read from the body, never from the address, which ends up in logs and history.</summary>
+        private static readonly HashSet<string> body_only = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "password", "user[password]", "current_password", "new_password", "refresh_token", "token", "verification_key", "code", "access_token",
+        };
+
+        /// <summary>Reads a parameter from the query, a form body or a JSON body (osu! sends all three). Secrets only come from the body.</summary>
         public static async Task<Func<string, string?>> Params(HttpRequest req)
         {
             JObject? json = null;
@@ -75,7 +84,7 @@ namespace XcOsu.Server.Api
             {
                 if (form != null && form.TryGetValue(key, out var f)) return f.ToString();
                 if (json?[key] is JToken t) return t.Type == JTokenType.String ? t.Value<string>() : t.ToString();
-                if (req.Query.TryGetValue(key, out var q)) return q.ToString();
+                if (!body_only.Contains(key) && req.Query.TryGetValue(key, out var q)) return q.ToString();
                 return null;
             };
         }

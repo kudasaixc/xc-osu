@@ -32,11 +32,23 @@ namespace XcOsu.Server.Api
             return team;
         }
 
+        public static void DeleteFlag(Db db, long team)
+        {
+            try { File.Delete(Path.Combine(db.DataDirectory, "team-flags", team.ToString())); } catch (IOException) { }
+        }
+
         private static long? teamOf(Npgsql.NpgsqlConnection c, int user) => c.Scalar<long?>("SELECT team_id FROM team_members WHERE user_id = @u", ("@u", user));
 
         private static string? validate(string? name, string? shortName)
         {
             if (string.IsNullOrWhiteSpace(name) || name.Trim().Length is < 2 or > 30) return "Team name must be 2–30 characters.";
+            // shown next to every member's name: printable characters only (no invisible, joining or direction-changing ones), and
+            // not a staff or system name, even spelled with look-alikes.
+            if (name.Any(ch => char.GetUnicodeCategory(ch) is System.Globalization.UnicodeCategory.Control or System.Globalization.UnicodeCategory.Format
+                                   or System.Globalization.UnicodeCategory.PrivateUse or System.Globalization.UnicodeCategory.Surrogate or System.Globalization.UnicodeCategory.OtherNotAssigned)
+                || name.Contains("  "))
+                return "Team name contains characters that are not allowed.";
+            if (Accounts.IsReservedName(name) || Accounts.IsReservedName(shortName ?? "")) return "This team name is reserved.";
             if (string.IsNullOrWhiteSpace(shortName) || !System.Text.RegularExpressions.Regex.IsMatch(shortName.Trim(), "^[A-Za-z0-9]{2,4}$"))
                 return "Short name must be 2–4 letters or digits.";
             return null;
@@ -74,7 +86,7 @@ namespace XcOsu.Server.Api
                 if (ctx.User.UserId() is not int u || accounts.Get(u) is not { Restricted: false }) return Json.Error("unauthorized", 401);
                 if (accounts.NeedsEmailConfirmation(u)) return Json.Error(Accounts.CONFIRM_EMAIL_MESSAGE, 403);
                 var p = await Json.Params(ctx.Request);
-                string? name = p("name")?.Trim(), shortName = p("short_name")?.Trim().ToUpperInvariant();
+                string? name = p("name")?.Trim().Normalize(System.Text.NormalizationForm.FormKC), shortName = p("short_name")?.Trim().ToUpperInvariant();
                 if (validate(name, shortName) is string error) return Json.Error(error, 422);
 
                 using var c = db.Open();
@@ -101,11 +113,12 @@ namespace XcOsu.Server.Api
 
             app.MapPut("/api/xc/teams/{id:long}", async (long id, HttpContext ctx, Db db, Users users, Accounts accounts) =>
             {
-                if (ctx.User.UserId() is not int u) return Json.Error("unauthorized", 401);
+                if (ctx.User.UserId() is not int u || accounts.Get(u) is not { Restricted: false }) return Json.Error("unauthorized", 401);
+                if (accounts.NeedsEmailConfirmation(u)) return Json.Error(Accounts.CONFIRM_EMAIL_MESSAGE, 403);
                 using var c = db.Open();
                 if (c.Scalar<long?>("SELECT leader_id FROM teams WHERE id = @t", ("@t", id)) != u) return Json.Error("Only the team leader can do that.", 403);
                 var p = await Json.Params(ctx.Request);
-                string? name = p("name")?.Trim(), shortName = p("short_name")?.Trim().ToUpperInvariant();
+                string? name = p("name")?.Trim().Normalize(System.Text.NormalizationForm.FormKC), shortName = p("short_name")?.Trim().ToUpperInvariant();
                 if (validate(name, shortName) is string error) return Json.Error(error, 422);
                 if (c.Scalar<long>("SELECT COUNT(*) FROM teams WHERE (name = @n OR short_name = @s) AND id != @t", ("@n", name), ("@s", shortName), ("@t", id)) > 0)
                     return Json.Error("That team name or short name is taken.", 422);
@@ -148,7 +161,11 @@ namespace XcOsu.Server.Api
                 if (c.Scalar<long?>("SELECT leader_id FROM teams WHERE id = @t", ("@t", team)) == u)
                 {
                     long? next = c.Scalar<long?>("SELECT user_id FROM team_members WHERE team_id = @t ORDER BY seq LIMIT 1", ("@t", team));
-                    if (next == null) c.Exec("DELETE FROM teams WHERE id = @t", ("@t", team));
+                    if (next == null)
+                    {
+                        c.Exec("DELETE FROM teams WHERE id = @t", ("@t", team));
+                        DeleteFlag(db, team);
+                    }
                     else c.Exec("UPDATE teams SET leader_id = @l WHERE id = @t", ("@l", next), ("@t", team));
                 }
 
@@ -167,9 +184,10 @@ namespace XcOsu.Server.Api
                 return Results.NoContent();
             });
 
-            app.MapPost("/api/xc/teams/{id:long}/flag", async (long id, HttpContext ctx, Db db, Users users) =>
+            app.MapPost("/api/xc/teams/{id:long}/flag", async (long id, HttpContext ctx, Db db, Users users, Accounts accounts) =>
             {
-                if (ctx.User.UserId() is not int u) return Json.Error("unauthorized", 401);
+                if (ctx.User.UserId() is not int u || accounts.Get(u) is not { Restricted: false }) return Json.Error("unauthorized", 401);
+                if (accounts.NeedsEmailConfirmation(u)) return Json.Error(Accounts.CONFIRM_EMAIL_MESSAGE, 403);
                 using (var c = db.Open())
                     if (c.Scalar<long?>("SELECT leader_id FROM teams WHERE id = @t", ("@t", id)) != u) return Json.Error("Only the team leader can do that.", 403);
                 if (!ctx.Request.HasFormContentType) return Json.Error("Send the image as multipart form field \"file\".", 422);

@@ -24,15 +24,17 @@ namespace XcOsu.Server.Api
             app.MapGet("/api/xc/account/export", (HttpContext ctx, Db db) =>
             {
                 if (ctx.User.UserId() is not int u) return Json.Error("unauthorized", 401);
+                if (!AbuseGuard.Allow("export:" + u, 3, TimeSpan.FromHours(1))) return Json.Error("You can download your data 3 times an hour.", 429);
                 using var c = db.Open();
-                var account = c.Scalar<string>("SELECT (to_jsonb(t) - 'password_hash')::text FROM users t WHERE id = @u", ("@u", u));
+                var account = c.Scalar<string>("SELECT (to_jsonb(t) - 'password_hash' - 'totp_secret')::text FROM users t WHERE id = @u", ("@u", u));
                 if (account == null) return Json.Error("unauthorized", 401);
 
                 var export = new JObject
                 {
                     ["exported_at"] = DateTimeOffset.UtcNow.ToString("O"),
                     ["account"] = JObject.Parse(account),
-                    ["sessions"] = JArray.Parse(c.Scalar<string>("SELECT COALESCE(json_agg(json_build_object('expires_at', expires_at)), '[]')::text FROM tokens WHERE user_id = @u", ("@u", u))!),
+                    ["sessions"] = JArray.Parse(c.Scalar<string>("SELECT COALESCE(json_agg(json_build_object('created_at', created_at, 'expires_at', expires_at)), '[]')::text FROM tokens WHERE user_id = @u", ("@u", u))!),
+                    ["security_log"] = JArray.Parse(c.Scalar<string>("SELECT COALESCE(json_agg(json_build_object('at', at, 'action', action, 'address', address) ORDER BY id), '[]')::text FROM audit_log WHERE target_type = 'user' AND target_id = @u", ("@u", u))!),
                 };
                 foreach (var (table, column) in owned)
                     export[table] = JArray.Parse(c.Scalar<string>($"SELECT COALESCE(json_agg(t), '[]')::text FROM {table} t WHERE {column} = @u", ("@u", u))!);
@@ -41,7 +43,7 @@ namespace XcOsu.Server.Api
                 return Results.Text(export.ToString(), "application/json; charset=utf-8");
             });
 
-            app.MapPost("/api/xc/account/delete", async (HttpContext ctx, Db db, Accounts accounts, Users users, Scores scores) =>
+            app.MapPost("/api/xc/account/delete", async (HttpContext ctx, Db db, Accounts accounts, Users users, Scores scores, AuditLog audit) =>
             {
                 if (ctx.User.UserId() is not int u) return Json.Error("unauthorized", 401);
                 var p = await Json.Params(ctx.Request);
@@ -51,6 +53,7 @@ namespace XcOsu.Server.Api
                 if (!string.Equals(p("confirm"), row.Username, StringComparison.OrdinalIgnoreCase)) return Json.Error("Type your username to confirm.", 422);
 
                 var replays = c.Query("SELECT id FROM scores WHERE user_id = @u AND has_replay = 1", r => r.GetInt64(0), ("@u", u));
+                var disbanded = new List<long>();
                 var shots = c.Query("SELECT hash FROM screenshots WHERE user_id = @u", r => r.GetString(0), ("@u", u));
 
                 using (var tx = c.BeginTransaction())
@@ -59,9 +62,13 @@ namespace XcOsu.Server.Api
                     foreach (long team in c.Query("SELECT id FROM teams WHERE leader_id = @u", r => r.GetInt64(0), ("@u", u)))
                     {
                         long? next = c.Scalar<long?>("SELECT user_id FROM team_members WHERE team_id = @t AND user_id <> @u ORDER BY seq LIMIT 1", ("@t", team), ("@u", u));
-                        if (next == null) c.Exec("DELETE FROM teams WHERE id = @t", ("@t", team));
+                        if (next == null) { c.Exec("DELETE FROM teams WHERE id = @t", ("@t", team)); disbanded.Add(team); }
                         else c.Exec("UPDATE teams SET leader_id = @l WHERE id = @t", ("@l", next), ("@t", team));
                     }
+
+                    // the name the deleted player had does not survive in other people's notifications, nor in reports about them.
+                    c.Exec("UPDATE notifications SET details = (details::jsonb || '{\"username\":\"[deleted]\"}'::jsonb)::text WHERE source_user_id = @u", ("@u", u));
+                    c.Exec("DELETE FROM reports WHERE reportable_type = 'user' AND reportable_id = @u", ("@u", u));
 
                     // a comment with replies stays as an empty "deleted" entry so the thread holds together; the rest go.
                     const string has_replies = "EXISTS (SELECT 1 FROM comments r WHERE r.parent_id = comments.id)";
@@ -79,8 +86,10 @@ namespace XcOsu.Server.Api
                     c.Exec("DELETE FROM blocks WHERE target_id = @u", ("@u", u));
                     c.Exec("UPDATE notifications SET source_user_id = NULL WHERE source_user_id = @u", ("@u", u));
 
-                    // tokens, password resets, challenges and remaining scores cascade from here.
+                    // tokens, password resets, challenges and remaining scores cascade from here. The audit trail keeps the event, not the person.
                     c.Exec("DELETE FROM users WHERE id = @u", ("@u", u));
+                    c.Exec("UPDATE audit_log SET address = NULL, details = NULL WHERE target_type = 'user' AND target_id = @u", ("@u", u));
+                    AuditLog.Write(c, "account.deleted", null, "user", u);
                     tx.Commit();
                 }
 
@@ -94,6 +103,7 @@ namespace XcOsu.Server.Api
                 remove(Path.Combine(db.DataDirectory, "covers", u.ToString()));
                 foreach (long id in replays) remove(Path.Combine(scores.ReplayDirectory, $"{id}.osr"));
                 foreach (string hash in shots) remove(Path.Combine(db.DataDirectory, "screenshots", hash + ".jpg"));
+                foreach (long team in disbanded) Teams.DeleteFlag(db, team);
 
                 return Results.NoContent();
             });

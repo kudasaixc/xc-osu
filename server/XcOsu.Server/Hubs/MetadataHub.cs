@@ -18,8 +18,11 @@ namespace XcOsu.Server.Hubs
         private readonly Db db;
         private readonly DailyChallenge daily;
 
-        public MetadataHub(Presence presence, Db db, DailyChallenge daily)
+        private readonly IHubContext<MetadataHub, IMetadataClient> hubContext;
+
+        public MetadataHub(Presence presence, Db db, DailyChallenge daily, IHubContext<MetadataHub, IMetadataClient> hubContext)
         {
+            this.hubContext = hubContext;
             this.presence = presence;
             this.db = db;
             this.daily = daily;
@@ -63,15 +66,67 @@ namespace XcOsu.Server.Hubs
         public async Task UpdateActivity(UserActivity? activity)
         {
             int u = me;
+            if (activity != null && !acceptable(activity)) throw new HubException("Invalid activity.");
             if (presence.Online.TryGetValue(u, out var e)) e.Activity = activity;
-            await broadcast(u);
+            await broadcastSoon(u);
         }
 
         public async Task UpdateStatus(UserStatus? status)
         {
             int u = me;
             if (presence.Online.TryGetValue(u, out var e)) e.Status = status;
-            await broadcast(u);
+            await broadcastSoon(u);
+        }
+
+        /// <summary>
+        /// Every text of an activity is shown to everyone watching presence: short, printable, nothing that reorders or hides text.
+        /// </summary>
+        private static bool acceptable(UserActivity activity)
+        {
+            foreach (var property in activity.GetType().GetProperties())
+            {
+                if (property.PropertyType != typeof(string) || property.GetIndexParameters().Length > 0) continue;
+                if (property.GetValue(activity) is not string text) continue;
+                if (text.Length > 200) return false;
+                foreach (char ch in text)
+                    if (char.GetUnicodeCategory(ch) is System.Globalization.UnicodeCategory.Control or System.Globalization.UnicodeCategory.Format)
+                        return false;
+            }
+            return true;
+        }
+
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, long> lastBroadcast = new();
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, byte> pendingBroadcast = new();
+
+        /// <summary>
+        /// Presence changes reach every watcher, so they are coalesced: at most one broadcast per player every two seconds (the
+        /// latest state wins). Without this, one player changing activity in a loop cost a message for every connected player.
+        /// </summary>
+        private async Task broadcastSoon(int u)
+        {
+            long now = Environment.TickCount64;
+            long last = lastBroadcast.GetValueOrDefault(u);
+            if (now - last >= 2000)
+            {
+                lastBroadcast[u] = now;
+                await broadcast(u);
+                return;
+            }
+            if (!pendingBroadcast.TryAdd(u, 0)) return;
+            var hub = hubContext;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(Math.Max(0, 2000 - (now - last))));
+                    lastBroadcast[u] = Environment.TickCount64;
+                    var p = presence.Online.TryGetValue(u, out var e) && e.Status != UserStatus.Offline ? presence.Get(u) : null;
+                    await hub.Clients.Group(presence_watchers).UserPresenceUpdated(u, p);
+                    await hub.Clients.Group(friendsOf(u)).FriendPresenceUpdated(u, p);
+                }
+                catch { /* the next change broadcasts again */ }
+                finally { pendingBroadcast.TryRemove(u, out _); }
+            });
         }
 
         public async Task BeginWatchingUserPresence()
@@ -113,7 +168,7 @@ namespace XcOsu.Server.Hubs
             int u = me;
             List<int> friends;
             using (var c = db.Open())
-                friends = c.Query("SELECT target_id FROM friends WHERE user_id = @u", r => r.GetInt32(0), ("@u", u));
+                friends = c.Query("SELECT target_id FROM friends WHERE user_id = @u LIMIT 500", r => r.GetInt32(0), ("@u", u));
 
             var previous = Context.Items.TryGetValue("friends", out var old) ? (HashSet<int>)old! : new HashSet<int>();
             foreach (int removed in previous.Except(friends))

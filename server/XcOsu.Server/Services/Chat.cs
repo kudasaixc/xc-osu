@@ -242,15 +242,39 @@ namespace XcOsu.Server.Services
             return PmRestriction(sender, target, c);
         }
 
+        /// <summary>Whether either player blocked the other.</summary>
+        public bool Blocked(int a, int b)
+        {
+            using var c = db.Open();
+            return c.Scalar<long>("SELECT COUNT(*) FROM blocks WHERE (user_id = @a AND target_id = @b) OR (user_id = @b AND target_id = @a)", ("@a", a), ("@b", b)) > 0;
+        }
+
+        /// <summary>
+        /// Opening a conversation with someone new is rationed (a few an hour, fewer for a new account), so a throwaway account
+        /// cannot message hundreds of strangers. Conversations that already exist are not affected.
+        /// </summary>
+        public string? NewConversationRestriction(int sender, int target)
+        {
+            int lo = Math.Min(sender, target), hi = Math.Max(sender, target);
+            using var c = db.Open();
+            if (c.Scalar<long?>("SELECT id FROM chat_channels WHERE type = 'PM' AND pm_user_a = @a AND pm_user_b = @b", ("@a", lo), ("@b", hi)) != null) return null;
+            var joined = accounts.Get(sender, c)?.JoinDate;
+            bool newAccount = joined == null || joined > DateTimeOffset.UtcNow.AddDays(-7);
+            return AbuseGuard.Allow("pm-new:" + sender, newAccount ? 5 : 20, TimeSpan.FromHours(1)) ? null
+                : "You started many new conversations recently. Please wait before messaging someone new.";
+        }
+
         private string? PmRestriction(int sender, int target, Npgsql.NpgsqlConnection c)
         {
             if (c.Scalar<long>("SELECT COUNT(*) FROM blocks WHERE user_id = @t AND target_id = @u", ("@t", target), ("@u", sender)) > 0)
                 return "You cannot message this user.";
             if (c.Scalar<long>("SELECT COUNT(*) FROM blocks WHERE user_id = @u AND target_id = @t", ("@t", target), ("@u", sender)) > 0)
                 return "You have blocked this user.";
+            if (sender == target) return "You cannot message yourself.";
             var t = accounts.Get(target, c);
             if (t == null) return "User not found.";
-            if (Newtonsoft.Json.Linq.JObject.Parse(t.ProfileJson).Value<bool?>("pm_friends_only") == true
+            bool young = c.Scalar<long?>("SELECT birth_year FROM users WHERE id = @t", ("@t", target)) is long by && Accounts.AgeThisYear(by) < 16;
+            if ((young || Newtonsoft.Json.Linq.JObject.Parse(t.ProfileJson).Value<bool?>("pm_friends_only") == true)
                 && c.Scalar<long>("SELECT COUNT(*) FROM friends WHERE user_id = @t AND target_id = @u", ("@t", target), ("@u", sender)) == 0)
                 return "This user only accepts messages from friends.";
             return null;

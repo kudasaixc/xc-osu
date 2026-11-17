@@ -43,10 +43,13 @@ public sealed class SessionConnections : IDisposable
     {
         try
         {
-            foreach (var (id, entry) in entries)
+            var concerned = entries.Where(p => userId == null || p.Value.UserId == userId).ToList();
+            if (concerned.Count == 0) return;
+            // one query for every distinct session, not one per connection: thousands of open sockets used to mean thousands of queries every 10 s.
+            var alive = accounts.ActiveSessions(concerned.Select(p => p.Value.SessionId).Distinct().ToArray());
+            foreach (var (id, entry) in concerned)
             {
-                if (userId != null && entry.UserId != userId) continue;
-                if (accounts.HasActiveSession(entry.UserId, entry.SessionId)) continue;
+                if (alive.Contains(entry.SessionId)) continue;
                 if (!entries.TryRemove(id, out _)) continue;
                 try { entry.Abort(); } catch { /* already closing */ }
             }
