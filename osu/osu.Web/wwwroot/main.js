@@ -85,8 +85,10 @@ async function engineFetch(uri, integrity) {
 // The Cache Storage key stays the site URL wherever the bytes came from, so moving to or from the CDN
 // does not make anyone download the file again. It is always the root /_framework/ path: the file name is
 // content-fingerprinted, so a test build served from a sub-folder shares the copy the main site already kept.
-// The body is read once and the same bytes feed both the cache and the runtime: cloning the 110 MB+ response
-// (tee) made iOS Safari fail the download ("Load failed") and the runtime then retried it forever.
+// On a miss the network response goes straight into Cache Storage and the runtime then reads the cached copy, so
+// the page never holds the 129 MB body in JS memory: reading it into an ArrayBuffer and handing out new Responses
+// built from it kept up to three copies alive at once, which helped iOS kill the tab during loading. Cloning the
+// response (tee) made iOS Safari fail the download ("Load failed"), so the body is never read twice either.
 async function bigAsset(uri) {
   const url = new URL('/_framework/' + new URL(uri, document.baseURI).pathname.split('/').pop(), document.baseURI).href;
   let cache = null;
@@ -98,14 +100,17 @@ async function bigAsset(uri) {
   const res = await engineFetch(new URL(uri, document.baseURI).href);
   if (!cache || !res.ok || res.status !== 200) return res;
   const t0 = performance.now();
-  const bytes = await res.arrayBuffer();
-  console.log(`[launch] resources assembly downloaded: ${(bytes.byteLength / 1048576).toFixed(0)} MB in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
-  const headers = { 'Content-Type': res.headers.get('Content-Type') || 'application/wasm' };
-  cache.put(url, new Response(bytes, { headers })).then(async () => {
+  try {
+    await cache.put(url, res);
+    const kept = await cache.match(url);
+    if (!kept) throw new Error('not found after put');
+    console.log(`[launch] resources assembly downloaded and kept offline in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
     for (const k of await cache.keys()) if (k.url !== url) await cache.delete(k);
-    console.log('[launch] resources assembly kept offline');
-  }).catch(e => console.warn('[launch] could not keep ' + url + ' offline: ' + e));
-  return new Response(bytes, { status: 200, headers });
+    return kept;
+  } catch (e) {
+    console.warn('[launch] could not keep ' + url + ' offline (' + e + '), downloading it again');
+    return engineFetch(new URL(uri, document.baseURI).href);
+  }
 }
 
 const builder = dotnet

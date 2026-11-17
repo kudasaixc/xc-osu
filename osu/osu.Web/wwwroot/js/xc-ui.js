@@ -401,7 +401,9 @@ export function installUi(rt, canvas, hooks) {
   globalThis.xcTakeOffscreenCanvas = () => {
     const r = canvas.getBoundingClientRect();
     canvas.width = Math.max(1, Math.round(r.width * dpr)); canvas.height = Math.max(1, Math.round(r.height * dpr));
-    return canvas.transferControlToOffscreen();
+    const off = canvas.transferControlToOffscreen();
+    console.log(`[launch] canvas ${canvas.width}x${canvas.height} handed to the draw worker`);
+    return off;
   };
 
   globalThis.xcAttachShared = (ptr, size) => {
