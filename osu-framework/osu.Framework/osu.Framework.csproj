@@ -53,7 +53,7 @@
 
     <!-- Any version ahead of this will cause runtime issues on iOS
          See https://github.com/xoofx/markdig/issues/564 -->
-    <PackageReference Include="Markdig" Version="0.23.0" />
+    <PackageReference Include="Markdig" Version="1.6.0" />
     <PackageReference Include="System.Numerics.Tensors" Version="10.0.11" />
   </ItemGroup>
 </Project>
