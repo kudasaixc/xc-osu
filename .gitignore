@@ -2,3 +2,11 @@
 **/bin/
 **/obj/
 **/node_modules
+
+# Personal notes, audits and runbooks: kept on the machine, not published.
+/docs/
+
+# Native intermediates (build.sh copies the final archives into osu/osu.Web/Native).
+/native/*/build/
+
+__pycache__/

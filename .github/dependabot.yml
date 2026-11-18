@@ -5,6 +5,11 @@ updates:
     directory: /server/XcOsu.Server
     schedule: { interval: weekly }
     open-pull-requests-limit: 5
+    # The server pulls osu.Game and osu.Framework in through project references. Majors there have to follow
+    # the .NET runtime the WebAssembly build ships with, so they are done by hand; patches and security fixes still come.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: nuget
     directory: /server/XcOsu.ReplayVerifier
     schedule: { interval: weekly }
