@@ -1,12 +1,18 @@
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats;
+using SixLabors.ImageSharp.Formats.Gif;
 using SixLabors.ImageSharp.Formats.Jpeg;
+using SixLabors.ImageSharp.Formats.Png;
+using SixLabors.ImageSharp.Formats.Webp;
 
 namespace XcOsu.Server.Services;
 
 public static class SafeImages
 {
     private static readonly SemaphoreSlim slots = new(2, 2);
+    // Only the formats we accept are registered, so anything else (TIFF, BMP, TGA...) is rejected before a decoder runs.
+    private static readonly Configuration formats = new(new PngConfigurationModule(), new JpegConfigurationModule(),
+        new GifConfigurationModule(), new WebpConfigurationModule());
     public static async Task<byte[]> Reencode(byte[] bytes, bool jpeg, CancellationToken ct)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -14,7 +20,7 @@ public static class SafeImages
         if (!await slots.WaitAsync(0, timeout.Token)) throw new BadHttpRequestException("Image service busy. Please retry.", 429);
         try
         {
-            var options = new DecoderOptions { SkipMetadata = true, MaxFrames = 121 };
+            var options = new DecoderOptions { Configuration = formats, SkipMetadata = true, MaxFrames = 121 };
             var info = Image.Identify(options, bytes);
             if (info.Width > 8192 || info.Height > 8192 || (long)info.Width * info.Height > 32_000_000
                 || info.FrameMetadataCollection.Count > 120

@@ -1,5 +1,39 @@
 [
   {
+    "version": "2026.1118.0",
+    "date": "2026-11-18T09:40:00Z",
+    "entries": [
+      {
+        "category": "Performance",
+        "category_fr": "Performance",
+        "type": "improvement",
+        "title": "The game's textures, sounds and tracks are now read on demand from a separate file instead of living in the game's memory: less memory used (about 11 to 20 % in our tests) and a faster start",
+        "title_fr": "Les textures, sons et musiques du jeu sont maintenant lus à la demande depuis un fichier séparé au lieu de rester dans la mémoire du jeu : moins de mémoire utilisée (environ 11 à 20 % dans nos tests) et un démarrage plus rapide"
+      },
+      {
+        "category": "Performance",
+        "category_fr": "Performance",
+        "type": "improvement",
+        "title": "Much more of the game's code is now compiled ahead of time instead of interpreted: shorter frames and shorter garbage-collection pauses in menus and in gameplay",
+        "title_fr": "Une bien plus grande partie du code du jeu est maintenant compilée à l'avance au lieu d'être interprétée : des images plus courtes à calculer et des pauses de nettoyage mémoire plus courtes, dans les menus comme en jeu"
+      },
+      {
+        "category": "Settings",
+        "category_fr": "Réglages",
+        "type": "add",
+        "title": "Launcher: new \"Audio thread rate\" option (1000 Hz by default; 500 Hz frees CPU on slow machines)",
+        "title_fr": "Lanceur : nouvelle option « Fréquence du thread audio » (1000 Hz par défaut ; 500 Hz libère du processeur sur les petites machines)"
+      },
+      {
+        "category": "Settings",
+        "category_fr": "Réglages",
+        "type": "add",
+        "title": "Launcher: when your last session was struggling or your machine is modest, the launcher suggests the low-end preset (you can say no thanks)",
+        "title_fr": "Lanceur : si ta dernière session a peiné ou si ta machine est modeste, le lanceur te propose le preset « Petite config » (tu peux refuser)"
+      }
+    ]
+  },
+  {
     "version": "2026.1117.0",
     "date": "2026-11-17T12:00:00Z",
     "entries": [
@@ -23,6 +57,20 @@
         "type": "improvement",
         "title": "The website keeps your session only in secure cookies (never readable by scripts), and YouTube videos in profiles run in a sandbox",
         "title_fr": "Le site ne garde ta session que dans des cookies sécurisés (jamais lisibles par un script), et les vidéos YouTube des profils tournent dans un bac à sable"
+      }
+    ]
+  },
+  {
+    "version": "2026.1118.0",
+    "stream": "nanbeige",
+    "date": "2026-11-18T12:40:00Z",
+    "entries": [
+      {
+        "category": "Security",
+        "category_fr": "Sécurité",
+        "type": "fix",
+        "title": "Uploaded images (avatars, covers, screenshots, team flags) are now only ever decoded as PNG, JPEG, GIF or WebP; any other image format is refused before it is read",
+        "title_fr": "Les images envoyées (avatars, bannières, captures d'écran, drapeaux d'équipe) ne sont plus décodées qu'en PNG, JPEG, GIF ou WebP ; tout autre format d'image est refusé avant d'être lu"
       }
     ]
   },
