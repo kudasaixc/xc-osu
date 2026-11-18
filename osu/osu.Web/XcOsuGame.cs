@@ -62,6 +62,9 @@ namespace osu.Web
 
             if (Telemetry.Enabled)
                 Add(new TelemetryProbe(this));
+
+            if (BenchScenario.Length > 0)
+                Add(new BenchDriver(this));
         }
 
         private partial class TelemetryProbe : osu.Framework.Graphics.Component

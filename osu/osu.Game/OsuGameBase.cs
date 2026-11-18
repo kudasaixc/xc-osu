@@ -287,7 +287,19 @@ namespace osu.Game
             foreach (var store in CreateOverrideResourceStores())
                 Resources.AddStore(store);
 
+            // xc-osu!: in the browser the published build strips these resources from the assembly (the .NET loader copies
+            // assemblies whole into the wasm heap) and serves them from a pack file read on demand. XC_RESPACK_FIRST=1 makes
+            // a development build (resources still in the assembly) read them from the pack too, for testing.
+            var pack = RuntimeInfo.IsBrowser ? osu.Framework.Platform.Web.WebResourcePackStore.TryOpen(OsuResources.ResourceAssembly.GetName().Name!) : null;
+            bool packFirst = pack != null && Environment.GetEnvironmentVariable("XC_RESPACK_FIRST") == "1";
+
+            if (packFirst)
+                Resources.AddStore(pack);
+
             Resources.AddStore(new DllResourceStore(OsuResources.ResourceAssembly));
+
+            if (pack != null && !packFirst)
+                Resources.AddStore(pack);
 
             dependencies.Cache(realm = new RealmAccess(Storage, CLIENT_DATABASE_FILENAME, Host.UpdateThread));
 

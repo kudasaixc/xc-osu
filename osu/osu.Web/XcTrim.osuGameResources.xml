@@ -1,0 +1,5 @@
+<!-- xc-osu!: osu.Game.Resources is trimmed only to drop the resources served from the pack (tools/respack). Its code
+     (localisation string classes, read by reflection) must stay whole. -->
+<linker>
+  <assembly fullname="osu.Game.Resources" preserve="all" />
+</linker>

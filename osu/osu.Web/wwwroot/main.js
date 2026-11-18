@@ -12,6 +12,8 @@ import { Launcher, loadOptions, buildLaunch, fmtBytes, requestGameFullscreen } f
 import { BootScreen, LogViewer } from './js/xc-boot.js';
 import { startTelemetry } from './js/xc-telemetry.js';
 import { PerfOverlay } from './js/xc-perf.js';
+import { openResPack } from './js/xc-respack.js';
+import resPackManifest from './js/xc-respack-manifest.js';
 
 const $ = (id) => document.getElementById(id);
 const say = (m) => console.log('[launch] ' + m);
@@ -123,10 +125,19 @@ const builder = dotnet
     if (BIG_ASSET.test(name)) return bigAsset(defaultUri);
     return cdnBase && /\.wasm(\?|$)/.test(defaultUri) ? engineFetch(defaultUri, integrity) : defaultUri;
   })
-  .withModuleConfig({ onDownloadResourceProgress: (loaded, total) => { dl.loaded = loaded; dl.total = total; emit(); } });
+  .withModuleConfig({ onDownloadResourceProgress: (loaded, total) => { dl.loaded = loaded + (packDone ? 1 : 0); dl.total = total + (resPack ? 1 : 0); emit(); } });
+
+// osu.Game.Resources in its own pack file (js/xc-respack.js), downloaded alongside the engine; the engine reads single
+// resources out of it on demand. Absent in development builds (the assembly keeps its resources there).
+let packDone = false;
+const resPack = resPackManifest && !blocked ? openResPack(resPackManifest, {
+  fetchFile: (u) => engineFetch(u),
+}) : null;
+globalThis.xcResPack = resPack;
+resPack?.ready.then(() => { packDone = true; dl.loaded++; emit(); }, () => { });
 
 const dlStart = performance.now();
-const downloaded = blocked ? new Promise(() => { }) : builder.download().then(() => {
+const downloaded = blocked ? new Promise(() => { }) : Promise.all([builder.download(), resPack?.ready]).then(() => {
   dl.ms = performance.now() - dlStart;
   dl.done = true; dl.speed = 0; emit();
 }, (e) => { dl.error = e?.message || String(e); emit(); throw e; });
@@ -208,6 +219,17 @@ builder.withConfig({ pthreadPoolInitialSize: L.workers, pthreadPoolUnusedSize: M
 if (!('XC_DRAW_LEGACY' in L.env)) builder.withEnvironmentVariable('XC_DRAW_LEGACY', '1');
 for (const [k, v] of Object.entries(L.env)) builder.withEnvironmentVariable(k, v);
 if (query.has('log')) builder.withEnvironmentVariable('XC_VERBOSE_LOG', '1');
+// ?bench[=short]: reproducible performance scenario (XcBench.cs, tools/perfbench.mjs); only then, ?env=K=V;K=V sets extra
+// runtime variables (GC experiments and the like)
+if (query.has('bench')) {
+  builder.withEnvironmentVariable('XC_BENCH', query.get('bench') || 'full');
+  // ?aotprofile on a build made with tools/aotpub.sh XC_AOT_PROFILER=1: record what the interpreter runs (XcAotProfile.cs)
+  if (query.has('aotprofile')) {
+    builder.withConfig({ aotProfilerOptions: { writeAt: 'osu.Web.XcAotProfile:XcSaveAotProfileNow', sendTo: 'osu.Web.XcAotProfile:Send' } });
+    builder.withEnvironmentVariable('XC_AOTPROF', '1');
+  }
+  for (const kv of (query.get('env') || '').split(';')) { const i = kv.indexOf('='); if (i > 0) builder.withEnvironmentVariable(kv.slice(0, i), kv.slice(i + 1)); }
+}
 let rt;
 try {
   const c0 = performance.now();
@@ -238,11 +260,25 @@ try {
   FS.mount(rt.Module.IDBFS || FS.filesystems.IDBFS, { autoPersist: false }, ROOT);
   await new Promise((res) => FS.syncfs(true, (err) => { if (err) console.warn(err); res(); }));
   persistent = true;
-  let files = 0;
-  const walk = (p) => { for (const n of FS.readdir(p)) { if (n === '.' || n === '..') continue; const f = p + '/' + n; if (FS.isDir(FS.stat(f).mode)) walk(f); else files++; } };
-  try { walk(ROOT); } catch { }
+  // IDBFS holds every stored file (realm, beatmaps, skins, replays) in memory: telemetry follows how much (fs.mb)
+  const fsWalk = () => {
+    const w0 = performance.now(), r = { files: 0, bytes: 0, big: 0 };
+    const walk = (p) => {
+      for (const n of FS.readdir(p)) {
+        if (n === '.' || n === '..') continue;
+        const f = p + '/' + n, st = FS.stat(f);
+        if (FS.isDir(st.mode)) walk(f); else { r.files++; r.bytes += st.size; if (st.size > r.big) r.big = st.size; }
+      }
+    };
+    try { walk(ROOT); } catch { }
+    return { files: r.files, mb: Math.round(r.bytes / 1048576), bigMb: Math.round(r.big / 1048576), walkMs: Math.round(performance.now() - w0) };
+  };
+  let fsStats = fsWalk();
+  const files = fsStats.files;
+  globalThis.xcFsStats = () => ({ ...fsStats, ...(globalThis.xcFsSync ? { syncMs: globalThis.xcFsSync.last, syncMax: globalThis.xcFsSync.max } : {}) });
+  setInterval(() => (globalThis.requestIdleCallback || setTimeout)(() => { fsStats = fsWalk(); }), 120000);
   const persisted = await navigator.storage?.persist?.().catch(() => false);
-  say(`IndexedDB storage mounted at ${ROOT}: ${files} files loaded in ${(performance.now() - s0).toFixed(0)} ms (persistent: ${!!persisted})`);
+  say(`IndexedDB storage mounted at ${ROOT}: ${files} files (${fsStats.mb} MB) loaded in ${(performance.now() - s0).toFixed(0)} ms (persistent: ${!!persisted})`);
   boot.stage('storage', 'done', t('stage.files', files));
 } catch (e) {
   console.warn('[launch] persistent storage unavailable, running in memory', e);
@@ -255,7 +291,15 @@ function flush() {
   if (!persistent) return;
   if (syncing) { dirty = true; return; }
   syncing = true;
-  FS.syncfs(false, (err) => { syncing = false; if (err) console.warn('syncfs', err.errno, err.code, err.message, err.stack); if (dirty) { dirty = false; flush(); } });
+  // IDBFS compares every stored file with IndexedDB on the UI thread: the duration goes to telemetry (fs.syncMs / syncMax)
+  const s0 = performance.now();
+  FS.syncfs(false, (err) => {
+    syncing = false;
+    const ms = Math.round(performance.now() - s0);
+    globalThis.xcFsSync = { last: ms, max: Math.max(ms, globalThis.xcFsSync?.max || 0), n: (globalThis.xcFsSync?.n || 0) + 1 };
+    if (err) console.warn('syncfs', err.errno, err.code, err.message, err.stack);
+    if (dirty) { dirty = false; flush(); }
+  });
 }
 setInterval(flush, 15000);
 

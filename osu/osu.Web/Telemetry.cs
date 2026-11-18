@@ -43,6 +43,9 @@ namespace osu.Web
             public int[] IntervalHist = new int[edges.Length + 1];
             public int[] WorkHist = new int[edges.Length + 1];
 
+            // managed bytes allocated by the measured thread (GC.GetAllocatedBytesForCurrentThread deltas)
+            public long AllocSum, AllocMax;
+
             // draw only
             public int Presented, Empty, Late, EmptyRunMax, Resumes;
             public long TextureUploads;
@@ -94,6 +97,18 @@ namespace osu.Web
 
         [ThreadStatic]
         private static Channel? currentChannel;
+
+        [ThreadStatic]
+        private static long lastThreadAlloc;
+
+        /// <summary>Managed bytes the calling thread allocated since its previous frame.</summary>
+        private static long threadAllocDelta()
+        {
+            long a = GC.GetAllocatedBytesForCurrentThread();
+            long d = lastThreadAlloc == 0 ? 0 : a - lastThreadAlloc;
+            lastThreadAlloc = a;
+            return d < 0 ? 0 : d;
+        }
 
         private static long now() => System.Diagnostics.Stopwatch.GetTimestamp();
 
@@ -330,6 +345,8 @@ namespace osu.Web
             if (resume) c.EmptyRun = 0;
             int endedRun = 0;
 
+            long drawAlloc = threadAllocDelta();
+
             lock (c.Lock)
             {
                 c.Frames++;
@@ -337,6 +354,8 @@ namespace osu.Web
                 if (work > c.WorkMax) c.WorkMax = work;
                 c.WorkHist[bucket(work)]++;
                 c.TextureUploads += tex;
+                c.AllocSum += drawAlloc;
+                if (drawAlloc > c.AllocMax) c.AllocMax = drawAlloc;
 
                 if (resume) c.Resumes++;
                 else if (interval > 0)
@@ -408,12 +427,16 @@ namespace osu.Web
             if (c == input && (gc0 != 0 || gc1 != 0) && interval > 4 && interval < 1000)
                 Interlocked.Add(ref estimatedPauseUs, (long)((interval - 2) * 1000));
 
+            long alloc = threadAllocDelta();
+
             lock (c.Lock)
             {
                 c.Frames++;
                 c.WorkSum += work;
                 if (work > c.WorkMax) c.WorkMax = work;
                 c.WorkHist[bucket(work)]++;
+                c.AllocSum += alloc;
+                if (alloc > c.AllocMax) c.AllocMax = alloc;
 
                 if (interval > 0 && interval < 1000)
                 {
@@ -485,6 +508,27 @@ namespace osu.Web
                     lastAlloc = alloc;
                     j.Raw("gc", gc.ToString());
 
+                    try
+                    {
+                        var info = GC.GetGCMemoryInfo();
+                        gc.Num("hsz", Math.Round(info.HeapSizeBytes / 1048576.0, 1)).Num("frag", Math.Round(info.FragmentedBytes / 1048576.0, 1))
+                          .Num("comm", Math.Round(info.TotalCommittedBytes / 1048576.0, 1));
+                    }
+                    catch
+                    {
+                    }
+
+                    // mallinfo() walks the heap for ~4-5 ms under the malloc lock: once a minute, and never during gameplay
+                    if (!playing && (++memoryMapWindow % 6 == 1))
+                        j.Raw("mem", memoryMap());
+
+                    var res = WebResourcePackStore.TakeStats();
+                    if (res.Reads > 0 || res.Misses > 0)
+                    {
+                        j.Raw("res", new Json().Num("reads", res.Reads).Num("mb", Math.Round(res.Bytes / 1048576.0, 2)).Num("ms", Math.Round(res.TotalMs, 1))
+                                               .Num("max", Math.Round(res.MaxMs, 1)).Num("miss", res.Misses).Num("fg", res.NonBackground).ToString());
+                    }
+
                     long completed = ThreadPool.CompletedWorkItemCount;
                     j.Raw("tp", new Json().Num("threads", ThreadPool.ThreadCount).Num("pending", ThreadPool.PendingWorkItemCount).Num("done", completed - lastCompleted).ToString());
                     lastCompleted = completed;
@@ -498,6 +542,33 @@ namespace osu.Web
                 }
             }
         }
+
+        [System.Runtime.InteropServices.DllImport("xcweb")]
+        private static extern unsafe void xc_mem_stats(double* stats);
+
+        /// <summary>
+        /// Where the wasm linear memory goes: total size, sbrk top (assemblies, static data and the malloc arena all sit
+        /// below it), malloc arena / in use / free, and the cost of measuring it (mallinfo walks the heap).
+        /// </summary>
+        private static unsafe string memoryMap()
+        {
+            double* m = stackalloc double[7];
+
+            try
+            {
+                xc_mem_stats(m);
+            }
+            catch
+            {
+                return "{}";
+            }
+
+            static double mb(double v) => Math.Round(v / 1048576.0, 1);
+            return new Json().Num("wasm", mb(m[0])).Num("sbrk", mb(m[1])).Num("arena", mb(m[2])).Num("used", mb(m[3])).Num("free", mb(m[4]))
+                             .Num("top", mb(m[5])).Num("us", Math.Round(m[6])).ToString();
+        }
+
+        private static int memoryMapWindow;
 
         private static void emitSpikes()
         {
@@ -548,7 +619,9 @@ namespace osu.Web
             lock (c.Lock)
             {
                 j.Num("n", c.Frames).Num("is", Math.Round(c.IntervalSum, 1)).Num("im", Math.Round(c.IntervalMax, 2))
-                 .Num("ws", Math.Round(c.WorkSum, 1)).Num("wm", Math.Round(c.WorkMax, 2));
+                 .Num("ws", Math.Round(c.WorkSum, 1)).Num("wm", Math.Round(c.WorkMax, 2))
+                 .Num("am", Math.Round(c.AllocSum / 1048576.0, 2)).Num("ak", Math.Round(c.AllocMax / 1024.0));
+                c.AllocSum = c.AllocMax = 0;
 
                 if (isDraw)
                 {

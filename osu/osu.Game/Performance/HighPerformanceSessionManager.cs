@@ -42,7 +42,14 @@ namespace osu.Game.Performance
             }
 
             // Without doing this, the new GC mode won't kick in until the next GC, which could be at a more noticeable point in time.
-            GC.Collect(0);
+            // xc-osu!: in the browser a full collection instead. The Mono GC stops every thread for a major collection
+            // (~90 ms median measured in gameplay) and schedules the next one from how much the old generation grew since
+            // the last: collecting now, while the loader is still on screen, resets that budget so a major collection
+            // during the map becomes unlikely. It also frees the large objects (decoded files) song select left behind.
+            if (RuntimeInfo.IsBrowser && Environment.GetEnvironmentVariable("XC_LOADER_GC") != "0")
+                GC.Collect();
+            else
+                GC.Collect(0);
         }
 
         private void exitSession()

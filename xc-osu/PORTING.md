@@ -352,3 +352,56 @@ profile 9–11, settings 10, against 2.4 on the main menu) and update spikes whe
   allocation rates in the beatmap listing, settings, PlayerLoader and gameplay (GC pauses of 28–68 ms).
 - Checked: framework and osu.Game Release builds, the stutter-policy and performance-history tests, and an interpreter
   build in headless Chromium. Gains are to be read from the next AOT build's telemetry; none are claimed in advance.
+
+## Mémoire, GC, update et AOT ciblé (2026-11-17/18, builds /wasmtest)
+
+Mesuré avec `tools/perfbench.mjs` (scénario `?bench`, voir plus bas) ; build de test publié sur `/wasmtest/` (mot de passe des forks),
+jamais à la racine. Détail des chiffres : voir la section « Résultats » du compte rendu de cette mission.
+
+- **Pack de ressources** (`tools/respack`, `js/xc-respack.js`, `osu-framework/.../Platform/Web/WebResourcePack.cs`, `Native/xcweb.c`
+  `xc_respack_read`) : le loader .NET copie chaque assembly entière dans le tas wasm (`_sbrk`, jamais rendu). osu.Game.Resources
+  (130 Mo) est donc publié à part : un fichier `_framework/osu.Game.Resources.<hash>.xcpack` (« XCRP » | version | longueur d'index |
+  index JSON | données), gardé par la page dans Cache Storage (`xc-respack-v1`), lu à la demande via `Blob.slice` sur le thread UI pendant
+  que le thread .NET attend sur un futex (jamais de délai d'abandon : le JS écrirait plus tard dans un buffer libéré). Les entrées
+  ≤ 64 Ko et les premières pages des polices (Torus/Venera/Inter, ~14 Mo en tout) sont gardées en mémoire JS dès l'ouverture, les plus
+  grosses relues passent par un LRU de 24 Mo : les lectures synchrones des threads de jeu (skin, polices) prennent 0,1-1 ms.
+  `GetStream` rend un flux en mémoire native (libéré au Dispose) : pas de gros `byte[]` sur le tas managé.
+  - Le trimmer retire les ressources de l'assembly (`TrimmableAssembly` + substitutions générées par respack) mais **garde tout son
+    code** (`XcTrim.osuGameResources.xml`, preserve="all") : les classes de localisation sont lues par réflexion (sans ça : crash
+    « Member TypeCountry was not found in RankingsStrings »). Les tables `.resources` (localisation) restent dans l'assembly.
+  - `aotpub.sh` construit le pack, copie pack + `js/xc-respack-manifest.js` dans la sortie ; `XC_RESPACK=0` = ancien comportement.
+    **Changer de mode réutilise des objets AOT incompatibles** (GUID d'osu.Game.Resources, appdomain.c:188) : `aotpub.sh` mémorise
+    le mode (`obj/aot/.respack-mode`) et purge tout obj/aot/net10.0 quand il change (le manifeste des assets statiques gardait sinon l'ancienne empreinte).
+  - Build de dev (interpréteur) : la DLL garde ses ressources ; `XC_RESPACK_FIRST=1` force la lecture depuis le pack pour tester.
+    Les P/Invoke appelés depuis du code interprété doivent avoir une signature présente dans la table m2n (un `double` en
+    premier argument a planté : « CANNOT HANDLE INTERP ICALL SIG », aot-runtime-wasm.c:188) → `xc_respack_read(int, int, void*)`.
+  - `r2-sync.py` envoie aussi les `.xcpack` sur le CDN (prune compris).
+- **AOT des instanciations génériques** (`osu.Web/XcAotProfile.cs`, `tools/aot-profile/xc-osu.aotprofile`) : ~4000 méthodes
+  retombaient dans l'interpréteur malgré l'AOT (Transform<Vector2>, Transform<float, DefaultEasingFunction, …>, Dictionary<struct,…>).
+  Un build `tools/aotpub.sh -p:WasmProfilers=aot -p:EnableDiagnostics=false` + `?aotprofile` (perfbench `--aotprofile f`) enregistre
+  ce que l'interpréteur exécute ; le build suivant reçoit `-p:XcAotProfile=f`, passé au compilateur en `profile=` **sans**
+  `profile-only` (WasmAotProfilePath l'ajoute et rendrait tout le reste à l'interpréteur) : 3989 → 707 méthodes interprétées,
+  +3 Mo de dotnet.native.wasm. Le déclencheur d'écriture doit avoir un nom unique et `NoInlining` (« Write » a matché
+  Volatile.Write ; une méthode inlinée déclenche aussi l'écriture). À régénérer quand le code change beaucoup.
+- **GC** : en fin de PlayerLoader, collecte complète dans le navigateur (`HighPerformanceSessionManager`, `XC_LOADER_GC=0` pour
+  l'ancien `GC.Collect(0)`). Le tas managé monte ensuite par paliers pendant la map (déchets entre deux GC majeures, ~5 Mo/s alloués,
+  dont ~1,7 Mo/s par l'update et ~1,4 Mo/s par le draw thread), pas une fuite : il retombe à la GC suivante.
+- **Presets** (`xc-launcher.js`, OPTIONS_REV 3) : nursery 4 Mo supprimée de « Petite config » (et 16 Mo sur iPhone, migration des
+  options enregistrées), plus de `maxUpdateHz: 500` ; option « Fréquence du thread audio » (`XC_AUDIO_HZ`, 250-1000, défaut 1000 ;
+  500 dans « Petite config » et « Économie batterie ») ; bandeau qui *propose* « Petite config » sur iGPU / ≤4 threads / ≤4 Go, ou quand
+  la session précédente a montré un thread update à plus de 85 % (archive locale de télémétrie). Jamais appliqué sans clic.
+- **Télémétrie ajoutée** (fenêtres) : `mem` (wasm, sbrk, arène / utilisé / libre malloc, coût de mallinfo ; hors partie et une fois par
+  minute car mallinfo prend ~5 ms sous le verrou malloc), `res` (lectures du pack, Mo, ms, max, lectures sur un thread de jeu `fg`),
+  allocations par thread (`am` Mo, `ak` Ko max par frame), `js.fs` (fichiers / Mo du stockage IDBFS gardé en mémoire, durée de syncfs),
+  `js.pack`, `js.bat` (secteur / batterie), canal `wasmtest`. `measureUserAgentSpecificMemory` a été essayé puis retiré : il compte la
+  mémoire wasm partagée une fois par worker (~15 Go pour 45 workers).
+- **Banc reproductible** : `?bench[=short]` (`XcBench.cs`) joue menu → réglages → import de « circle the halls » (christmas2024.osz, la
+  seule intro jouable : 1312 objets) → autoplay skin par défaut → résultats → autoplay skin classique → menu. `tools/perfbench.mjs`
+  (node 20, `--experimental-websocket`) intercepte la télémétrie, mesure le PSS de Chromium, découpe par phase ; `--profile <phase>
+  --symbols <dotnet.native.js.symbols>` profile chaque worker par CDP, `--capture`, `--env`, `--opts`, `--log`.
+  `tools/perfbench-compare.py a.json b.json` compare deux séries. SwiftShader : comparer update / GC / mémoire, pas le draw.
+- Builds de test : `XC_AOT_OUT=out/<x>` (aotpub) pour ne jamais écraser `out/aot` ; publication `tools/deploy-wasmtest.sh out/<x>`
+  (copies .br ; règle Apache dédiée à /wasmtest/ : la règle générique .br du vhost teste `%{REQUEST_FILENAME}`, qui à ce niveau n'est
+  pas le fichier, et ne sert donc jamais les .br). Les scripts de prod excluent /wasmtest/, /iostest/, /memtest/.
+- Pièges de build rencontrés : pas de swap sur le VPS et 11 Go → un banc Chromium (3 Go) pendant l'étape LLVM d'osu.Game fait tuer la
+  compilation ; `XC_AOT_JOBS=2` est plus sûr. Ne jamais `pkill -f`/`pgrep -f` un motif présent dans sa propre ligne de commande.

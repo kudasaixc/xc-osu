@@ -5,7 +5,7 @@
 // attribute, AudioContext option, or canvas resolution); see buildLaunch().
 
 const KEY = 'xc.launcher.v1';
-const OPTIONS_REV = 2;
+const OPTIONS_REV = 3;
 const cores = navigator.hardwareConcurrency || 4;
 
 const range = (key, sec, min, max, step, def, unit, extra = {}) => ({ key, sec, type: 'range', min, max, step, def, unit, ...extra });
@@ -34,6 +34,7 @@ export const OPTIONS = [
   toggle('fullscreen', 'gfx', true),
 
   select('audioLatency', 'audio', 'interactive', ['interactive', 'balanced', 'playback'], { label: (v, t) => t('al.' + v) }),
+  select('audioHz', 'audio', 0, [0, 1000, 750, 500, 250], { num: true, label: (v, t) => v ? v + ' Hz' : t('opt.default') }),
 
   select('log', 'diag', 'boot', ['boot', 'verbose', 'quiet'], { label: (v, t) => t('log.' + v) }),
   toggle('realmTrace', 'diag', false),
@@ -56,10 +57,10 @@ const NOT_PRESET = new Set(['telemetry', 'server', 'autoLaunch', 'lang', 'perfPo
 
 export const PRESETS = {
   balanced: {},
-  ios: { iosCompat: true, frameSync: 'VSync', maxDrawHz: 60, maxUpdateHz: 240, inactiveHz: 10, renderScale: 50, workers: 4, cpuCount: 2, softHeap: 512, nursery: 4, audioLatency: 'playback', msaa: false, lowLatency: false, fullscreen: false },
+  ios: { iosCompat: true, frameSync: 'VSync', maxDrawHz: 60, maxUpdateHz: 240, inactiveHz: 10, renderScale: 50, workers: 4, cpuCount: 2, softHeap: 512, nursery: 16, audioLatency: 'playback', msaa: false, lowLatency: false, fullscreen: false },
   competitive: { frameSync: 'Unlimited', lowLatency: false, gpu: 'high-performance', audioLatency: 'interactive', renderScale: 100, msaa: false },
-  battery: { frameSync: 'VSync', maxDrawHz: 60, maxUpdateHz: 240, inactiveHz: 10, gpu: 'low-power', renderScale: 75, workers: 8, softHeap: 768, audioLatency: 'balanced', lowLatency: false },
-  potato: { frameSync: 'VSync', maxDrawHz: 60, maxUpdateHz: 500, inactiveHz: 15, renderScale: 50, workers: 8, softHeap: 512, nursery: 4, audioLatency: 'balanced' },
+  battery: { frameSync: 'VSync', maxDrawHz: 60, maxUpdateHz: 240, inactiveHz: 10, gpu: 'low-power', renderScale: 75, workers: 8, softHeap: 768, audioLatency: 'balanced', audioHz: 500, lowLatency: false },
+  potato: { frameSync: 'VSync', maxDrawHz: 60, inactiveHz: 15, renderScale: 50, workers: 8, softHeap: 512, audioLatency: 'balanced', audioHz: 500 },
   debug: { log: 'verbose', realmTrace: true, perfOverlay: true, perfMs: 500, diag: true },
 };
 
@@ -73,7 +74,13 @@ export function loadOptions() {
   try { saved = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch { }
   // rev 2: Mono's default 4 MB nursery and the desynchronized (low-latency) canvas turned out to be the source of the
   // overlay / scrolling stutter. Options saved before that still carry the old defaults: reset those two once.
-  if ((saved.rev || 1) < OPTIONS_REV) { delete saved.nursery; delete saved.lowLatency; }
+  if ((saved.rev || 1) < 2) { delete saved.nursery; delete saved.lowLatency; }
+  // rev 3: the light presets (low-end, iPhone) still set that 4 MB nursery and the low-end one raised the update rate to
+  // 500 Hz on fast displays. Options saved from them get the new values once.
+  if ((saved.rev || 1) < 3) {
+    if (saved.nursery === 4) { if (saved.iosCompat) saved.nursery = 16; else delete saved.nursery; }
+    if (saved.maxUpdateHz === 500 && saved.renderScale === 50) delete saved.maxUpdateHz;
+  }
   const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   if (ios && saved.iosDefaultsVersion !== 1) {
     saved = { ...saved, ...PRESETS.ios, iosDefaultsVersion: 1 };
@@ -96,6 +103,7 @@ export function buildLaunch(o) {
   if (o.frameSync !== 'game') env.XC_FRAMESYNC = o.frameSync;
   if (o.maxDrawHz > 0) env.XC_MAX_DRAW_HZ = String(o.maxDrawHz);
   if (o.maxUpdateHz > 0) env.XC_MAX_UPDATE_HZ = String(o.maxUpdateHz);
+  if (o.audioHz > 0) env.XC_AUDIO_HZ = String(o.audioHz);
   if (o.inactiveHz > 0) env.XC_INACTIVE_HZ = String(o.inactiveHz);
   if (o.cpuCount > 0) env.DOTNET_PROCESSOR_COUNT = String(o.cpuCount);
   if (o.threadPoolMax > 0) env.XC_THREADPOOL_MAX = String(o.threadPoolMax);
@@ -140,6 +148,21 @@ const tr = (v, lang) => (v && typeof v === 'object') ? (v[lang] ?? v.en ?? '') :
 
 // Names WebGL reports when the browser draws on the CPU instead of the graphics card (Windows WARP, SwiftShader, Mesa).
 // The game runs at a fraction of its normal frame rate there, and the cause is a browser/driver setting, not the game.
+// Integrated / mobile GPUs and small machines: the game is CPU- and fill-rate-bound there (telemetry: the update thread at
+// 92-96 % on Radeon / UHD laptops). Only used to *suggest* the low-end preset, never applied without the player.
+export const isLightGpu = (gpu) => /Intel\(R\) (UHD|HD|Iris)|Radeon\(TM\) (Graphics|Vega)|Radeon Vega|Vega \d+ Graphics|Mali|Adreno|PowerVR|GeForce (MX|9\d0M)|RTX 2050/i.test(String(gpu || ''));
+
+/** Share of the last local session's gameplay time the update thread was busy (from the local telemetry archive). */
+function lastUpdateBusy() {
+  try {
+    const key = Object.keys(localStorage).filter((k) => k.startsWith('xc.tm.local.v1.')).map((k) => JSON.parse(localStorage.getItem(k)))
+      .filter((x) => x && Array.isArray(x.items)).sort((a, b) => b.started - a.started)[0];
+    const ws = (key?.items || []).filter((i) => i.k === 'w' && i.play && i.th?.update && i.dur > 0);
+    if (ws.length < 3) return null;
+    return ws.reduce((a, w) => a + w.th.update.ws, 0) / ws.reduce((a, w) => a + w.dur, 0);
+  } catch { return null; }
+}
+
 export const isSoftwareRenderer = (gpu) => /Basic Render Driver|SwiftShader|llvmpipe|softpipe|Software Rasterizer|\bWARP\b/i.test(String(gpu || ''));
 
 export class Launcher {
@@ -210,6 +233,7 @@ export class Launcher {
             <h1 class="title">${t('play.hero')}</h1>
             <p class="lede">${t('play.lede')}</p>
             <p class="hello" id="ln-hello">${this.hello()}</p>
+            <div id="ln-perfhint" hidden style="margin:16px 0 0;padding:12px 16px;border-left:3px solid var(--l-accent);background:hsl(330 100% 70% / .08);font-size:15px;line-height:1.55;max-width:640px"></div>
             <div id="ln-gpuwarn" role="alert" hidden style="margin:16px 0 0;padding:12px 16px;border-left:3px solid var(--l-warn);background:hsl(45 100% 57% / .1);font-size:15px;line-height:1.55;max-width:640px"></div>
           </header>
           <div class="launch-slot" id="ln-slot"></div>
@@ -731,6 +755,32 @@ export class Launcher {
     box.hidden = false;
   }
 
+  /** Suggests the low-end preset on light hardware or when the last session showed a saturated update thread. */
+  renderPerfHint(raw) {
+    const box = this.root.querySelector('#ln-perfhint');
+    if (!box || isSoftwareRenderer(raw)) return;
+    let dismissed = false;
+    try { dismissed = localStorage.getItem('xc.perfhint.v1') === 'off'; } catch { }
+    const cur = this.currentPreset();
+    if (dismissed || cur === 'potato' || cur === 'battery' || cur === 'ios') return;
+    const busy = lastUpdateBusy();
+    const reasons = [];
+    if (busy != null && busy > 0.85) reasons.push(this.t('perfhint.busy', Math.round(busy * 100)));
+    else if (busy == null || busy > 0.6) {
+      if (isLightGpu(raw)) reasons.push(this.t('perfhint.gpu', this.gpu || raw));
+      if (cores <= 4) reasons.push(this.t('perfhint.cores', cores));
+      if (navigator.deviceMemory && navigator.deviceMemory <= 4) reasons.push(this.t('perfhint.ram', navigator.deviceMemory));
+    }
+    if (!reasons.length) return;
+    box.innerHTML = `<strong>${esc(this.t('perfhint.title'))}</strong>
+      <p style="margin:6px 0 0">${esc(reasons.join(' · '))} ${esc(this.t('perfhint.body'))}</p>
+      <p style="margin:8px 0 0"><button type="button" class="chip on" data-act="apply">${esc(this.t('perfhint.apply'))}</button>
+      <button type="button" class="chip" data-act="no">${esc(this.t('perfhint.dismiss'))}</button></p>`;
+    box.hidden = false;
+    box.querySelector('[data-act=apply]').onclick = () => { box.hidden = true; this.root.querySelector('#ln-presets [data-p=potato]')?.click(); };
+    box.querySelector('[data-act=no]').onclick = () => { box.hidden = true; try { localStorage.setItem('xc.perfhint.v1', 'off'); } catch { } };
+  }
+
   // ----------------------------------------------------------------- machine info (all read from the browser)
   async systemInfo() {
     const t = this.t, rows = [];
@@ -748,6 +798,7 @@ export class Launcher {
       } else gpu = 'WebGL2 ✕';
     } catch { }
     this.renderGpuWarning(gpu);
+    this.renderPerfHint(gpu);
     const brands = navigator.userAgentData?.brands?.filter((b) => !/Not.?A.?Brand/i.test(b.brand)).map((b) => `${b.brand} ${b.version}`).join(', ');
     const ff = /Firefox\/(\d+)/.exec(navigator.userAgent), sf = !brands && !ff && /Version\/([\d.]+).*Safari/.exec(navigator.userAgent);
     rows.push([t('sys.cpu'), String(cores)]);

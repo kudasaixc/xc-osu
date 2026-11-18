@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# xc-osu!: put a build's engine .wasm files on the CDN (Cloudflare R2). xc softworks (kudasaixc)
+# xc-osu!: put a build's engine .wasm files and resource pack on the CDN (Cloudflare R2). xc softworks (kudasaixc)
 # usage: r2-sync.py <wwwroot> [--off]
 #        r2-sync.py --prune [--yes]
 #   Uploads every _framework/*.wasm that is not on the bucket yet (names are content-fingerprinted, so a
@@ -79,7 +79,7 @@ def upload(path, tmp):
     for attempt in range(4):
         try:
             call('PUT', api + '/' + urllib.parse.quote('_framework/' + path.name), body, {
-                'Content-Type': 'application/wasm', 'Content-Encoding': 'br',
+                'Content-Type': 'application/wasm' if path.suffix == '.wasm' else 'application/octet-stream', 'Content-Encoding': 'br',
                 'Cache-Control': 'public, max-age=31536000, immutable'})
             return path.name, len(body)
         except Exception as e:
@@ -93,13 +93,14 @@ def prune(apply):
     rollbacks = sorted((d for d in (REPO / 'backups').iterdir() if (d / '_framework').is_dir()), key=lambda d: d.stat().st_mtime)
     for top in [REPO / 'site', REPO / 'out'] + rollbacks[-ROLLBACK_KEEP:]:
         for f in top.rglob('_framework/*.wasm'): used.add('_framework/' + f.name)
+        for f in top.rglob('_framework/*.xcpack'): used.add('_framework/' + f.name)
     if len(used) < 10: sys.exit('r2-prune: only %d referenced files found, refusing to prune' % len(used))
     have = listing()
     cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=KEEP_DAYS)
     def old(k):
         try: return datetime.datetime.fromisoformat(stamps[k].replace('Z', '+00:00')) < cutoff
         except Exception: return False
-    gone = sorted(k for k in have if k.endswith('.wasm') and k not in used and old(k))
+    gone = sorted(k for k in have if k.endswith(('.wasm', '.xcpack')) and k not in used and old(k))
     mb = sum(have[k] for k in gone) / 1e6
     print('r2-prune: %d objects on the bucket, %d referenced locally, %d unreferenced older than %d days (%.0f MB)%s'
           % (len(have), len(used), len(gone), KEEP_DAYS, mb, '' if apply else ' [dry run, --yes deletes]'))
@@ -115,7 +116,8 @@ if PRUNE:
     sys.exit(0)
 
 try:
-    files = sorted((root / '_framework').glob('*.wasm'))
+    # engine .wasm files and the resource pack (js/xc-respack.js reads it through the same CDN-first loader)
+    files = sorted((root / '_framework').glob('*.wasm')) + sorted((root / '_framework').glob('*.xcpack'))
     if not files: site_only('no .wasm in ' + str(root))
     have = listing()
     todo = [f for f in files if not have.get('_framework/' + f.name)]

@@ -38,7 +38,7 @@ STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 SNAPSHOT="$BACKUPS/site-pre-$MODE-$STAMP-$$"
 mkdir "$SNAPSHOT"
 BACKUP_READY=0
-RESTORE_ARGS=(--exclude=/dev/ --exclude=/aot/ --exclude=/aot2/ --exclude=/backgrounds/ --exclude=/web/ --exclude=/launcher/performance.json)
+RESTORE_ARGS=(--exclude=/dev/ --exclude=/aot/ --exclude=/aot2/ --exclude=/wasmtest/ --exclude=/iostest/ --exclude=/memtest/ --exclude=/backgrounds/ --exclude=/web/ --exclude=/launcher/performance.json)
 
 rollback() {
     code=${1:-$?}
@@ -69,7 +69,7 @@ else
     python3 "$ROOT/tools/r2-sync.py" "$SRC" --off || true
 fi
 python3 "$ROOT/tools/stamp.py" "$SRC"
-rsync -a --delete-delay --delay-updates "${RESTORE_ARGS[@]}" "$SRC/" "$SITE/"
+rsync -a --chmod=D2775,F664 --delete-delay --delay-updates "${RESTORE_ARGS[@]}" "$SRC/" "$SITE/"
 
 # Only file-integrity verification, not a runtime test.
 for filename in index.html main.js; do

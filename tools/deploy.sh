@@ -17,12 +17,12 @@ python3 "$ROOT/tools/stamp.py" "$src"
 SITE=${XC_SITE_DIR:-/var/www/osu/site}
 if [ -n "$XC_DEPLOY_SSH" ]; then dst="$XC_DEPLOY_SSH:$SITE"; else dst="$SITE"; fi
 if [ "$2" = "test" ]; then
-  rsync -az --delete "$src"/ "$dst/aot/"
+  rsync -az --delete --chmod=D2775,F664 "$src"/ "$dst/aot/"
   echo "deployed ${1:-dev} build to https://osu.xcsoftworks.com/aot/ (test only)"; exit 0
 fi
 # /dev/ keeps the interpreter build as a fallback once AOT is live
-[ "${1:-dev}" = "dev" ] && rsync -az --delete "$src"/ "$dst/dev/"
-rsync -az --delete --exclude=/dev/ --exclude=/aot/ --exclude=/aot2/ --exclude=/backgrounds/ --exclude=/web/ --exclude=/launcher/performance.json "$src"/ "$dst/"
+[ "${1:-dev}" = "dev" ] && rsync -az --delete --chmod=D2775,F664 "$src"/ "$dst/dev/"
+rsync -az --delete --chmod=D2775,F664 --exclude=/dev/ --exclude=/aot/ --exclude=/aot2/ --exclude=/wasmtest/ --exclude=/iostest/ --exclude=/memtest/ --exclude=/backgrounds/ --exclude=/web/ --exclude=/launcher/performance.json "$src"/ "$dst/"
 echo "deployed ${1:-dev} build to https://osu.xcsoftworks.com/"
 # drop the CDN's engine files that neither the live site nor the newest rollback copies use any more
 [ -z "$XC_DEPLOY_SSH" ] && { python3 "$ROOT/tools/r2-sync.py" --prune --yes || true; }

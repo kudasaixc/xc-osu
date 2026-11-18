@@ -1,6 +1,8 @@
 #!/bin/bash
 # xc-osu! mixed-AOT release publish. Output: out/aot/wwwroot
-# usage: tools/aotpub.sh [extra msbuild args]      env: XC_AOT_JOBS=n (parallel compiles), XC_SYMBOLS=1 (DWARF + names)
+# usage: tools/aotpub.sh [extra msbuild args]      env: XC_AOT_JOBS=n (parallel compiles), XC_SYMBOLS=1 (DWARF + names),
+#   XC_AOT_OUT=<dir> (output folder instead of out/aot, e.g. a test build that must not become the next deploy),
+#   XC_RESPACK=0 (keep osu.Game.Resources inside its assembly instead of the separate resource pack)
 # The AOT steps (IL -> bitcode -> wasm objects) run in parallel. Each LLVM job on a big assembly needs ~2 GB, so the job
 # count is capped by RAM: all cores from 15 GB up, 3 jobs below that (override with XC_AOT_JOBS).
 # UseSharedCompilation=false: otherwise the Roslyn server keeps ~1.5 GB resident during the LLVM steps.
@@ -9,7 +11,8 @@ export DOTNET_ROOT=${DOTNET_ROOT:-$HOME/.dotnet} PATH=$HOME/.dotnet:$PATH DOTNET
 cd "$ROOT/osu/osu.Web"
 start=$(date +%s)
 mkdir -p "$ROOT/out"
-log="$ROOT/out/aotpub.log"
+OUT=${XC_AOT_OUT:-$ROOT/out/aot}
+log="$ROOT/out/aotpub.log"; [ -n "$XC_AOT_OUT" ] && log="$OUT.log"
 memgb=$(awk '/MemTotal/ {print int($2/1048576)}' /proc/meminfo)
 cores=$(nproc)
 if [ -n "$XC_AOT_JOBS" ]; then jobs=$XC_AOT_JOBS
@@ -20,8 +23,31 @@ export DOTNET_PROCESSOR_COUNT=$jobs
 if [ "$jobs" -le 1 ]; then par="-p:DisableParallelAot=true -m:1"; else par="-p:DisableParallelAot=false -m:$jobs -nodeReuse:false"; fi
 [ "$XC_SYMBOLS" = "1" ] && par="$par -p:WasmNativeDebugSymbols=true"
 echo "aotpub: ${memgb} GB RAM, ${cores} cores, ${jobs} parallel AOT jobs"
+# resource pack (tools/respack): osu.Game.Resources' resources go to a separate file the page reads on demand; the
+# trimmer removes them from the assembly through the substitutions file written here
+packdir="$ROOT/osu/osu.Web/obj/aot/respack"; packargs=""
+# Switching the pack on or off changes osu.Game.Resources (trimmed or not) under the AOT objects of every assembly that
+# references it, and the incremental trimmer / AOT steps keep the previous copy: mono then rejects osu.Game and the
+# rulesets at startup ("GUID of dependent assembly osu.Game.Resources doesn't match", appdomain.c:188). Start clean.
+modefile="$ROOT/osu/osu.Web/obj/aot/.respack-mode"; mode="${XC_RESPACK:-1}"
+if [ -f "$modefile" ] && [ "$(cat "$modefile")" != "$mode" ]; then
+  echo "aotpub: resource pack mode changed, clearing the trimmed / AOT intermediates"
+  # everything: the trimmed copies, the AOT objects, and the webcil / static web assets manifests, which otherwise keep
+  # publishing the previous osu.Game.Resources under its old fingerprint
+  rm -rf "$ROOT/osu/osu.Web/obj/aot/net10.0"
+fi
+mkdir -p "$(dirname "$modefile")"; echo "$mode" > "$modefile"
+if [ "${XC_RESPACK:-1}" != "0" ]; then
+  resver=$(grep -oP 'ppy.osu.Game.Resources" Version="\K[^"]+' "$ROOT/osu/osu.Game/osu.Game.csproj")
+  resdll="$HOME/.nuget/packages/ppy.osu.game.resources/$resver/lib/net8.0/osu.Game.Resources.dll"
+  [ -f "$ROOT/tools/respack/bin/out/respack.dll" ] || dotnet build "$ROOT/tools/respack" -c Release -o "$ROOT/tools/respack/bin/out" > /dev/null
+  dotnet "$ROOT/tools/respack/bin/out/respack.dll" "$resdll" "$packdir" "$packdir/substitutions.xml" || { echo "aotpub: respack failed"; exit 1; }
+  packargs="-p:XcResPackSubstitutions=$packdir/substitutions.xml"
+else
+  packargs="-p:XcResPack=false"
+fi
 python3 "$ROOT/tools/portstats.py" "$ROOT/osu/osu.Web/wwwroot/launcher/build.json" || true
-pub() { dotnet publish -c Release -o "$ROOT/out/aot" -p:XcAot=true -p:CompressionEnabled=false -p:WasmEmitSymbolMap=true -p:UseSharedCompilation=false $par "$@" > "$log" 2>&1; }
+pub() { dotnet publish -c Release -o "$OUT" -p:XcAot=true $packargs -p:CompressionEnabled=false -p:WasmEmitSymbolMap=true -p:UseSharedCompilation=false $par "$@" > "$log" 2>&1; }
 pub "$@"
 rc=$?
 # The SDK only recompiles an assembly's AOT object when that assembly changes, but each object also records the
@@ -38,8 +64,15 @@ if [ $rc -eq 0 ] && [ -n "$oldest" ] && [ -n "$(find "$aotdir/aot-in" -name '*.d
 fi
 grep -E " error |error :|xc-osu! AOT|AOT'ing|Build succeeded|Time Elapsed" "$log" | sed 's/\[\/.*//' | sort -u | head -40
 if [ $rc -ne 0 ]; then echo "aotpub FAILED (rc=$rc) in $(( $(date +%s) - start ))s: see $log"; exit 1; fi
-cp "$ROOT"/osu/osu.Web/wwwroot/manifest.webmanifest "$ROOT"/osu/osu.Web/wwwroot/icon* "$ROOT/out/aot/wwwroot/" 2>/dev/null
+cp "$ROOT"/osu/osu.Web/wwwroot/manifest.webmanifest "$ROOT"/osu/osu.Web/wwwroot/icon* "$OUT/wwwroot/" 2>/dev/null
+if [ "${XC_RESPACK:-1}" != "0" ]; then
+  packfile=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["file"])' "$packdir/osu.Game.Resources.xcpack.json")
+  rm -f "$OUT"/wwwroot/_framework/osu.Game.Resources.*.xcpack*
+  cp "$packdir/$packfile" "$OUT/wwwroot/_framework/" || { echo "aotpub: could not copy the resource pack"; exit 1; }
+  { echo "// xc-osu!: written by tools/aotpub.sh (tools/respack) for this build"; echo "export default $(cat "$packdir/osu.Game.Resources.xcpack.json");"; } > "$OUT/wwwroot/js/xc-respack-manifest.js"
+  echo "aotpub: resource pack $packfile"
+fi
 # drop superseded fingerprinted files from earlier publishes (they are never referenced again, only re-uploaded)
-python3 "$ROOT/tools/prune-framework.py" "$ROOT/out/aot/wwwroot" || true
-python3 "$ROOT/tools/stamp.py" "$ROOT/out/aot/wwwroot"
+python3 "$ROOT/tools/prune-framework.py" "$OUT/wwwroot" || true
+python3 "$ROOT/tools/stamp.py" "$OUT/wwwroot"
 echo "aotpub done in $(( $(date +%s) - start ))s"

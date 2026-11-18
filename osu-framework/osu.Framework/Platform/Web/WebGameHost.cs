@@ -124,6 +124,15 @@ namespace osu.Framework.Platform.Web
         {
             base.SetupForRun();
 
+            // XC_AUDIO_HZ (launcher, light presets): the audio thread polls every track / sample / mixer each frame (1000 Hz
+            // by default, ~20 % of a core on a laptop). The mixing itself runs in xcbass and the AudioWorklet, unaffected;
+            // a lower rate only delays a sample start by up to one audio frame (1 ms at 1000 Hz, 2 ms at 500 Hz).
+            if (launchHz("XC_AUDIO_HZ") is double audioHz)
+            {
+                AudioThread.ActiveHz = Math.Clamp(audioHz, 250, 1000);
+                Logger.Log($"launcher: audio thread at {AudioThread.ActiveHz} Hz");
+            }
+
             // XC_LOG: "verbose" = everything for the whole session, "boot" = everything until the menu shows up (the launch
             // screen renders those lines), anything else = Important and above. XC_VERBOSE_LOG=1 (?log) is the legacy switch.
             string logMode = Environment.GetEnvironmentVariable("XC_LOG") ?? string.Empty;

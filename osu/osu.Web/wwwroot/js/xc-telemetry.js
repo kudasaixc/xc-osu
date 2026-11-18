@@ -52,7 +52,14 @@ export function startTelemetry(options, build, log) {
     hw.gpu = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl?.getParameter(gl.RENDERER);
     gl?.getExtension('WEBGL_lose_context')?.loseContext();
   } catch { }
-  const meta = { build, channel: location.pathname.startsWith('/dev') ? 'dev' : 'aot', hw,
+  const pageMem = { bat: null };
+  try {
+    navigator.getBattery?.().then((b) => {
+      const up = () => { pageMem.bat = { charging: b.charging ? 1 : 0, level: Math.round(b.level * 100) }; };
+      up(); b.addEventListener('chargingchange', up); b.addEventListener('levelchange', up);
+    }).catch(() => { });
+  } catch { }
+  const meta = { build, channel: location.pathname.startsWith('/dev') ? 'dev' : location.pathname.startsWith('/wasmtest') ? 'wasmtest' : 'aot', hw,
     options: Object.fromEntries(Object.entries(options).filter(([k]) => k !== 'server')) };
   let batch = { sid, iid, meta, items: [] };
   const archive = { sid, meta, started: Date.now(), items: [], dropped: 0 };
@@ -212,7 +219,14 @@ export function startTelemetry(options, build, log) {
           for (let i = 0; i < events.length; i += 50)
             add({ k: 'e', n: 'flight-context', at: item.at, part: i / 50, parts: Math.ceil(events.length / 50), dropped: contextDropped, events: events.slice(i, i + 50) });
         }
-        if (item.k === 'w') item.js = { hidden: +document.hidden, audio: globalThis.xcAudioDebug?.(), heap: performance.memory?.usedJSHeapSize, wasm: globalThis.xcWasmBytes?.() };
+        if (item.k === 'w') {
+          item.js = { hidden: +document.hidden, audio: globalThis.xcAudioDebug?.(), heap: performance.memory?.usedJSHeapSize, wasm: globalThis.xcWasmBytes?.() };
+          // memory map, page side: the stored file system
+          // (IDBFS keeps every file in memory), the resource pack reads and the power source
+          const fsStats = globalThis.xcFsStats?.(); if (fsStats) item.js.fs = fsStats;
+          const pack = globalThis.xcResPack?.takeStats?.(); if (pack) item.js.pack = pack;
+          if (pageMem.bat) item.js.bat = pageMem.bat;
+        }
         add(item);
       } catch { }
     } else if (line.level === 'error' || line.level === 'warn') {
