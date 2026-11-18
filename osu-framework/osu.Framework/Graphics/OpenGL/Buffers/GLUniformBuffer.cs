@@ -20,6 +20,7 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
 
         private TData data;
         private int uboId;
+        private bool allocated;
 
         public GLUniformBuffer(GLRenderer renderer)
         {
@@ -52,7 +53,16 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
             this.data = data;
 
             GL.BindBuffer(BufferTarget.UniformBuffer, uboId);
-            GL.BufferData(BufferTarget.UniformBuffer, size, ref data, BufferUsageHint.DynamicDraw);
+            // xc-osu!: allocate the storage once, then only overwrite it. Re-specifying it with BufferData on every change (once per
+            // masking change: every rounded card, cover or avatar) makes WebGL/ANGLE reallocate the buffer each time, which was the
+            // largest draw-thread cost in image-heavy overlays (beatmap listing, profile).
+            if (!allocated)
+            {
+                GL.BufferData(BufferTarget.UniformBuffer, size, ref data, BufferUsageHint.DynamicDraw);
+                allocated = true;
+            }
+            else
+                GL.BufferSubData(BufferTarget.UniformBuffer, 0, size, ref data);
             // xc-osu: the generic binding is left as is; everything that uses it binds first, and this runs once per masking change.
 
             FrameStatistics.Increment(StatisticsCounterType.UniformUpl);

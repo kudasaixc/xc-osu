@@ -1,5 +1,39 @@
 [
   {
+    "version": "2026.1118.1",
+    "date": "2026-11-18T16:30:00Z",
+    "entries": [
+      {
+        "category": "Online",
+        "category_fr": "En ligne",
+        "type": "fix",
+        "title": "Fixed the game crashing right after entering your two-factor code (and on some failed downloads): the engine aborted when a background request failed on a fresh thread",
+        "title_fr": "Correction du crash juste après la saisie du code de double authentification (et lors de certains téléchargements échoués) : le moteur s'arrêtait quand une requête en arrière-plan échouait sur un nouveau thread"
+      },
+      {
+        "category": "Performance",
+        "category_fr": "Performance",
+        "type": "improvement",
+        "title": "Smoother scrolling in osu!direct, profiles and other lists full of covers and avatars: far less graphics-driver work per frame for rounded images, and vertex buffers are now reused instead of being recreated",
+        "title_fr": "Défilement plus fluide dans osu!direct, les profils et les autres listes pleines de couvertures et d'avatars : beaucoup moins de travail du pilote graphique par image pour les images arrondies, et les vertex buffers sont réutilisés au lieu d'être recréés"
+      },
+      {
+        "category": "Launcher",
+        "category_fr": "Lanceur",
+        "type": "fix",
+        "title": "The loading time now stops counting as soon as the game is ready to be started, instead of including the wait for your click",
+        "title_fr": "Le temps de chargement s'arrête maintenant dès que le jeu est prêt à être lancé, au lieu d'inclure l'attente de ton clic"
+      },
+      {
+        "category": "Graphics",
+        "category_fr": "Graphismes",
+        "type": "fix",
+        "title": "Fixed a WebGL error on every texture creation (wrong magnification filter value)",
+        "title_fr": "Correction d'une erreur WebGL à chaque création de texture (mauvaise valeur de filtre d'agrandissement)"
+      }
+    ]
+  },
+  {
     "version": "2026.1118.0",
     "date": "2026-11-18T09:40:00Z",
     "entries": [

@@ -483,7 +483,7 @@ namespace osu.Framework.Graphics.OpenGL.Textures
 
                     GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter,
                         (int)(manualMipmaps ? InternalFilteringMode : InternalFilteringMode == All.Linear ? All.LinearMipmapLinear : All.Nearest));
-                    GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)filteringMode);
+                    GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)InternalFilteringMode); // xc-osu!: was the framework enum (0/1), GL_INVALID_ENUM under WebGL
 
                     GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
                     GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);

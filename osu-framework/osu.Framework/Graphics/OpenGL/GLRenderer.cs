@@ -144,6 +144,45 @@ namespace osu.Framework.Graphics.OpenGL
         protected internal override void SwapBuffers() => openGLSurface.SwapBuffers();
         protected internal override void WaitUntilIdle() => GL.Finish();
 
+        #region xc-osu!: vertex buffer recycling
+
+        // Every composite with enough children owns a vertex batch (three, with the triple-buffered draw nodes), and buffers
+        // not drawn for RESOURCE_FREE_NO_USAGE_LENGTH frames are freed. Scrolling a list of cards therefore created and deleted
+        // VBO + VAO pairs all the time, and under WebGL each creation (createVertexArray, bufferData, attribute setup) is far
+        // more expensive than on a native driver. Freed pairs are kept here, keyed by buffer class (vertex type, quad/linear
+        // index buffer) and size, and handed to the next buffer of the same kind.
+        private readonly Dictionary<(Type, int), Stack<(int vao, int vbo)>> vertexArrayPool = new Dictionary<(Type, int), Stack<(int, int)>>();
+        private long pooledVertexBytes;
+        private const long max_pooled_vertex_bytes = 32L * 1024 * 1024;
+
+        internal bool TryTakePooledVertexArray(Type kind, int bytes, out int vaoId, out int vboId)
+        {
+            if (vertexArrayPool.TryGetValue((kind, bytes), out var stack) && stack.TryPop(out var pair))
+            {
+                pooledVertexBytes -= bytes;
+                (vaoId, vboId) = pair;
+                return true;
+            }
+
+            vaoId = vboId = 0;
+            return false;
+        }
+
+        internal bool TryPoolVertexArray(Type kind, int bytes, int vaoId, int vboId)
+        {
+            if (!RuntimeInfo.IsBrowser || pooledVertexBytes + bytes > max_pooled_vertex_bytes)
+                return false;
+
+            if (!vertexArrayPool.TryGetValue((kind, bytes), out var stack))
+                vertexArrayPool[(kind, bytes)] = stack = new Stack<(int, int)>();
+
+            stack.Push((vaoId, vboId));
+            pooledVertexBytes += bytes;
+            return true;
+        }
+
+        #endregion
+
         public bool BindVertexArray(int vaoId)
         {
             if (lastBoundVertexArray == vaoId)

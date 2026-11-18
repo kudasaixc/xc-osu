@@ -405,3 +405,20 @@ jamais à la racine. Détail des chiffres : voir la section « Résultats » du 
   pas le fichier, et ne sert donc jamais les .br). Les scripts de prod excluent /wasmtest/, /iostest/, /memtest/.
 - Pièges de build rencontrés : pas de swap sur le VPS et 11 Go → un banc Chromium (3 Go) pendant l'étape LLVM d'osu.Game fait tuer la
   compilation ; `XC_AOT_JOBS=2` est plus sûr. Ne jamais `pkill -f`/`pgrep -f` un motif présent dans sa propre ligne de commande.
+
+## Crash après le code 2FA, chrono de chargement, coût WebGL des listes (2026-11-18)
+
+- **Assertion Mono `interp.c:8299`** (`interp_set_resume_state`, `g_assert (context)`) : en llvm-only, chaque `catch` de code AOT
+  reprend dans l'interpréteur, mais le contexte interpréteur du thread n'est créé que lorsqu'il exécute du code interprété. Un thread
+  neuf (tâche `LongRunning`, p. ex. `APIAccess.PerformAsync`) qui attrape sa première exception tue donc le runtime. Pendant
+  l'attente du code 2FA, le serveur répond 403 aux notifications et aux hubs : crash. Toujours présent dans dotnet/runtime main.
+  Contournement : `osu.Web/Program.cs` abonne un handler vide à `AppDomain.FirstChanceException` ; osu.Web n'est jamais compilé AOT,
+  Mono appelle le handler avant la recherche du `catch`, ce qui crée le contexte. Ne pas retirer ce handler ni AOT-compiler osu.Web.
+  Repro : serveur de test + compte TOTP, login in-game, toute requête qui échoue sur un thread `LongRunning`.
+- **Chrono de chargement** (`js/xc-boot.js`) : figé quand le bouton « cliquer pour jouer » apparaît ; `xc.lastBoot` et l'événement
+  télémétrie `boot` utilisent ce temps-là, plus l'attente du clic.
+- **Listes d'images (osu!direct, profil)** : trace Chrome sur le thread de dessin à l'ouverture d'osu!direct : `bufferData` ≈ 1,9 s,
+  `createVertexArray` ≈ 0,6 s, `texImage2D` ≈ 0,5 s. `GLUniformBuffer` réallouait le UBO global par `bufferData` à chaque changement de
+  masquage (chaque carte/couverture arrondie) : allocation unique puis `bufferSubData`. Les paires VAO/VBO libérées (batches des
+  conteneurs à ≥ 8 enfants, libérés après 300 frames sans dessin) sont recyclées par `GLRenderer` (32 Mo max, navigateur seulement).
+  `TextureMagFilter` recevait l'enum du framework (0/1) au lieu d'une constante GL (`GL_INVALID_ENUM` sous WebGL).

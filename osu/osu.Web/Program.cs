@@ -18,6 +18,14 @@ namespace osu.Web
         {
             Console.WriteLine("xc-osu! by xc softworks (kudasaixc): booting osu!lazer on WebAssembly");
 
+            // Mono (llvm-only AOT) runs every catch clause of AOT code through the interpreter, and asks for the thread's
+            // interpreter context before anything creates it (interp.c interp_set_resume_state: g_assert (context)).
+            // A thread that never executed interpreted code (a fresh LongRunning task thread, e.g. APIAccess.PerformAsync)
+            // therefore aborts the whole runtime on its first caught exception: the "crash after the 2FA code" was a
+            // notification-socket retry hitting exactly that. This assembly is never AOT-compiled, so running this
+            // handler for every thrown exception (before the runtime looks for the catch) creates the context first.
+            AppDomain.CurrentDomain.FirstChanceException += ensureInterpreterContext;
+
             // ImageSharp keeps a pool of unmanaged buffers (texture uploads, screenshots, zip reads) that never
             // shrinks inside wasm linear memory. Its default size scales with the 2 GB address space, which on
             // iOS is enough to push Safari past its per-tab memory limit right after the host attaches.
@@ -28,6 +36,12 @@ namespace osu.Web
             // blocking waits never touch the browser UI thread.
             var hostThread = new Thread(run) { Name = "xc-osu host", IsBackground = false };
             hostThread.Start();
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void ensureInterpreterContext(object? sender, System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs e)
+        {
+            // entering this (interpreted) method is the whole point.
         }
 
         private static int perfInterval = 2000;

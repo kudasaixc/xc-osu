@@ -33,7 +33,12 @@ namespace osu.Game.Online.Notifications.WebSocket
             // must use `PerformAsync()`, since we may not be fully online yet
             // (see `APIState.RequiresSecondFactorAuth` - in this state queued requests will not execute).
             await api.PerformAsync(req).ConfigureAwait(false);
-            string endpoint = req.Response!.Endpoint;
+
+            // xc-osu!: a failed request (e.g. 403 while the session still waits for its 2FA code) leaves Response null.
+            // Dereferencing it threw a NullReferenceException that trips a Mono interpreter assertion on wasm and kills the game,
+            // so fail the attempt with a regular exception and let the connector retry.
+            string endpoint = req.Response?.Endpoint
+                              ?? throw new WebException("Notifications endpoint unavailable (session not verified yet?)");
 
             ClientWebSocket socket = new ClientWebSocket();
 

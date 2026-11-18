@@ -102,8 +102,19 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
 
             if (!isInitialised)
             {
-                Renderer.BindVertexArray(vaoId = GL.GenVertexArray());
-                Initialise();
+                if (Renderer.TryTakePooledVertexArray(GetType(), Size * STRIDE, out vaoId, out vboId))
+                {
+                    // xc-osu!: a recycled pair keeps its attribute setup and index buffer binding; only the contents are stale.
+                    Renderer.BindVertexArray(vaoId);
+                    Renderer.BindArrayBuffer(vboId);
+                    GL.BufferSubData(BufferTarget.ArrayBuffer, 0, Size * STRIDE, ref getMemory().Span[0]);
+                }
+                else
+                {
+                    Renderer.BindVertexArray(vaoId = GL.GenVertexArray());
+                    Initialise();
+                }
+
                 isInitialised = true;
             }
             else
@@ -171,7 +182,7 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
 
         void IVertexBuffer.Free()
         {
-            if (isInitialised)
+            if (isInitialised && !Renderer.TryPoolVertexArray(GetType(), Size * STRIDE, vaoId, vboId))
             {
                 GL.DeleteBuffer(vboId);
                 Renderer.NotifyBufferDeleted(vboId);

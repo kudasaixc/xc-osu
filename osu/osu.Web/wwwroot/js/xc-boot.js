@@ -183,6 +183,10 @@ export class BootScreen {
     this.root.append(g);
     this.root.classList.add('gated');
     this.root.querySelector('#boot-bar').style.width = '100%';
+    // the game is playable from here: the loading clock stops, waiting for the click is not loading time
+    this.readyMs = performance.now() - this.started;
+    clearInterval(this.clock);
+    this.root.querySelector('#boot-clock').textContent = '+' + (this.readyMs / 1000).toFixed(1) + ' s';
     this.gate = { el: g, onOpen };
     this.root.addEventListener('pointerdown', this.gateClick = (e) => { if (e.button === 0 || e.pointerType !== 'mouse') this.openGate(); });
   }
@@ -203,9 +207,9 @@ export class BootScreen {
   }
 
   finish() {
-    if (!this.done) dispatchEvent(new CustomEvent('xc-boot-complete', { detail: performance.now() - this.started }));
+    const ms = this.readyMs ?? performance.now() - this.started;
+    if (!this.done) dispatchEvent(new CustomEvent('xc-boot-complete', { detail: ms }));
     if (this.done) return;
-    const ms = performance.now() - this.started;
     this.stage('components', 'done', this.t('stage.componentsN', this.components));
     this.done = true;
     clearInterval(this.clock);
