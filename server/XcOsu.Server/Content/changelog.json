@@ -13,7 +13,7 @@
       {
         "category": "Performance",
         "category_fr": "Performance",
-        "type": "improvement",
+        "type": "misc",
         "title": "Smoother scrolling in osu!direct, profiles and other lists full of covers and avatars: far less graphics-driver work per frame for rounded images, and vertex buffers are now reused instead of being recreated",
         "title_fr": "Défilement plus fluide dans osu!direct, les profils et les autres listes pleines de couvertures et d'avatars : beaucoup moins de travail du pilote graphique par image pour les images arrondies, et les vertex buffers sont réutilisés au lieu d'être recréés"
       },
@@ -40,14 +40,14 @@
       {
         "category": "Performance",
         "category_fr": "Performance",
-        "type": "improvement",
+        "type": "misc",
         "title": "The game's textures, sounds and tracks are now read on demand from a separate file instead of living in the game's memory: less memory used (about 11 to 20 % in our tests) and a faster start",
         "title_fr": "Les textures, sons et musiques du jeu sont maintenant lus à la demande depuis un fichier séparé au lieu de rester dans la mémoire du jeu : moins de mémoire utilisée (environ 11 à 20 % dans nos tests) et un démarrage plus rapide"
       },
       {
         "category": "Performance",
         "category_fr": "Performance",
-        "type": "improvement",
+        "type": "misc",
         "title": "Much more of the game's code is now compiled ahead of time instead of interpreted: shorter frames and shorter garbage-collection pauses in menus and in gameplay",
         "title_fr": "Une bien plus grande partie du code du jeu est maintenant compilée à l'avance au lieu d'être interprétée : des images plus courtes à calculer et des pauses de nettoyage mémoire plus courtes, dans les menus comme en jeu"
       },
@@ -74,7 +74,7 @@
       {
         "category": "Security",
         "category_fr": "Sécurité",
-        "type": "improvement",
+        "type": "misc",
         "title": "The game page and the website now enforce a strict content security policy, and the website additionally refuses to run any script that would come from page content",
         "title_fr": "La page du jeu et le site appliquent maintenant une politique de sécurité du contenu stricte, et le site refuse en plus d'exécuter tout script qui viendrait du contenu d'une page"
       },
@@ -88,7 +88,7 @@
       {
         "category": "Website",
         "category_fr": "Site web",
-        "type": "improvement",
+        "type": "misc",
         "title": "The website keeps your session only in secure cookies (never readable by scripts), and YouTube videos in profiles run in a sandbox",
         "title_fr": "Le site ne garde ta session que dans des cookies sécurisés (jamais lisibles par un script), et les vidéos YouTube des profils tournent dans un bac à sable"
       }
@@ -159,35 +159,35 @@
       {
         "category": "Security",
         "category_fr": "Sécurité",
-        "type": "improvement",
+        "type": "misc",
         "title": "Sessions renew their access every hour, and a stolen sign-in token that is reused ends its session",
         "title_fr": "Les sessions renouvellent leur accès toutes les heures, et un jeton de connexion volé puis réutilisé ferme sa session"
       },
       {
         "category": "Security",
         "category_fr": "Sécurité",
-        "type": "improvement",
+        "type": "misc",
         "title": "Passwords known from data breaches are refused (checked anonymously); passwords made of a few repeated characters too",
         "title_fr": "Les mots de passe connus de fuites de données sont refusés (vérification anonyme) ; les mots de passe faits de quelques caractères répétés aussi"
       },
       {
         "category": "Accounts",
         "category_fr": "Comptes",
-        "type": "improvement",
+        "type": "misc",
         "title": "A year of birth is asked once before chat and other social features. xc-osu! is for players aged 13 or over; under 16, private messages are limited to friends",
         "title_fr": "Une année de naissance est demandée une fois avant le chat et les autres fonctions sociales. xc-osu! est réservé aux 13 ans et plus ; avant 16 ans, les messages privés sont limités aux amis"
       },
       {
         "category": "Accounts",
         "category_fr": "Comptes",
-        "type": "improvement",
+        "type": "misc",
         "title": "Creating many accounts from one connection is limited, and staff or system names are reserved",
         "title_fr": "La création de nombreux comptes depuis une même connexion est limitée, et les noms de l'équipe ou du système sont réservés"
       },
       {
         "category": "Ranking",
         "category_fr": "Classement",
-        "type": "improvement",
+        "type": "misc",
         "title": "A ranked score now counts once its replay has been played back and matches what was submitted (usually within a minute); grade and accuracy are worked out by the server from the hit counts",
         "title_fr": "Un score classé compte maintenant une fois son replay rejoué et conforme à ce qui a été envoyé (en général en moins d'une minute) ; le grade et la précision sont calculés par le serveur à partir des notes touchées",
         "major": true
@@ -195,7 +195,7 @@
       {
         "category": "Ranking",
         "category_fr": "Classement",
-        "type": "improvement",
+        "type": "misc",
         "title": "Replays are checked by a separate, isolated service, two at a time, and anything that could not be checked is retried, then reviewed by a person",
         "title_fr": "Les replays sont vérifiés par un service séparé et isolé, deux à la fois, et ce qui n'a pas pu être vérifié est réessayé puis examiné par une personne"
       },
@@ -216,35 +216,35 @@
       {
         "category": "Chat",
         "category_fr": "Chat",
-        "type": "improvement",
+        "type": "misc",
         "title": "Starting conversations with many strangers in a short time is limited, blocking someone now also covers spectating and invitations, and only the host can invite to a room",
         "title_fr": "Lancer des conversations avec beaucoup d'inconnus en peu de temps est limité, bloquer quelqu'un couvre aussi le mode spectateur et les invitations, et seul l'hôte peut inviter dans un salon"
       },
       {
         "category": "Reliability",
         "category_fr": "Fiabilité",
-        "type": "improvement",
+        "type": "misc",
         "title": "Heavy pages (profiles, rankings, the room list) are shared between players for a few seconds, and uploads, downloads and beatmap lookups have fair limits, so a burst of requests cannot slow the game down for everyone",
         "title_fr": "Les pages lourdes (profils, classements, liste des salons) sont partagées entre joueurs quelques secondes, et les envois, téléchargements et recherches de beatmaps ont des limites équitables, pour qu'un afflux de requêtes ne ralentisse pas tout le monde"
       },
       {
         "category": "Privacy",
         "category_fr": "Vie privée",
-        "type": "improvement",
+        "type": "misc",
         "title": "Images in profile texts are loaded through the server, so the sites hosting them no longer see who views a profile",
         "title_fr": "Les images des textes de profil passent par le serveur : les sites qui les hébergent ne voient plus qui regarde un profil"
       },
       {
         "category": "Privacy",
         "category_fr": "Vie privée",
-        "type": "improvement",
+        "type": "misc",
         "title": "Diagnostics no longer link the sessions of one browser together, and error texts are stripped of addresses and tokens on the server too",
         "title_fr": "Les diagnostics ne relient plus entre elles les sessions d'un même navigateur, et les textes d'erreur sont aussi débarrassés des adresses et des jetons côté serveur"
       },
       {
         "category": "Privacy",
         "category_fr": "Vie privée",
-        "type": "improvement",
+        "type": "misc",
         "title": "Deleting your account also removes your name from other players' notifications and the reports about you; a security log records account events for a year (included in your data download)",
         "title_fr": "Supprimer ton compte retire aussi ton nom des notifications des autres joueurs et des signalements te concernant ; un journal de sécurité garde les événements du compte pendant un an (inclus dans le téléchargement de tes données)"
       }
@@ -278,7 +278,7 @@
       {
         "category": "Reliability",
         "category_fr": "Fiabilité",
-        "type": "improvement",
+        "type": "misc",
         "title": "Crash reports now include memory usage, to find out-of-memory crashes faster",
         "title_fr": "Les rapports de plantage incluent maintenant l'utilisation mémoire, pour repérer plus vite les plantages par manque de mémoire"
       }

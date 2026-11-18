@@ -216,7 +216,8 @@ namespace XcOsu.Server.Services
                     entries.Add(new JObject
                     {
                         ["id"] = entryId--, ["repository"] = null, ["github_pull_request_id"] = null, ["github_url"] = null, ["url"] = null,
-                        ["type"] = e.Value<string>("type") ?? "misc", ["category"] = (locale == "fr" ? e.Value<string>("category_fr") : null) ?? e.Value<string>("category") ?? "General",
+                        // the game deserialises this into ChangelogEntryType { Add, Fix, Misc }: any other value fails the whole changelog.
+                        ["type"] = e.Value<string>("type") is "add" or "fix" ? e.Value<string>("type") : "misc", ["category"] = (locale == "fr" ? e.Value<string>("category_fr") : null) ?? e.Value<string>("category") ?? "General",
                         ["title"] = (locale == "fr" ? e.Value<string>("title_fr") : null) ?? e.Value<string>("title"),
                         ["message"] = message, ["message_html"] = message == null ? null : Markdown.ToHtml(message, pipeline),
                         ["major"] = e.Value<bool?>("major") ?? false, ["created_at"] = created,
