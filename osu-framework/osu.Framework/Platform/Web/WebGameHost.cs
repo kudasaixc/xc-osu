@@ -156,9 +156,11 @@ namespace osu.Framework.Platform.Web
 
             if (!isPlaying && menu_update_cap)
             {
+                // Always keep update at least 2x display refresh (min 120 Hz): matching 1x refresh (60 Hz)
+                // beats against async rAF (DrawReadTimeout=0) and drops ~15-20% of frames as empty repeats.
                 double refresh = Window?.CurrentDisplayMode.Value.RefreshRate ?? 60;
                 if (refresh <= 0) refresh = 60;
-                updateHz = Math.Min(updateHz, Math.Clamp(refresh, 60, 120));
+                updateHz = Math.Min(updateHz, Math.Clamp(refresh * 2, 120, 180));
             }
             else
             {

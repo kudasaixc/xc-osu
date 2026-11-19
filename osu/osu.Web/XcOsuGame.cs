@@ -37,10 +37,20 @@ namespace osu.Web
 
         // ---- telemetry context: which screen / overlay the frame timings belong to (see Telemetry.cs)
 
+        private bool inPlayerScreen;
+
+        private void syncPlayingRate()
+        {
+            if (Host is osu.Framework.Platform.Web.WebGameHost webHost)
+                webHost.SetPlaying(inPlayerScreen || UserPlayingState.Value == osu.Game.Screens.Play.LocalUserPlayingState.Playing);
+        }
+
         protected override void ScreenChanged(osu.Game.Screens.IOsuScreen current, osu.Game.Screens.IOsuScreen newScreen)
         {
             base.ScreenChanged(current, newScreen);
             Telemetry.SetScreen(current?.GetType().Name, newScreen?.GetType().Name);
+            inPlayerScreen = newScreen is osu.Game.Screens.Play.Player;
+            syncPlayingRate();
         }
 
         protected override void LoadComplete()
@@ -60,11 +70,8 @@ namespace osu.Web
                     osu.Framework.Logging.Logger.Log(message, level: osu.Framework.Logging.LogLevel.Important);
             }, true);
 
-            if (Host is osu.Framework.Platform.Web.WebGameHost webHost)
-            {
-                UserPlayingState.BindValueChanged(e =>
-                    webHost.SetPlaying(e.NewValue == osu.Game.Screens.Play.LocalUserPlayingState.Playing), true);
-            }
+            if (Host is osu.Framework.Platform.Web.WebGameHost)
+                UserPlayingState.BindValueChanged(_ => syncPlayingRate(), true);
 
             if (Telemetry.Enabled)
                 Add(new TelemetryProbe(this));

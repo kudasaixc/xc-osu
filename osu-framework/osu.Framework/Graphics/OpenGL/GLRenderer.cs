@@ -182,7 +182,10 @@ namespace osu.Framework.Graphics.OpenGL
 
             UseStructuredBuffers = extensions.Contains(@"GL_ARB_shader_storage_buffer_object") && !FrameworkEnvironment.NoStructuredBuffers;
 
-            if (RuntimeInfo.IsBrowser && Environment.GetEnvironmentVariable("XC_UBO_RING") != "0")
+            // Uniform ring buffer with glBindBufferRange is opt-in only (XC_UBO_RING=1): under ANGLE D3D11,
+            // Buffer11::getConstantBufferRange creates/copies per-offset constant buffers across the full ring
+            // on every BufferSubData, causing severe GPU stalls in masked UI lists.
+            if (RuntimeInfo.IsBrowser && Environment.GetEnvironmentVariable("XC_UBO_RING") == "1")
             {
                 int align = GL.GetInteger((GetPName)0x8A34 /* GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT */);
                 uniformRingAlignment = Math.Max(align, 16);

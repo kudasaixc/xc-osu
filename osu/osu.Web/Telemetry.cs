@@ -443,7 +443,7 @@ namespace osu.Web
 
             gcSince(c, out int gc0, out int gc1, out double gcPause);
 
-            if (c == input && (gc0 != 0 || gc1 != 0) && interval > 4 && interval < 1000)
+            if (c == audio && (gc0 != 0 || gc1 != 0) && interval > 6 && interval < 1000)
                 Interlocked.Add(ref estimatedPauseUs, (long)((interval - 2) * 1000));
 
             long alloc = threadAllocDelta();
