@@ -204,7 +204,7 @@ namespace osu.Web
         private struct FlightFrame
         {
             public long At;
-            public double Interval, Work, Pause, UpdateWork;
+            public double Interval, Work, Pause, UpdateWork, Ready, Start, Submitted;
             public int Gc0, Gc1, Tex, Queue;
         }
         private static readonly object flightLock = new object();
@@ -216,10 +216,13 @@ namespace osu.Web
         private static double latestUpdateWork; // maximum update work since the previous draw callback
         private static string flightScreen = "", flightOverlay = "", flightThread = "";
 
-        private static void recordFlight(double interval, double work, double pause, int g0, int g1, int tex, int queue)
+        private static double phaseMs(long? stamp) => stamp is > 0 ? stamp.Value * 1000.0 / System.Diagnostics.Stopwatch.Frequency : double.NaN;
+
+        private static void recordFlight(double interval, double work, double pause, int g0, int g1, int tex, int queue, bool presented)
         {
             var f = new FlightFrame { At = unixMs(), Interval = interval, Work = work, Pause = pause,
-                Gc0 = g0, Gc1 = g1, Tex = tex, Queue = queue, UpdateWork = latestUpdateWork };
+                Gc0 = g0, Gc1 = g1, Tex = tex, Queue = queue, Ready = presented ? phaseMs(host?.DrawReadyTimestamp) : double.NaN,
+                Start = presented ? phaseMs(host?.DrawStartTimestamp) : double.NaN, Submitted = presented ? phaseMs(host?.DrawSubmittedTimestamp) : double.NaN };
             lock (flightLock)
             {
                 f.UpdateWork = latestUpdateWork;
@@ -255,6 +258,13 @@ namespace osu.Web
             }
         }
 
+        private static void appendNum(StringBuilder sb, double v)
+        {
+            sb.Append(',');
+            if (double.IsFinite(v)) sb.Append(v.ToString("0.##", CultureInfo.InvariantCulture));
+            else sb.Append("null");
+        }
+
         private static void emitFlight()
         {
             List<FlightFrame>? frames;
@@ -277,13 +287,22 @@ namespace osu.Web
                     if (i > start) rows.Append(',');
                     var f = frames[i];
                     rows.Append('[').Append(f.At - at);
-                    foreach (double v in new double[] { f.Interval, f.Work, f.Pause, f.Gc0, f.Gc1, f.Tex, f.Queue, f.UpdateWork })
-                        rows.Append(',').Append(double.IsFinite(v) ? v.ToString("0.##", CultureInfo.InvariantCulture) : "null");
+                    appendNum(rows, f.Interval);
+                    appendNum(rows, f.Work);
+                    appendNum(rows, f.Pause);
+                    appendNum(rows, f.Gc0);
+                    appendNum(rows, f.Gc1);
+                    appendNum(rows, f.Tex);
+                    appendNum(rows, f.Queue);
+                    appendNum(rows, f.UpdateWork);
+                    appendNum(rows, f.Ready);
+                    appendNum(rows, f.Start);
+                    appendNum(rows, f.Submitted);
                     rows.Append(']');
                 }
                 emit(new Json().Str("k", "e").Str("n", "flight").Num("at", at).Str("scr", scr).Str("ov", ov)
                     .Str("name", thread).Num("part", start / 100).Num("parts", parts).Num("dropped", dropped).Num("suppressed", suppressed)
-                    .Str("cols", "offset,interval,drawWork,gcPause,gc0,gc1,tex,texQueue,maxUpdateWorkSinceDraw")
+                    .Str("cols", "offset,interval,drawWork,gcPause,gc0,gc1,tex,texQueue,maxUpdateWorkSinceDraw,readyMonoMs,drawStartMonoMs,submittedMonoMs")
                     .Raw("frames", rows.Append(']').ToString()));
             }
         }
@@ -333,7 +352,7 @@ namespace osu.Web
             {
             }
 
-            recordFlight(interval, work, gcPause, gc0, gc1, tex, queued);
+            recordFlight(interval, work, gcPause, gc0, gc1, tex, queued, presented);
             double p = period;
             // returning from a hidden tab / suspended page: not a stutter
             bool resume = interval > 1000;

@@ -120,7 +120,10 @@ namespace osu.Framework.Graphics.OpenGL.Shaders
             IsBound = false;
         }
 
-        private readonly Dictionary<int, int> uniformBlockBindings = new Dictionary<int, int>();
+        private readonly int[] uniformBlockBindingsFast = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+        private Dictionary<int, int>? uniformBlockBindingsOverflow;
+
+        internal int GlobalUniformBlockIndex { get; private set; } = -1;
 
         /// <summary>
         /// Records the binding point of a uniform block.
@@ -128,11 +131,20 @@ namespace osu.Framework.Graphics.OpenGL.Shaders
         /// <returns>Whether the binding point changed, and so has to be sent to the program.</returns>
         internal bool SetUniformBlockBinding(int index, int binding)
         {
-            // Blocks start out bound to point 0, but that is tracked as unknown so the first use always sends it.
-            if (uniformBlockBindings.TryGetValue(index, out int current) && current == binding)
+            if ((uint)index < (uint)uniformBlockBindingsFast.Length)
+            {
+                if (uniformBlockBindingsFast[index] == binding)
+                    return false;
+
+                uniformBlockBindingsFast[index] = binding;
+                return true;
+            }
+
+            uniformBlockBindingsOverflow ??= new Dictionary<int, int>();
+            if (uniformBlockBindingsOverflow.TryGetValue(index, out int current) && current == binding)
                 return false;
 
-            uniformBlockBindings[index] = binding;
+            uniformBlockBindingsOverflow[index] = binding;
             return true;
         }
 
@@ -188,7 +200,10 @@ namespace osu.Framework.Graphics.OpenGL.Shaders
                     switch (layout.Elements[0].Kind)
                     {
                         case ResourceKind.UniformBuffer:
-                            uniformBlocks[layout.Elements[0].Name] = GL.GetUniformBlockIndex(this, layout.Elements[0].Name);
+                            int uboIdx = GL.GetUniformBlockIndex(this, layout.Elements[0].Name);
+                            uniformBlocks[layout.Elements[0].Name] = uboIdx;
+                            if (layout.Elements[0].Name == "g_GlobalUniforms")
+                                GlobalUniformBlockIndex = uboIdx;
                             break;
 
                         case ResourceKind.StructuredBufferReadOnly:

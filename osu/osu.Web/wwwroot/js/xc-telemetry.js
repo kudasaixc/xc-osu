@@ -50,6 +50,7 @@ export function startTelemetry(options, build, log) {
     const gl = document.createElement('canvas').getContext('webgl2', { powerPreference: options.gpu || 'high-performance' });
     const ext = gl?.getExtension('WEBGL_debug_renderer_info');
     hw.gpu = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl?.getParameter(gl.RENDERER);
+    globalThis.xcDetectedGpu = hw.gpu || '';
     gl?.getExtension('WEBGL_lose_context')?.loseContext();
   } catch { }
   const pageMem = { bat: null };

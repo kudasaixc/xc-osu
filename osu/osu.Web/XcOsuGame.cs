@@ -60,6 +60,12 @@ namespace osu.Web
                     osu.Framework.Logging.Logger.Log(message, level: osu.Framework.Logging.LogLevel.Important);
             }, true);
 
+            if (Host is osu.Framework.Platform.Web.WebGameHost webHost)
+            {
+                UserPlayingState.BindValueChanged(e =>
+                    webHost.SetPlaying(e.NewValue == osu.Game.Screens.Play.LocalUserPlayingState.Playing), true);
+            }
+
             if (Telemetry.Enabled)
                 Add(new TelemetryProbe(this));
 

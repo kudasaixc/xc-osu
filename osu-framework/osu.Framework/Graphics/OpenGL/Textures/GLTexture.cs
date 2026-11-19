@@ -418,7 +418,7 @@ namespace osu.Framework.Graphics.OpenGL.Textures
 
             if (uploadedRegions.Count != 0 && !manualMipmaps)
             {
-                GL.Hint(HintTarget.GenerateMipmapHint, HintMode.Nicest);
+                GL.Hint(HintTarget.GenerateMipmapHint, RuntimeInfo.IsBrowser ? HintMode.Fastest : HintMode.Nicest);
                 GL.GenerateMipmap(TextureTarget.Texture2D);
             }
 

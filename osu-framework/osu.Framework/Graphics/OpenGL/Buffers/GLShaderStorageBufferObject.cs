@@ -32,9 +32,8 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
             data = new TData[Size];
             elementSize = Marshal.SizeOf(default(TData));
 
-            GL.BindBuffer(BufferTarget.UniformBuffer, Id);
+            renderer.BindUniformBufferTarget(Id);
             GL.BufferData(BufferTarget.UniformBuffer, elementSize * Size, ref data[0], BufferUsageHint.DynamicDraw);
-            GL.BindBuffer(BufferTarget.UniformBuffer, 0);
         }
 
         private int changeBeginIndex = -1;
@@ -75,9 +74,8 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
             if (changeBeginIndex == -1)
                 return;
 
-            GL.BindBuffer(BufferTarget.UniformBuffer, Id);
+            renderer.BindUniformBufferTarget(Id);
             GL.BufferSubData(BufferTarget.UniformBuffer, changeBeginIndex * elementSize, elementSize * changeCount, ref data[changeBeginIndex]);
-            GL.BindBuffer(BufferTarget.UniformBuffer, 0);
 
             changeBeginIndex = -1;
             changeCount = 0;

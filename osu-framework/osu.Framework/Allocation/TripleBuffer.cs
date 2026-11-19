@@ -29,6 +29,11 @@ namespace osu.Framework.Allocation
         private int flipIndex = 1;
         private int readIndex = 2;
 
+        /// <summary>
+        /// Whether a freshly written buffer is currently queued and has not yet been consumed by <see cref="GetForRead"/>.
+        /// </summary>
+        public bool HasUnreadFrame => buffers[Volatile.Read(ref flipIndex)].LastUsage == UsageType.Write;
+
         public TripleBuffer()
         {
             for (int i = 0; i < buffer_count; i++)
@@ -88,6 +93,7 @@ namespace osu.Framework.Allocation
         public class Buffer : IDisposable
         {
             public T? Object;
+            public long ReadyTimestamp;
 
             public volatile UsageType LastUsage;
 

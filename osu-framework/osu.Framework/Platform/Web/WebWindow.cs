@@ -270,6 +270,7 @@ namespace osu.Framework.Platform.Web
 
             while (!exitRequested)
             {
+                shared.WaitForInput(4);
                 processEvents();
 
                 int w = shared.Read(WebShared.WIDTH), h = shared.Read(WebShared.HEIGHT);

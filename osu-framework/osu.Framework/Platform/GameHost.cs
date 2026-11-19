@@ -466,6 +466,11 @@ namespace osu.Framework.Platform
         public double LastUpdateMaskMs { get; private set; }
         public double LastUpdateDrawNodesMs { get; private set; }
 
+        /// <summary>
+        /// Lets a platform host skip redundant draw-node generation when an unread frame is already queued for draw.
+        /// </summary>
+        protected virtual bool ShouldGenerateDrawNodes(bool hasUnreadFrame) => true;
+
         protected virtual void UpdateFrame()
         {
             if (Root == null) return;
@@ -492,10 +497,23 @@ namespace osu.Framework.Platform
             Root.UpdateSubTreeMasking();
             if (observe) { LastUpdateMaskMs = Stopwatch.GetElapsedTime(phaseStart).TotalMilliseconds; phaseStart = Stopwatch.GetTimestamp(); }
 
-            using (var buffer = drawRoots.GetForWrite())
-                buffer.Object = Root.GenerateDrawNodeSubtree(frameCount, buffer.Index, false);
-            if (observe) LastUpdateDrawNodesMs = Stopwatch.GetElapsedTime(phaseStart).TotalMilliseconds;
+            if (ShouldGenerateDrawNodes(drawRoots.HasUnreadFrame))
+            {
+                using (var buffer = drawRoots.GetForWrite())
+                {
+                    buffer.Object = Root.GenerateDrawNodeSubtree(frameCount, buffer.Index, false);
+                    if (observe) buffer.ReadyTimestamp = Stopwatch.GetTimestamp();
+                }
+
+                if (observe) LastUpdateDrawNodesMs = Stopwatch.GetElapsedTime(phaseStart).TotalMilliseconds;
+            }
+            else if (observe)
+                LastUpdateDrawNodesMs = 0;
         }
+
+        public long DrawReadyTimestamp { get; private set; }
+        public long DrawStartTimestamp { get; private set; }
+        public long DrawSubmittedTimestamp { get; private set; }
 
         private bool didRenderFrame;
 
@@ -510,6 +528,7 @@ namespace osu.Framework.Platform
 
         protected virtual void DrawFrame()
         {
+            DrawReadyTimestamp = DrawStartTimestamp = DrawSubmittedTimestamp = 0;
             Debug.Assert(Window != null);
 
             if (Root == null)
@@ -544,6 +563,12 @@ namespace osu.Framework.Platform
             if (buffer == null)
                 return;
 
+            bool observeDraw = GameThread.FrameObserver != null;
+            if (observeDraw)
+            {
+                DrawReadyTimestamp = buffer.ReadyTimestamp;
+                DrawStartTimestamp = Stopwatch.GetTimestamp();
+            }
             Debug.Assert(buffer.Object != null);
 
             try
@@ -583,6 +608,7 @@ namespace osu.Framework.Platform
                 using (drawMonitor.BeginCollecting(PerformanceCollectionType.SwapBuffer))
                     Swap();
 
+                if (observeDraw) DrawSubmittedTimestamp = Stopwatch.GetTimestamp();
                 Window.OnDraw();
                 didRenderFrame = true;
             }
@@ -1409,6 +1435,8 @@ namespace osu.Framework.Platform
             MaximumDrawHz = drawLimiter;
             MaximumUpdateHz = executionMode.Value == ExecutionMode.SingleThread ? drawLimiter : updateLimiter;
         }
+
+        protected void RefreshFrameSyncMode() => updateFrameSyncMode();
 
         /// <summary>
         /// Lets a platform host clamp the limits chosen by the frame limiter (xc-osu! web port: launcher caps).

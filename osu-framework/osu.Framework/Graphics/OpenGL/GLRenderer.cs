@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using osu.Framework.Extensions.EnumExtensions;
@@ -31,7 +32,7 @@ using Image = SixLabors.ImageSharp.Image;
 
 namespace osu.Framework.Graphics.OpenGL
 {
-    internal class GLRenderer : Renderer
+    internal unsafe class GLRenderer : Renderer
     {
         private IOpenGLGraphicsSurface openGLSurface = null!;
 
@@ -62,13 +63,94 @@ namespace osu.Framework.Graphics.OpenGL
         private int backbufferFramebuffer;
 
         private readonly Dictionary<string, IGLUniformBuffer> boundUniformBuffers = new Dictionary<string, IGLUniformBuffer>();
-        private bool? lastBlendingEnabledState;
-        private int lastBoundVertexArray;
+        private IGLUniformBuffer? globalUniformBufferBound;
 
-        // xc-osu: every GL call is a wasm -> JS transition on the web, and a frame of masked UI is several hundred draw calls.
-        // These track state that used to be re-sent for every single draw call.
+        // xc-osu!: GL state cache to cut redundant wasm -> JS / WebGL2 calls per frame.
+        private bool? lastBlendingEnabledState;
+        private int lastBlendEqRgb = -1, lastBlendEqAlpha = -1;
+        private int lastBlendSrcRgb = -1, lastBlendDstRgb = -1, lastBlendSrcAlpha = -1, lastBlendDstAlpha = -1;
+        private int lastColorMask = -1;
+        private int lastScissorEnabled = -1;
+        private int lastDepthTest = -1;
+        private int lastDepthFunc = -1;
+        private int lastDepthMask = -1;
+        private int lastStencilTest = -1;
+        private int lastBoundVertexArray;
         private int lastBoundArrayBuffer;
-        private readonly int[] lastBoundUniformBufferBases = new int[16];
+        private int lastBoundUniformBuffer;
+        private int lastActiveGlTextureUnit = -1;
+        private int lastBoundFramebuffer = -1;
+
+        private struct UniformSlotState
+        {
+            public int Id;
+            public int Offset;
+            public int Size;
+        }
+
+        private readonly UniformSlotState[] lastBoundUniformSlots = new UniformSlotState[16];
+
+        #region xc-osu!: per-frame uniform ring buffer (eliminates in-place UBO mutation stalls under ANGLE/D3D11)
+
+        internal bool UseUniformRing { get; private set; }
+        internal int UniformRingBufferId { get; private set; }
+
+        private int uniformRingAlignment = 256;
+        private int uniformRingCapacity;
+        private int uniformRingOffset;
+        private int uniformRingUploaded;
+        private byte* uniformStagingPtr;
+
+        internal int AllocateUniformSlice<TData>(ref TData data, int size) where TData : unmanaged
+        {
+            int aligned = ((size + uniformRingAlignment - 1) / uniformRingAlignment) * uniformRingAlignment;
+            if (uniformRingOffset + aligned > uniformRingCapacity)
+                growUniformRing(uniformRingOffset + aligned);
+
+            int offset = uniformRingOffset;
+            fixed (TData* src = &data)
+                System.Buffer.MemoryCopy(src, uniformStagingPtr + offset, uniformRingCapacity - offset, size);
+
+            uniformRingOffset = offset + aligned;
+            return offset;
+        }
+
+        private void growUniformRing(int required)
+        {
+            int newCap = Math.Max(uniformRingCapacity * 2, 512 * 1024);
+            while (newCap < required)
+                newCap *= 2;
+
+            byte* newPtr = (byte*)NativeMemory.Alloc((nuint)newCap);
+            if (uniformStagingPtr != null)
+            {
+                if (uniformRingOffset > 0)
+                    System.Buffer.MemoryCopy(uniformStagingPtr, newPtr, newCap, uniformRingOffset);
+                NativeMemory.Free(uniformStagingPtr);
+            }
+
+            uniformStagingPtr = newPtr;
+            uniformRingCapacity = newCap;
+
+            // Allocate new GPU storage; existing frame offsets [0..uniformRingOffset) will be uploaded cleanly on next flush.
+            BindUniformBufferTarget(UniformRingBufferId);
+            GL.BufferData(BufferTarget.UniformBuffer, (IntPtr)uniformRingCapacity, IntPtr.Zero, BufferUsageHint.StreamDraw);
+            uniformRingUploaded = 0;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void flushUniformRing()
+        {
+            if (!UseUniformRing || uniformRingOffset <= uniformRingUploaded)
+                return;
+
+            int dirty = uniformRingOffset - uniformRingUploaded;
+            BindUniformBufferTarget(UniformRingBufferId);
+            GL.BufferSubData(BufferTarget.UniformBuffer, (IntPtr)uniformRingUploaded, (IntPtr)dirty, (IntPtr)(uniformStagingPtr + uniformRingUploaded));
+            uniformRingUploaded = uniformRingOffset;
+        }
+
+        #endregion
 
         protected override void Initialise(IGraphicsSurface graphicsSurface)
         {
@@ -100,6 +182,18 @@ namespace osu.Framework.Graphics.OpenGL
 
             UseStructuredBuffers = extensions.Contains(@"GL_ARB_shader_storage_buffer_object") && !FrameworkEnvironment.NoStructuredBuffers;
 
+            if (RuntimeInfo.IsBrowser && Environment.GetEnvironmentVariable("XC_UBO_RING") != "0")
+            {
+                int align = GL.GetInteger((GetPName)0x8A34 /* GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT */);
+                uniformRingAlignment = Math.Max(align, 16);
+                UniformRingBufferId = GL.GenBuffer();
+                uniformRingCapacity = 512 * 1024;
+                uniformStagingPtr = (byte*)NativeMemory.Alloc((nuint)uniformRingCapacity);
+                BindUniformBufferTarget(UniformRingBufferId);
+                GL.BufferData(BufferTarget.UniformBuffer, (IntPtr)uniformRingCapacity, IntPtr.Zero, BufferUsageHint.StreamDraw);
+                UseUniformRing = true;
+            }
+
             Logger.Log($"{nameof(UseStructuredBuffers)}: {UseStructuredBuffers}");
 
             openGLSurface.ClearCurrent();
@@ -122,17 +216,41 @@ namespace osu.Framework.Graphics.OpenGL
         protected internal override void BeginFrame(Vector2 windowSize)
         {
             lastBlendingEnabledState = null;
+            lastBlendEqRgb = lastBlendEqAlpha = -1;
+            lastBlendSrcRgb = lastBlendDstRgb = lastBlendSrcAlpha = lastBlendDstAlpha = -1;
+            lastColorMask = -1;
+            lastScissorEnabled = -1;
+            lastDepthTest = lastDepthFunc = lastDepthMask = -1;
+            lastStencilTest = -1;
             lastBoundVertexArray = 0;
             lastBoundArrayBuffer = 0;
-            Array.Clear(lastBoundUniformBufferBases);
+            lastBoundUniformBuffer = 0;
+            lastActiveGlTextureUnit = -1;
+            lastBoundFramebuffer = -1;
+            Array.Clear(lastBoundUniformSlots);
             boundUniformBuffers.Clear();
+            globalUniformBufferBound = null;
 
             // Seems to be required on some drivers as the context is lost from the draw thread.
             MakeCurrent();
 
+            if (UseUniformRing)
+            {
+                uniformRingOffset = 0;
+                uniformRingUploaded = 0;
+                BindUniformBufferTarget(UniformRingBufferId);
+                GL.BufferData(BufferTarget.UniformBuffer, (IntPtr)uniformRingCapacity, IntPtr.Zero, BufferUsageHint.StreamDraw);
+            }
+
             GL.UseProgram(0);
 
             base.BeginFrame(windowSize);
+        }
+
+        protected internal override void FinishFrame()
+        {
+            base.FinishFrame();
+            GL.FlushCommands();
         }
 
         protected internal override void WaitUntilNextFrameReady()
@@ -208,6 +326,18 @@ namespace osu.Framework.Graphics.OpenGL
         }
 
         /// <summary>
+        /// Binds a buffer to the generic uniform buffer target, skipping the call when it is already bound.
+        /// </summary>
+        public void BindUniformBufferTarget(int uboId)
+        {
+            if (lastBoundUniformBuffer == uboId)
+                return;
+
+            lastBoundUniformBuffer = uboId;
+            GL.BindBuffer(BufferTarget.UniformBuffer, uboId);
+        }
+
+        /// <summary>
         /// Forgets a deleted vertex array (deleting the bound one unbinds it).
         /// </summary>
         public void NotifyVertexArrayDeleted(int vaoId)
@@ -224,10 +354,13 @@ namespace osu.Framework.Graphics.OpenGL
             if (lastBoundArrayBuffer == id)
                 lastBoundArrayBuffer = 0;
 
-            for (int i = 0; i < lastBoundUniformBufferBases.Length; i++)
+            if (lastBoundUniformBuffer == id)
+                lastBoundUniformBuffer = 0;
+
+            for (int i = 0; i < lastBoundUniformSlots.Length; i++)
             {
-                if (lastBoundUniformBufferBases[i] == id)
-                    lastBoundUniformBufferBases[i] = 0;
+                if (lastBoundUniformSlots[i].Id == id)
+                    lastBoundUniformSlots[i] = default;
             }
         }
 
@@ -276,13 +409,28 @@ namespace osu.Framework.Graphics.OpenGL
         }
 
         protected override void SetUniformBufferImplementation(string blockName, IUniformBuffer buffer)
-            => boundUniformBuffers[blockName] = (IGLUniformBuffer)buffer;
+        {
+            if (blockName == "g_GlobalUniforms")
+                globalUniformBufferBound = (IGLUniformBuffer)buffer;
+            else
+                boundUniformBuffers[blockName] = (IGLUniformBuffer)buffer;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void activateTextureUnit(int unit)
+        {
+            if (lastActiveGlTextureUnit == unit)
+                return;
+
+            lastActiveGlTextureUnit = unit;
+            GL.ActiveTexture(TextureUnit.Texture0 + unit);
+        }
 
         protected override bool SetTextureImplementation(INativeTexture? texture, int unit)
         {
             if (texture == null)
             {
-                GL.ActiveTexture(TextureUnit.Texture0 + unit);
+                activateTextureUnit(unit);
                 GL.BindTexture(TextureTarget.Texture2D, 0);
                 return true;
             }
@@ -295,7 +443,7 @@ namespace osu.Framework.Graphics.OpenGL
 
                     for (int i = 0; i < glVideo.TextureIds.Length; i++)
                     {
-                        GL.ActiveTexture(TextureUnit.Texture0 + unit + i);
+                        activateTextureUnit(unit + i);
                         GL.BindTexture(TextureTarget.Texture2D, glVideo.TextureIds[i]);
                     }
 
@@ -305,7 +453,7 @@ namespace osu.Framework.Graphics.OpenGL
                     if (glTexture.TextureId <= 0)
                         return false;
 
-                    GL.ActiveTexture(TextureUnit.Texture0 + unit);
+                    activateTextureUnit(unit);
                     GL.BindTexture(TextureTarget.Texture2D, glTexture.TextureId);
                     break;
             }
@@ -313,11 +461,23 @@ namespace osu.Framework.Graphics.OpenGL
             return true;
         }
 
-        protected override void SetFrameBufferImplementation(IFrameBuffer? frameBuffer) =>
-            GL.BindFramebuffer(FramebufferTarget.Framebuffer, ((GLFrameBuffer?)frameBuffer)?.FrameBuffer ?? backbufferFramebuffer);
+        protected override void SetFrameBufferImplementation(IFrameBuffer? frameBuffer)
+        {
+            int fb = ((GLFrameBuffer?)frameBuffer)?.FrameBuffer ?? backbufferFramebuffer;
+            if (lastBoundFramebuffer == fb)
+                return;
+
+            lastBoundFramebuffer = fb;
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, fb);
+        }
 
         protected override void DeleteFrameBufferImplementation(IFrameBuffer frameBuffer)
-            => ScheduleDisposal(static f => GL.DeleteFramebuffer(f.FrameBuffer), (GLFrameBuffer)frameBuffer);
+            => ScheduleDisposal(f =>
+            {
+                if (lastBoundFramebuffer == f.FrameBuffer)
+                    lastBoundFramebuffer = -1;
+                GL.DeleteFramebuffer(f.FrameBuffer);
+            }, (GLFrameBuffer)frameBuffer);
 
         protected override void ClearImplementation(ClearInfo clearInfo)
         {
@@ -346,41 +506,85 @@ namespace osu.Framework.Graphics.OpenGL
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void bindUniformBlockToSlot(GLShader glShader, int blockIndex, int slot, IGLUniformBuffer buffer)
+        {
+            if (glShader.SetUniformBlockBinding(blockIndex, slot))
+                GL.UniformBlockBinding(glShader, blockIndex, slot);
+
+            int id = buffer.Id;
+            int off = buffer.Offset;
+            int sz = buffer.ByteSize;
+
+            if ((uint)slot < (uint)lastBoundUniformSlots.Length)
+            {
+                ref var cur = ref lastBoundUniformSlots[slot];
+                if (cur.Id == id && cur.Offset == off && cur.Size == sz)
+                    return;
+
+                cur.Id = id;
+                cur.Offset = off;
+                cur.Size = sz;
+            }
+
+            // Per GLES 3.0 spec, BindBufferBase / BindBufferRange also binds the buffer to the generic GL_UNIFORM_BUFFER target.
+            lastBoundUniformBuffer = id;
+
+            if (sz > 0)
+                GL.BindBufferRange(BufferRangeTarget.UniformBuffer, slot, id, (IntPtr)off, (IntPtr)sz);
+            else
+                GL.BindBufferBase(BufferRangeTarget.UniformBuffer, slot, id);
+        }
+
         public override void DrawVerticesImplementation(PrimitiveTopology topology, int vertexStart, int verticesCount)
         {
             var glShader = (GLShader)Shader!;
             int currentUniformBinding = 0;
             int currentStorageBinding = 0;
 
-            foreach ((string name, IGLUniformBuffer buffer) in boundUniformBuffers)
+            var globalBuf = globalUniformBufferBound;
+            int globalIdx = globalBuf != null ? glShader.GlobalUniformBlockIndex : -1;
+            if (globalIdx >= 0)
+                globalBuf!.Flush();
+
+            if (boundUniformBuffers.Count > 0)
             {
-                if (glShader.GetUniformBlockIndex(name) is not int index)
-                    continue;
-
-                buffer.Flush();
-
-                if (buffer is IGLShaderStorageBufferObject && UseStructuredBuffers)
+                foreach ((string name, IGLUniformBuffer buffer) in boundUniformBuffers)
                 {
-                    GL4.GL.ShaderStorageBlockBinding(glShader, index, currentStorageBinding);
-                    GL4.GL.BindBufferBase(GL4.BufferRangeTarget.ShaderStorageBuffer, currentStorageBinding, buffer.Id);
-                    currentStorageBinding++;
+                    if (glShader.GetUniformBlockIndex(name) is not int)
+                        continue;
+
+                    buffer.Flush();
                 }
-                else
+            }
+
+            // Upload all newly written uniform ring slices before binding ranges and drawing.
+            flushUniformRing();
+
+            if (globalIdx >= 0)
+            {
+                bindUniformBlockToSlot(glShader, globalIdx, currentUniformBinding, globalBuf!);
+                currentUniformBinding++;
+            }
+
+            if (boundUniformBuffers.Count > 0)
+            {
+                foreach ((string name, IGLUniformBuffer buffer) in boundUniformBuffers)
                 {
-                    // The block -> binding point mapping is program state: it only has to be sent when it changes.
-                    // (Re-sending it also made ANGLE re-validate the program on every draw call.)
-                    if (glShader.SetUniformBlockBinding(index, currentUniformBinding))
-                        GL.UniformBlockBinding(glShader, index, currentUniformBinding);
+                    if (glShader.GetUniformBlockIndex(name) is not int index)
+                        continue;
 
-                    if ((uint)currentUniformBinding >= (uint)lastBoundUniformBufferBases.Length)
-                        GL.BindBufferBase(BufferRangeTarget.UniformBuffer, currentUniformBinding, buffer.Id);
-                    else if (lastBoundUniformBufferBases[currentUniformBinding] != buffer.Id)
+                    if (buffer is IGLShaderStorageBufferObject && UseStructuredBuffers)
                     {
-                        lastBoundUniformBufferBases[currentUniformBinding] = buffer.Id;
-                        GL.BindBufferBase(BufferRangeTarget.UniformBuffer, currentUniformBinding, buffer.Id);
+                        GL4.GL.ShaderStorageBlockBinding(glShader, index, currentStorageBinding);
+                        GL4.GL.BindBufferBase(GL4.BufferRangeTarget.ShaderStorageBuffer, currentStorageBinding, buffer.Id);
+                        currentStorageBinding++;
                     }
-
-                    currentUniformBinding++;
+                    else
+                    {
+                        bindUniformBlockToSlot(glShader, index, currentUniformBinding, buffer);
+                        currentUniformBinding++;
+                    }
                 }
             }
 
@@ -389,6 +593,11 @@ namespace osu.Framework.Graphics.OpenGL
 
         protected override void SetScissorStateImplementation(bool enabled)
         {
+            int state = enabled ? 1 : 0;
+            if (lastScissorEnabled == state)
+                return;
+
+            lastScissorEnabled = state;
             if (enabled)
                 GL.Enable(EnableCap.ScissorTest);
             else
@@ -411,14 +620,38 @@ namespace osu.Framework.Graphics.OpenGL
 
                 lastBlendingEnabledState = true;
 
-                GL.BlendEquationSeparate(blendingParameters.RGBEquationMode, blendingParameters.AlphaEquationMode);
-                GL.BlendFuncSeparate(blendingParameters.SourceBlendingFactor, blendingParameters.DestinationBlendingFactor,
-                    blendingParameters.SourceAlphaBlendingFactor, blendingParameters.DestinationAlphaBlendingFactor);
+                int eqRgb = (int)blendingParameters.RGBEquationMode;
+                int eqA = (int)blendingParameters.AlphaEquationMode;
+                if (lastBlendEqRgb != eqRgb || lastBlendEqAlpha != eqA)
+                {
+                    lastBlendEqRgb = eqRgb;
+                    lastBlendEqAlpha = eqA;
+                    GL.BlendEquationSeparate(blendingParameters.RGBEquationMode, blendingParameters.AlphaEquationMode);
+                }
+
+                int sr = (int)blendingParameters.SourceBlendingFactor;
+                int dr = (int)blendingParameters.DestinationBlendingFactor;
+                int sa = (int)blendingParameters.SourceAlphaBlendingFactor;
+                int da = (int)blendingParameters.DestinationAlphaBlendingFactor;
+                if (lastBlendSrcRgb != sr || lastBlendDstRgb != dr || lastBlendSrcAlpha != sa || lastBlendDstAlpha != da)
+                {
+                    lastBlendSrcRgb = sr;
+                    lastBlendDstRgb = dr;
+                    lastBlendSrcAlpha = sa;
+                    lastBlendDstAlpha = da;
+                    GL.BlendFuncSeparate(blendingParameters.SourceBlendingFactor, blendingParameters.DestinationBlendingFactor,
+                        blendingParameters.SourceAlphaBlendingFactor, blendingParameters.DestinationAlphaBlendingFactor);
+                }
             }
         }
 
         protected override void SetBlendMaskImplementation(BlendingMask blendingMask)
         {
+            int mask = (int)blendingMask;
+            if (lastColorMask == mask)
+                return;
+
+            lastColorMask = mask;
             GL.ColorMask(blendingMask.HasFlagFast(BlendingMask.Red),
                 blendingMask.HasFlagFast(BlendingMask.Green),
                 blendingMask.HasFlagFast(BlendingMask.Blue),
@@ -431,30 +664,55 @@ namespace osu.Framework.Graphics.OpenGL
 
         protected override void SetDepthInfoImplementation(DepthInfo depthInfo)
         {
+            int test = depthInfo.DepthTest ? 1 : 0;
+            if (lastDepthTest != test)
+            {
+                lastDepthTest = test;
+                if (depthInfo.DepthTest)
+                    GL.Enable(EnableCap.DepthTest);
+                else
+                    GL.Disable(EnableCap.DepthTest);
+            }
+
             if (depthInfo.DepthTest)
             {
-                GL.Enable(EnableCap.DepthTest);
-                GL.DepthFunc(GLUtils.ToDepthFunction(depthInfo.Function));
+                int fn = (int)GLUtils.ToDepthFunction(depthInfo.Function);
+                if (lastDepthFunc != fn)
+                {
+                    lastDepthFunc = fn;
+                    GL.DepthFunc((DepthFunction)fn);
+                }
             }
-            else
-                GL.Disable(EnableCap.DepthTest);
 
-            GL.DepthMask(depthInfo.WriteDepth);
+            int mask = depthInfo.WriteDepth ? 1 : 0;
+            if (lastDepthMask != mask)
+            {
+                lastDepthMask = mask;
+                GL.DepthMask(depthInfo.WriteDepth);
+            }
         }
 
         protected override void SetStencilInfoImplementation(StencilInfo stencilInfo)
         {
             if (stencilInfo.StencilTest)
             {
-                GL.Enable(EnableCap.StencilTest);
+                if (lastStencilTest != 1)
+                {
+                    lastStencilTest = 1;
+                    GL.Enable(EnableCap.StencilTest);
+                }
+
                 GL.StencilFunc(GLUtils.ToStencilFunction(stencilInfo.TestFunction), stencilInfo.TestValue, stencilInfo.Mask);
                 GL.StencilOp(
                     GLUtils.ToStencilOperation(stencilInfo.StencilTestFailOperation),
                     GLUtils.ToStencilOperation(stencilInfo.DepthTestFailOperation),
                     GLUtils.ToStencilOperation(stencilInfo.TestPassedOperation));
             }
-            else
+            else if (lastStencilTest != 0)
+            {
+                lastStencilTest = 0;
                 GL.Disable(EnableCap.StencilTest);
+            }
         }
 
         protected internal override Image<Rgba32> TakeScreenshot()

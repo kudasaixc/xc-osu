@@ -110,28 +110,74 @@ namespace osu.Framework.Platform.Web
 
         private readonly double? maxDrawHz = launchHz("XC_MAX_DRAW_HZ");
         private readonly double? maxUpdateHz = launchHz("XC_MAX_UPDATE_HZ");
+        private static readonly bool menu_update_cap = Environment.GetEnvironmentVariable("XC_MENU_UPDATE_CAP") != "0";
+        private static readonly bool draw_node_pacing = Environment.GetEnvironmentVariable("XC_DRAWNODE_PACING") != "0";
+
+        private volatile bool isPlaying;
+
+        /// <summary>
+        /// Notifies the web host whether active gameplay is running. Outside gameplay, update rate is matched closer
+        /// to display refresh to free CPU/TDP headroom for the draw worker and integrated GPUs.
+        /// </summary>
+        public void SetPlaying(bool playing)
+        {
+            if (isPlaying == playing)
+                return;
+
+            isPlaying = playing;
+            RefreshFrameSyncMode();
+        }
+
+        protected override bool ShouldGenerateDrawNodes(bool hasUnreadFrame)
+        {
+            if (!draw_node_pacing || !hasUnreadFrame)
+                return true;
+
+            long lastRaf = WebDrawWorker.LastRafTimestamp;
+            if (lastRaf == 0)
+                return true;
+
+            double elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(lastRaf).TotalMilliseconds;
+            double period = WebDrawWorker.EstimatedRafPeriodMs;
+            double lead = Math.Clamp(LastUpdateDrawNodesMs * 2.0 + 3.0, 5.0, period * 0.85);
+            return elapsed >= period - lead;
+        }
 
         protected override void AdjustFrameLimits(ref double drawHz, ref double updateHz)
         {
             if (maxDrawHz is double d) drawHz = Math.Min(drawHz, d);
-            // Native unlimited mode can rebuild the entire UI/draw tree ~1000 times per second
-            // for a 60 Hz canvas. Leave CPU time for the draw worker, asset loading and browser.
+
             // An explicit launcher ceiling remains authoritative (including values above 240).
-            updateHz = Math.Min(updateHz, maxUpdateHz ?? 240);
+            if (maxUpdateHz is double u)
+            {
+                updateHz = Math.Min(updateHz, u);
+                return;
+            }
+
+            if (!isPlaying && menu_update_cap)
+            {
+                double refresh = Window?.CurrentDisplayMode.Value.RefreshRate ?? 60;
+                if (refresh <= 0) refresh = 60;
+                updateHz = Math.Min(updateHz, Math.Clamp(refresh, 60, 120));
+            }
+            else
+            {
+                // Native unlimited mode can rebuild the entire UI/draw tree ~1000 times per second
+                // for a 60 Hz canvas. Leave CPU time for the draw worker, asset loading and browser.
+                updateHz = Math.Min(updateHz, 240);
+            }
         }
 
         protected override void SetupForRun()
         {
             base.SetupForRun();
 
-            // XC_AUDIO_HZ (launcher, light presets): the audio thread polls every track / sample / mixer each frame (1000 Hz
-            // by default, ~20 % of a core on a laptop). The mixing itself runs in xcbass and the AudioWorklet, unaffected;
-            // a lower rate only delays a sample start by up to one audio frame (1 ms at 1000 Hz, 2 ms at 500 Hz).
-            if (launchHz("XC_AUDIO_HZ") is double audioHz)
-            {
-                AudioThread.ActiveHz = Math.Clamp(audioHz, 250, 1000);
-                Logger.Log($"launcher: audio thread at {AudioThread.ActiveHz} Hz");
-            }
+            // XC_AUDIO_HZ: the audio thread polls every track / sample / mixer each frame (1000 Hz by default, ~20 % of a core
+            // on a laptop). Mixing itself runs in xcbass and the AudioWorklet; defaulting to 500 Hz frees ~10 % of a core on
+            // integrated-graphics laptops with at most 1 ms additional sample scheduling delay.
+            double audioHz = launchHz("XC_AUDIO_HZ") ?? 500;
+            AudioThread.ActiveHz = Math.Clamp(audioHz, 250, 1000);
+            Logger.Log($"launcher: audio thread at {AudioThread.ActiveHz} Hz");
 
             // XC_LOG: "verbose" = everything for the whole session, "boot" = everything until the menu shows up (the launch
             // screen renders those lines), anything else = Important and above. XC_VERBOSE_LOG=1 (?log) is the legacy switch.

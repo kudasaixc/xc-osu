@@ -54,7 +54,7 @@ namespace osu.Framework.Graphics
             backgroundColour = Source.BackgroundColour;
             screenSpaceDrawRectangle = Source.ScreenSpaceDrawQuad.AABBFloat;
             DrawColourInfo = Source.FrameBufferDrawColour ?? new DrawColourInfo(Color4.White, base.DrawColourInfo.Blending);
-            frameBufferScale = Source.FrameBufferScale;
+            frameBufferScale = GetFrameBufferScale();
 
             clipDrawRectangle();
 
@@ -64,6 +64,8 @@ namespace osu.Framework.Graphics
 
             Child.ApplyState();
         }
+
+        protected virtual Vector2 GetFrameBufferScale() => Source.FrameBufferScale;
 
         /// <summary>
         /// Whether this <see cref="BufferedDrawNode"/> should be redrawn.

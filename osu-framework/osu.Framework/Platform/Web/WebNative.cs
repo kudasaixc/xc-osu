@@ -23,6 +23,7 @@ namespace osu.Framework.Platform.Web
         [DllImport(lib)] internal static extern int xc_gl_attach();
         [DllImport(lib)] internal static extern void xc_canvas_resize(int w, int h);
         [DllImport(lib)] internal static extern void xc_attach_shared(IntPtr shared, int size);
+        [DllImport(lib)] internal static extern unsafe void xc_input_wait(int* writeIdxPtr, int expected, int timeoutMs);
         [DllImport(lib, CharSet = CharSet.Ansi)] private static extern void xc_ui_call(int op, int a, int b, IntPtr str);
 
         public static bool IsBrowser => OperatingSystem.IsBrowser();
@@ -169,6 +170,18 @@ namespace osu.Framework.Platform.Web
 
             Volatile.Write(ref Base[READ_INDEX], read + 1);
             return true;
+        }
+
+        /// <summary>
+        /// Waits in native code until the UI thread enqueues an event (WRITE_INDEX changes) or <paramref name="timeoutMs"/> elapses.
+        /// </summary>
+        public void WaitForInput(int timeoutMs)
+        {
+            int read = Base[READ_INDEX];
+            if (Volatile.Read(ref Base[WRITE_INDEX]) != read)
+                return;
+
+            WebNative.xc_input_wait(&Base[WRITE_INDEX], read, timeoutMs);
         }
     }
 }

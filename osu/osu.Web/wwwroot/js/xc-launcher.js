@@ -150,7 +150,7 @@ const tr = (v, lang) => (v && typeof v === 'object') ? (v[lang] ?? v.en ?? '') :
 // The game runs at a fraction of its normal frame rate there, and the cause is a browser/driver setting, not the game.
 // Integrated / mobile GPUs and small machines: the game is CPU- and fill-rate-bound there (telemetry: the update thread at
 // 92-96 % on Radeon / UHD laptops). Only used to *suggest* the low-end preset, never applied without the player.
-export const isLightGpu = (gpu) => /Intel\(R\) (UHD|HD|Iris)|Radeon\(TM\) (Graphics|Vega)|Radeon Vega|Vega \d+ Graphics|Mali|Adreno|PowerVR|GeForce (MX|9\d0M)|RTX 2050/i.test(String(gpu || ''));
+export const isLightGpu = (gpu) => /Intel\(R\) (UHD|HD|Iris|Arc\(TM\) Graphics)|Radeon\(TM\) (Graphics|Vega)|Radeon Vega|Vega \d+ Graphics|Mali|Adreno|PowerVR|GeForce (MX|9\d0M)|RTX 2050/i.test(String(gpu || ''));
 
 /** Share of the last local session's gameplay time the update thread was busy (from the local telemetry archive). */
 function lastUpdateBusy() {

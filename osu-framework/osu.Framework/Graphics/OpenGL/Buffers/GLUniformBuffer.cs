@@ -17,9 +17,12 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
     {
         private readonly GLRenderer renderer;
         private readonly int size;
+        private readonly bool useRing;
 
         private TData data;
         private int uboId;
+        private int ringOffset;
+        private ulong ringFrameIndex;
         private bool allocated;
 
         public GLUniformBuffer(GLRenderer renderer)
@@ -27,13 +30,14 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
             Trace.Assert(ThreadSafety.IsDrawThread);
 
             this.renderer = renderer;
-
             size = Marshal.SizeOf(default(TData));
+            useRing = renderer.UseUniformRing;
 
-            GL.GenBuffers(1, out uboId);
-
-            // Initialise the buffer with the default data.
-            setData(ref data);
+            if (!useRing)
+            {
+                GL.GenBuffers(1, out uboId);
+                setData(ref data);
+            }
         }
 
         public TData Data
@@ -44,7 +48,14 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
                 if (value.Equals(data))
                     return;
 
-                setData(ref value);
+                if (useRing)
+                {
+                    data = value;
+                    ringFrameIndex = 0;
+                    FrameStatistics.Increment(StatisticsCounterType.UniformUpl);
+                }
+                else
+                    setData(ref value);
             }
         }
 
@@ -52,10 +63,8 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
         {
             this.data = data;
 
-            GL.BindBuffer(BufferTarget.UniformBuffer, uboId);
-            // xc-osu!: allocate the storage once, then only overwrite it. Re-specifying it with BufferData on every change (once per
-            // masking change: every rounded card, cover or avatar) makes WebGL/ANGLE reallocate the buffer each time, which was the
-            // largest draw-thread cost in image-heavy overlays (beatmap listing, profile).
+            renderer.BindUniformBufferTarget(uboId);
+
             if (!allocated)
             {
                 GL.BufferData(BufferTarget.UniformBuffer, size, ref data, BufferUsageHint.DynamicDraw);
@@ -63,7 +72,6 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
             }
             else
                 GL.BufferSubData(BufferTarget.UniformBuffer, 0, size, ref data);
-            // xc-osu: the generic binding is left as is; everything that uses it binds first, and this runs once per masking change.
 
             FrameStatistics.Increment(StatisticsCounterType.UniformUpl);
         }
@@ -72,18 +80,20 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
 
         ~GLUniformBuffer()
         {
-            renderer.ScheduleDisposal(static b => b.Dispose(false), this);
+            if (!useRing)
+                renderer.ScheduleDisposal(static b => b.Dispose(false), this);
         }
 
         public void Dispose()
         {
-            renderer.ScheduleDisposal(static v => v.Dispose(true), this);
+            if (!useRing)
+                renderer.ScheduleDisposal(static v => v.Dispose(true), this);
             GC.SuppressFinalize(this);
         }
 
         protected virtual void Dispose(bool disposing)
         {
-            if (uboId == -1)
+            if (useRing || uboId == -1)
                 return;
 
             GL.DeleteBuffer(uboId);
@@ -93,10 +103,23 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
 
         #endregion
 
-        public int Id => uboId;
+        public int Id => useRing ? renderer.UniformRingBufferId : uboId;
+
+        public int Offset => useRing ? ringOffset : 0;
+
+        public int ByteSize => useRing ? size : 0;
 
         public void Flush()
         {
+            if (!useRing)
+                return;
+
+            ulong frame = renderer.FrameIndex;
+            if (ringFrameIndex == frame)
+                return;
+
+            ringOffset = renderer.AllocateUniformSlice(ref data, size);
+            ringFrameIndex = frame;
         }
     }
 }

@@ -40,6 +40,7 @@ export function installUi(rt, canvas, hooks) {
     const p = hi + HEADER_INTS + (w % ringCap) * EVENT_INTS;
     i32[p] = type; i32[p + 1] = a; i32[p + 2] = b; i32[p + 3] = c; i32[p + 4] = d; i32[p + 5] = e; i32[p + 6] = f; i32[p + 7] = g;
     Atomics.store(i32, hi + S.WRITE_INDEX, w + 1);
+    Atomics.notify(i32, hi + S.WRITE_INDEX, 1);
   }
 
   function writeText(str) {
@@ -57,6 +58,16 @@ export function installUi(rt, canvas, hooks) {
   function renderDpr() { const scaled = (devicePixelRatio || 1) * renderScale; return globalThis.xcIosCompat ? Math.min(1, scaled) : scaled; }
   let dpr = renderDpr(), pixW = 0, pixH = 0;
   function publishSize(w, h) {
+    // On integrated GPUs at default 100% scale, cap HiDPI backing surfaces to ~1080p pixel budget so 2560x1600 / 4K
+    // laptops don't choke fillrate and shared memory bandwidth (explicit renderScale overrides remain untouched).
+    const MAX_IGPU_PIXELS = 1920 * 1080;
+    let scaleAdj = 1;
+    if (globalThis.xcLightGpu && renderScale === 1 && w * h > MAX_IGPU_PIXELS) {
+      scaleAdj = Math.sqrt(MAX_IGPU_PIXELS / (w * h));
+      w *= scaleAdj;
+      h *= scaleAdj;
+    }
+    dpr = renderDpr() * scaleAdj;
     pixW = Math.max(1, w | 0); pixH = Math.max(1, h | 0);
     slot(S.WIDTH, pixW); slot(S.HEIGHT, pixH); slot(S.DPR_MILLI, Math.round(dpr * 1000));
     slot(S.SCREEN_W, Math.round(screen.width * dpr)); slot(S.SCREEN_H, Math.round(screen.height * dpr));

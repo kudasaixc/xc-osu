@@ -17,6 +17,9 @@ float wrap(float coord, int mode, float rangeMin, float rangeMax)
 
 vec2 wrap(vec2 texCoord, vec4 texRect)
 {
+    if (g_WrapModeS == 0 && g_WrapModeT == 0)
+        return texCoord;
+
     return vec2(wrap(texCoord.x, g_WrapModeS, texRect[0], texRect[2]), wrap(texCoord.y, g_WrapModeT, texRect[1], texRect[3]));
 }
 

@@ -44,6 +44,24 @@ namespace osu.Framework.Graphics.Containers
             {
             }
 
+            private float blurDownscale = 1f;
+
+            protected override Vector2 GetFrameBufferScale()
+            {
+                var scale = Source.FrameBufferScale;
+
+                // On browser, downscale pure-blur FBOs (no crisp original drawn on top) with sigma >= 3 by 0.5x.
+                // Halving both dimensions + sigma cuts blur fillrate & tap cost ~8x on integrated GPUs with visually identical output.
+                if (RuntimeInfo.IsBrowser && !Source.DrawOriginal && (Source.BlurSigma.X >= 3f || Source.BlurSigma.Y >= 3f) && scale.X > 0.5f && scale.Y > 0.5f)
+                {
+                    blurDownscale = 0.5f;
+                    return scale * 0.5f;
+                }
+
+                blurDownscale = 1f;
+                return scale;
+            }
+
             public override void ApplyState()
             {
                 base.ApplyState();
@@ -55,7 +73,7 @@ namespace osu.Framework.Graphics.Containers
                 effectPlacement = Source.EffectPlacement;
 
                 drawOriginal = Source.DrawOriginal;
-                blurSigma = Source.BlurSigma;
+                blurSigma = Source.BlurSigma * blurDownscale;
                 blurRadius = new Vector2I(Blur.KernelSize(blurSigma.X), Blur.KernelSize(blurSigma.Y));
                 blurRotation = Source.BlurRotation;
                 grayscaleStrength = Source.GrayscaleStrength;

@@ -8,7 +8,7 @@ captureConsole();
 import { dotnet } from './_framework/dotnet.js';
 import { installUi } from './js/xc-ui.js';
 import { makeT } from './js/xc-i18n.js';
-import { Launcher, loadOptions, buildLaunch, fmtBytes, requestGameFullscreen } from './js/xc-launcher.js';
+import { Launcher, loadOptions, buildLaunch, fmtBytes, requestGameFullscreen, isLightGpu } from './js/xc-launcher.js';
 import { BootScreen, LogViewer } from './js/xc-boot.js';
 import { startTelemetry } from './js/xc-telemetry.js';
 import { PerfOverlay } from './js/xc-perf.js';
@@ -178,6 +178,7 @@ say(`webgl: ${JSON.stringify(L.gl)} · render scale ${Math.round(L.renderScale *
 globalThis.xcRenderScale = L.renderScale;
 globalThis.xcIosCompat = L.iosCompat;
 globalThis.xcGlAttributes = L.gl;
+globalThis.xcLightGpu = isLightGpu(globalThis.xcDetectedGpu);
 
 // ---------------------------------------------------------------- overlays
 let rtRef = null;

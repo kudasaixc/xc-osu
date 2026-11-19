@@ -3,9 +3,6 @@
 
 #include "sh_Utils.h"
 
-#undef INV_SQRT_2PI
-#define INV_SQRT_2PI 0.39894
-
 layout(location = 2) in mediump vec2 v_TexCoord;
 
 layout(std140, set = 0, binding = 0) uniform m_BlurParameters
@@ -21,25 +18,22 @@ layout(set = 1, binding = 1) uniform lowp sampler m_Sampler;
 
 layout(location = 0) out vec4 o_Colour;
 
-mediump float computeGauss(in mediump float x, in mediump float sigma)
-{
-	return INV_SQRT_2PI * exp(-0.5*x*x / (sigma*sigma)) / sigma;
-}
-
 lowp vec4 blur(int radius, highp vec2 direction, mediump vec2 texCoord, mediump vec2 texSize, mediump float sigma)
 {
-	mediump float factor = computeGauss(0.0, sigma);
-	mediump vec4 sum = texture(sampler2D(m_Texture, m_Sampler), texCoord) * factor;
+	mediump float invTwoSigmaSq = -0.5 / (sigma * sigma);
+	highp vec2 texStep = direction / texSize;
 
-	mediump float totalFactor = factor;
+	mediump vec4 sum = texture(sampler2D(m_Texture, m_Sampler), texCoord);
+	mediump float totalFactor = 1.0;
 
 	for (int i = 2; i <= 200; i += 2)
 	{
 		mediump float x = float(i) - 0.5;
-		factor = computeGauss(x, sigma) * 2.0;
+		mediump float factor = exp(x * x * invTwoSigmaSq) * 2.0;
+		highp vec2 offset = texStep * x;
 		totalFactor += 2.0 * factor;
-		sum += texture(sampler2D(m_Texture, m_Sampler), texCoord + direction * x / texSize) * factor;
-		sum += texture(sampler2D(m_Texture, m_Sampler), texCoord - direction * x / texSize) * factor;
+		sum += texture(sampler2D(m_Texture, m_Sampler), texCoord + offset) * factor;
+		sum += texture(sampler2D(m_Texture, m_Sampler), texCoord - offset) * factor;
 		if (i >= radius)
 			break;
 	}

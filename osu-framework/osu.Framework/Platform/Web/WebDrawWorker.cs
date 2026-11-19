@@ -28,6 +28,15 @@ namespace osu.Framework.Platform.Web
 
         public static double LastFrameTime { get; private set; }
 
+        /// <summary>Stopwatch timestamp of the most recent requestAnimationFrame callback.</summary>
+        public static long LastRafTimestamp => Volatile.Read(ref lastRafTimestamp);
+
+        /// <summary>Smoothed display refresh period in milliseconds.</summary>
+        public static double EstimatedRafPeriodMs => Volatile.Read(ref estimatedRafPeriodMs);
+
+        private static long lastRafTimestamp;
+        private static double estimatedRafPeriodMs = 1000.0 / 60.0;
+
         // diagnostics, read from other threads (see WebWindow heartbeat)
         public static volatile string Stage = "not started";
         public static long Loops, Pumped;
@@ -242,6 +251,7 @@ namespace osu.Framework.Platform.Web
 
         private static void noteRaf(double time)
         {
+            Volatile.Write(ref lastRafTimestamp, System.Diagnostics.Stopwatch.GetTimestamp());
             double last = LastFrameTime;
             LastFrameTime = time;
 
@@ -250,6 +260,12 @@ namespace osu.Framework.Platform.Web
 
             double interval = time - last;
             lastInterval = interval;
+
+            if (interval > 2 && interval < 100)
+            {
+                double cur = Volatile.Read(ref estimatedRafPeriodMs);
+                Volatile.Write(ref estimatedRafPeriodMs, cur * 0.9 + interval * 0.1);
+            }
 
             lock (stats_lock)
             {

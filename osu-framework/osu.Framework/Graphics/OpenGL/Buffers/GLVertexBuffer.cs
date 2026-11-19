@@ -25,6 +25,7 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
         private IMemoryOwner<T>? memoryOwner;
 
         private bool isInitialised;
+        private bool pooledDirty;
         private int vaoId;
         private int vboId;
 
@@ -105,9 +106,9 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
                 if (Renderer.TryTakePooledVertexArray(GetType(), Size * STRIDE, out vaoId, out vboId))
                 {
                     // xc-osu!: a recycled pair keeps its attribute setup and index buffer binding; only the contents are stale.
+                    // Avoid uploading the entire Size * STRIDE buffer here — UpdateRange / Draw uploads only the drawn vertices.
                     Renderer.BindVertexArray(vaoId);
-                    Renderer.BindArrayBuffer(vboId);
-                    GL.BufferSubData(BufferTarget.ArrayBuffer, 0, Size * STRIDE, ref getMemory().Span[0]);
+                    pooledDirty = true;
                 }
                 else
                 {
@@ -139,6 +140,8 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
         public void DrawRange(int startIndex, int endIndex)
         {
             Bind(true);
+            if (pooledDirty)
+                UpdateRange(0, endIndex);
             Renderer.DrawVertices(Topology, ToElementIndex(startIndex), ToElements(endIndex - startIndex));
         }
 
@@ -147,9 +150,24 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
             UpdateRange(0, Size);
         }
 
+        internal bool ConsumePooledDirty()
+        {
+            if (!pooledDirty)
+                return false;
+
+            pooledDirty = false;
+            return true;
+        }
+
         public void UpdateRange(int startIndex, int endIndex)
         {
             Bind(false);
+
+            if (pooledDirty)
+            {
+                startIndex = 0;
+                pooledDirty = false;
+            }
 
             int countVertices = endIndex - startIndex;
 
@@ -197,6 +215,7 @@ namespace osu.Framework.Graphics.OpenGL.Buffers
             LastUseFrameIndex = 0;
 
             isInitialised = false;
+            pooledDirty = false;
         }
     }
 }

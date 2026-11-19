@@ -33,6 +33,8 @@ highp float distanceFromRoundedRect(highp vec2 offset, highp float radius)
 	else
 	{
 		distanceFromShrunkRect = max(vec2(0.0), distanceFromShrunkRect);
+		if (g_CornerExponent == 2.0)
+			return length(distanceFromShrunkRect);
 		return pow(pow(distanceFromShrunkRect.x, g_CornerExponent) + pow(distanceFromShrunkRect.y, g_CornerExponent), 1.0 / g_CornerExponent);
 	}
 }
@@ -66,6 +68,15 @@ lowp vec4 getRoundedColor(lowp vec4 texel, mediump vec2 texCoord)
 	if (!g_IsMasking && v_BlendRange == vec2(0.0))
 	{
 		return v_Colour * texel;
+	}
+
+	// Fast path for interior pixels of rectangular, borderless, non-hollow masks.
+	if (!g_DiscardInner && g_CornerRadius == 0.0 && g_BorderThickness <= 0.0 && v_BlendRange == vec2(0.0))
+	{
+		highp vec2 tl = g_MaskingRect.xy - v_MaskingPosition;
+		highp vec2 br = v_MaskingPosition - g_MaskingRect.zw;
+		if (max(max(tl.x, tl.y), max(br.x, br.y)) <= 0.0)
+			return v_Colour * texel;
 	}
 
 	highp float dist = distanceFromRoundedRect(vec2(0.0), g_CornerRadius);
@@ -108,12 +119,16 @@ lowp vec4 getRoundedColor(lowp vec4 texel, mediump vec2 texCoord)
 	}
 
 	// This ends up softening glow without negatively affecting edge smoothness much.
-	alphaFactor = pow(alphaFactor, g_AlphaExponent);
+	if (alphaFactor < 1.0 && g_AlphaExponent != 1.0)
+		alphaFactor = pow(alphaFactor, g_AlphaExponent);
+
+	lowp vec4 contentColour = v_Colour * texel;
+
+	if (g_BorderThickness <= 0.0)
+		return vec4(contentColour.rgb, contentColour.a * alphaFactor);
 
 	highp float borderStart = 1.0 + fadeStart - g_BorderThickness;
 	lowp float colourWeight = min(borderStart - dist, 1.0);
-
-	lowp vec4 contentColour = v_Colour * texel;
 
 	if (colourWeight == 1.0)
 		return vec4(contentColour.rgb, contentColour.a * alphaFactor);

@@ -37,6 +37,7 @@ namespace osu.Framework.Platform.Web
 
         public void SwapBuffers()
         {
+            WebGL.FlushCommands();
         }
 
         public void CreateContext()

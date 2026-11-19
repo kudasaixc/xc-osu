@@ -10,7 +10,7 @@
     <WasmEnableThreads>true</WasmEnableThreads>
     <WasmBuildNative>true</WasmBuildNative>
     <InvariantGlobalization>false</InvariantGlobalization>
-    <EmccExtraLDFlags>-sMAX_WEBGL_VERSION=2 -sMIN_WEBGL_VERSION=2 -sFULL_ES3=1 -lidbfs.js</EmccExtraLDFlags>
+    <EmccExtraLDFlags>-sMAX_WEBGL_VERSION=2 -sMIN_WEBGL_VERSION=2 -lidbfs.js</EmccExtraLDFlags>
     <EmccMaximumHeapSize>2147483648</EmccMaximumHeapSize>
     <!-- xc-osu!: every pthread gets a STACK_SIZE stack carved out of linear memory (the SDK default is 5MB, x40 threads
          = 200MB). The interpreter keeps managed frames on its own heap stack, so 2MB is plenty and saves ~120MB,
