@@ -10,10 +10,34 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+      # Client-only packages from the osu/osu-framework forks (audio, video, graphics, input, tooling): pinned on
+      # upstream and on the wasm build, never bumped through dependabot.
+      - dependency-name: "ppy.*"
+      - dependency-name: "FFmpeg.AutoGen"
+      - dependency-name: "Markdig"
+      - dependency-name: "Microsoft.CodeAnalysis.BannedApiAnalyzers"
+      - dependency-name: "Microsoft.Diagnostics.Runtime"
+      - dependency-name: "JetBrains.Annotations"
+      - dependency-name: "NUnit"
+      - dependency-name: "OpenTabletDriver"
+      - dependency-name: "Realm"
+      - dependency-name: "Sentry"
+      - dependency-name: "SharpFNT"
+      - dependency-name: "SixLabors.ImageSharp"
+      - dependency-name: "StbiSharp"
+      - dependency-name: "TagLibSharp"
+      - dependency-name: "DiffPlex"
+      - dependency-name: "Humanizer"
+      - dependency-name: "AutoMapper"
+      - dependency-name: "Microsoft.Toolkit.HighPerformance"
+      - dependency-name: "System.Numerics.Tensors"
+      - dependency-name: "System.ComponentModel.Annotations"
+      - dependency-name: "SQLitePCLRaw.bundle_e_sqlite3"
   - package-ecosystem: nuget
     directory: /server/XcOsu.ReplayVerifier
     schedule: { interval: weekly }
-    open-pull-requests-limit: 5
+    # Only references XcOsu.Server, which the entry above already covers.
+    open-pull-requests-limit: 0
   - package-ecosystem: npm
     directory: /tools
     schedule: { interval: weekly }
