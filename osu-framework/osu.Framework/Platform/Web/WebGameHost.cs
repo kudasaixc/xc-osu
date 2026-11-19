@@ -139,7 +139,9 @@ namespace osu.Framework.Platform.Web
 
             double elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(lastRaf).TotalMilliseconds;
             double period = WebDrawWorker.EstimatedRafPeriodMs;
-            double lead = Math.Clamp(LastUpdateDrawNodesMs * 2.0 + 3.0, 5.0, period * 0.85);
+            // On high-refresh displays (>~200 Hz) period * 0.85 drops below 5 ms; Math.Clamp throws when min > max.
+            double maxLead = period * 0.85;
+            double lead = Math.Clamp(LastUpdateDrawNodesMs * 2.0 + 3.0, Math.Min(5.0, maxLead), maxLead);
             return elapsed >= period - lead;
         }
 
