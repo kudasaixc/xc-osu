@@ -12,7 +12,7 @@
     <NoWarn>$(NoWarn);CS1591;RS0030</NoWarn>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Npgsql" Version="10.0.3" />
+    <PackageReference Include="Npgsql" Version="10.0.4" />
     <!-- osu.Framework pulls Markdig 0.23 (2020); the server renders news, wiki and changelog with a current one. -->
     <PackageReference Include="Markdig" Version="1.6.0" />
     <ProjectReference Include="..\..\osu\osu.Game\osu.Game.csproj" />
